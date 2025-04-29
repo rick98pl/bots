@@ -151,35 +151,36 @@ class Program
             Console.WriteLine($"Position: X={posX}, Y={posY}, Z={posZ}");
 
             var now = DateTime.Now;
+            var thresholdms = 1000;
 
             if (targetWindow != IntPtr.Zero)
             {
                 if (hpPercent <= DEFAULT_HP_THRESHOLD)
                 {
-                    if ((now - lastHpActionTime).TotalMilliseconds >= 2000)
+                    if ((now - lastHpActionTime).TotalMilliseconds >= thresholdms)
                     {
                         Console.WriteLine($"⚠ HP below threshold ({DEFAULT_HP_THRESHOLD}%), sending {DEFAULT_HP_KEY_NAME}");
                         SendKeyPress(DEFAULT_HP_KEY);
-                        lastHpActionTime = now.AddMilliseconds(random.Next(0, 200));
+                        lastHpActionTime = now.AddMilliseconds(random.Next(0, 100));
                     }
                     else
                     {
-                        double wait = 2000 - (now - lastHpActionTime).TotalMilliseconds;
+                        double wait = thresholdms - (now - lastHpActionTime).TotalMilliseconds;
                         Console.WriteLine($"(HP) {DEFAULT_HP_KEY_NAME} should be sent but cooldown: {wait:F0} ms left");
                     }
                 }
 
                 if (manaPercent <= DEFAULT_MANA_THRESHOLD)
                 {
-                    if ((now - lastManaActionTime).TotalMilliseconds >= 2000)
+                    if ((now - lastManaActionTime).TotalMilliseconds >= thresholdms)
                     {
                         Console.WriteLine($"⚠ Mana below threshold ({DEFAULT_MANA_THRESHOLD}%), sending {DEFAULT_MANA_KEY_NAME}");
                         SendKeyPress(DEFAULT_MANA_KEY);
-                        lastManaActionTime = now.AddMilliseconds(random.Next(0, 200));
+                        lastManaActionTime = now.AddMilliseconds(random.Next(0, 100));
                     }
                     else
                     {
-                        double wait = 2000 - (now - lastManaActionTime).TotalMilliseconds;
+                        double wait = thresholdms - (now - lastManaActionTime).TotalMilliseconds;
                         Console.WriteLine($"(Mana) {DEFAULT_MANA_KEY_NAME} should be sent but cooldown: {wait:F0} ms left");
                     }
                 }
