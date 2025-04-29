@@ -1,0 +1,226 @@
+using System;
+using System.Diagnostics;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Collections.Generic;
+
+class Program
+{
+    [DllImport("kernel32.dll")]
+    static extern IntPtr OpenProcess(int dwDesiredAccess, bool bInheritHandle, int processId);
+
+    [DllImport("kernel32.dll")]
+    static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] buffer, int size, out int lpNumberOfBytesRead);
+
+    [DllImport("user32.dll")]
+    static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    const int PROCESS_WM_READ = 0x0010;
+    const uint WM_KEYDOWN = 0x0100;
+    const uint WM_KEYUP = 0x0101;
+
+    static class Keys
+    {
+        public static readonly Dictionary<string, int> KeyMap = new Dictionary<string, int>
+        {
+            { "F1", 0x70 }, { "F2", 0x71 }, { "F3", 0x72 }, { "F4", 0x73 },
+            { "F5", 0x74 }, { "F6", 0x75 }, { "F7", 0x76 }, { "F8", 0x77 },
+            { "F9", 0x78 }, { "F10", 0x79 }, { "F11", 0x7A }, { "F12", 0x7B }
+        };
+
+        public static int GetKeyCode(string keyName) => KeyMap.ContainsKey(keyName) ? KeyMap[keyName] : -1;
+    }
+
+    const int DEFAULT_HP_THRESHOLD = 50;
+    const int DEFAULT_MANA_THRESHOLD = 70;
+    const string DEFAULT_HP_KEY_NAME = "F1";
+    const string DEFAULT_MANA_KEY_NAME = "F2";
+
+    static int DEFAULT_HP_KEY => Keys.GetKeyCode(DEFAULT_HP_KEY_NAME);
+    static int DEFAULT_MANA_KEY => Keys.GetKeyCode(DEFAULT_MANA_KEY_NAME);
+
+    static IntPtr targetWindow = IntPtr.Zero;
+    static DateTime lastHpActionTime = DateTime.MinValue;
+    static DateTime lastManaActionTime = DateTime.MinValue;
+    static Random random = new Random();
+
+    static IntPtr xAddressOffset = (IntPtr)0x009435FC;
+    static IntPtr yAddressOffset = (IntPtr)0x00943600;
+    static IntPtr zAddressOffset = (IntPtr)0x00943604;
+
+    struct Variable
+    {
+        public string Name;
+        public IntPtr BaseAddress;
+        public List<int> Offsets;
+        public string Type;
+    }
+
+    static void Main()
+    {
+        Console.WriteLine($"Default HP Key: {DEFAULT_HP_KEY_NAME}");
+        Console.WriteLine($"Default Mana Key: {DEFAULT_MANA_KEY_NAME}");
+
+        string processName = "RealeraDX";
+
+        List<Variable> variables = new List<Variable>
+        {
+            new Variable { Name = "Current Mana", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1240 }, Type = "Double" },
+            new Variable { Name = "Current HP", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1184 }, Type = "Double" },
+            new Variable { Name = "Max Mana", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1248 }, Type = "Double" },
+            new Variable { Name = "Max HP", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1192 }, Type = "Double" }
+        };
+
+        FindRealeraWindow();
+
+        while (true)
+        {
+            Console.Clear();
+
+            var process = Process.GetProcessesByName(processName).FirstOrDefault();
+            if (process == null)
+            {
+                Console.WriteLine($"Process {processName} not found.");
+                Thread.Sleep(500);
+                continue;
+            }
+
+            IntPtr processHandle = OpenProcess(PROCESS_WM_READ, false, process.Id);
+            IntPtr moduleBase = process.MainModule.BaseAddress;
+
+            double curHP = 0, maxHP = 1, curMana = 0, maxMana = 1;
+            int posX = 0, posY = 0, posZ = 0;
+
+            foreach (var variable in variables)
+            {
+                IntPtr address = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
+                byte[] buffer;
+
+                try
+                {
+                    if (variable.Offsets.Count > 0)
+                    {
+                        buffer = new byte[4];
+                        if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _)) continue;
+                        address = (IntPtr)BitConverter.ToInt32(buffer, 0);
+                        address = IntPtr.Add(address, variable.Offsets[0]);
+                    }
+
+                    buffer = variable.Type == "Double" ? new byte[8] : new byte[4];
+                    if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _)) continue;
+
+                    double value = variable.Type == "Double"
+                        ? BitConverter.ToDouble(buffer, 0)
+                        : BitConverter.ToInt32(buffer, 0);
+
+                    if (variable.Name.Contains("HP") && !variable.Name.Contains("Max")) curHP = value;
+                    if (variable.Name.Contains("Mana") && !variable.Name.Contains("Max")) curMana = value;
+                    if (variable.Name.Contains("Max HP")) maxHP = value;
+                    if (variable.Name.Contains("Max Mana")) maxMana = value;
+                }
+                catch { }
+            }
+
+            // Read coordinates
+            posX = ReadInt32(processHandle, moduleBase, xAddressOffset);
+            posY = ReadInt32(processHandle, moduleBase, yAddressOffset);
+            posZ = ReadInt32(processHandle, moduleBase, zAddressOffset);
+
+            double hpPercent = (curHP / maxHP) * 100;
+            double manaPercent = (curMana / maxMana) * 100;
+
+            Console.WriteLine("RealeraDX - Live Stats:\n");
+            Console.WriteLine("{0,-20} {1,15}", "Metric", "Value");
+            Console.WriteLine(new string('-', 40));
+            Console.WriteLine("{0,-20} {1,15:F0}", "Current HP", curHP);
+            Console.WriteLine("{0,-20} {1,15:F0}", "Max HP", maxHP);
+            Console.WriteLine("{0,-20} {1,15:F1}%", "HP %", hpPercent);
+            Console.WriteLine("{0,-20} {1,15:F0}", "Current Mana", curMana);
+            Console.WriteLine("{0,-20} {1,15:F0}", "Max Mana", maxMana);
+            Console.WriteLine("{0,-20} {1,15:F1}%", "Mana %", manaPercent);
+            Console.WriteLine(new string('-', 40));
+            Console.WriteLine($"Position: X={posX}, Y={posY}, Z={posZ}");
+
+            var now = DateTime.Now;
+
+            if (targetWindow != IntPtr.Zero)
+            {
+                if (hpPercent <= DEFAULT_HP_THRESHOLD)
+                {
+                    if ((now - lastHpActionTime).TotalMilliseconds >= 2000)
+                    {
+                        Console.WriteLine($"⚠ HP below threshold ({DEFAULT_HP_THRESHOLD}%), sending {DEFAULT_HP_KEY_NAME}");
+                        SendKeyPress(DEFAULT_HP_KEY);
+                        lastHpActionTime = now.AddMilliseconds(random.Next(0, 200));
+                    }
+                    else
+                    {
+                        double wait = 2000 - (now - lastHpActionTime).TotalMilliseconds;
+                        Console.WriteLine($"(HP) {DEFAULT_HP_KEY_NAME} should be sent but cooldown: {wait:F0} ms left");
+                    }
+                }
+
+                if (manaPercent <= DEFAULT_MANA_THRESHOLD)
+                {
+                    if ((now - lastManaActionTime).TotalMilliseconds >= 2000)
+                    {
+                        Console.WriteLine($"⚠ Mana below threshold ({DEFAULT_MANA_THRESHOLD}%), sending {DEFAULT_MANA_KEY_NAME}");
+                        SendKeyPress(DEFAULT_MANA_KEY);
+                        lastManaActionTime = now.AddMilliseconds(random.Next(0, 200));
+                    }
+                    else
+                    {
+                        double wait = 2000 - (now - lastManaActionTime).TotalMilliseconds;
+                        Console.WriteLine($"(Mana) {DEFAULT_MANA_KEY_NAME} should be sent but cooldown: {wait:F0} ms left");
+                    }
+                }
+            }
+            else
+            {
+                Console.WriteLine("Realera 8.0 window not found.");
+            }
+
+            Thread.Sleep(256);
+        }
+    }
+
+    static int ReadInt32(IntPtr handle, IntPtr moduleBase, IntPtr offset)
+    {
+        IntPtr address = IntPtr.Add(moduleBase, (int)offset);
+        byte[] buffer = new byte[4];
+        if (ReadProcessMemory(handle, address, buffer, buffer.Length, out _))
+            return BitConverter.ToInt32(buffer, 0);
+        return 0;
+    }
+
+    static void SendKeyPress(int key)
+    {
+        PostMessage(targetWindow, WM_KEYDOWN, (IntPtr)key, IntPtr.Zero);
+        Thread.Sleep(random.Next(10, 70));
+        PostMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
+    }
+
+    static void FindRealeraWindow()
+    {
+        EnumWindows((hWnd, lParam) =>
+        {
+            System.Text.StringBuilder sb = new System.Text.StringBuilder(256);
+            GetWindowText(hWnd, sb, sb.Capacity);
+            if (sb.ToString().Contains("Realera 8.0"))
+            {
+                targetWindow = hWnd;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+    }
+}
