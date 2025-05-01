@@ -4,11 +4,15 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Collections.Generic;
+using System.Text;
 
 class Program
 {
     [DllImport("kernel32.dll")]
     static extern IntPtr OpenProcess(int dwDesiredAccess, bool bInheritHandle, int processId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     [DllImport("kernel32.dll")]
     static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] buffer, int size, out int lpNumberOfBytesRead);
@@ -80,20 +84,53 @@ class Program
             new Variable { Name = "Max HP", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1192 }, Type = "Double" }
         };
 
-        FindRealeraWindow();
-
+        
+        Process selectedProcess = null;
         while (true)
         {
             Console.Clear();
-
-            var process = Process.GetProcessesByName(processName).FirstOrDefault();
-            if (process == null)
+            while (selectedProcess == null)
             {
-                Console.WriteLine($"Process {processName} not found.");
-                Thread.Sleep(500);
-                continue;
-            }
+                var processes = Process.GetProcesses()
+                                .Where(p => p.ProcessName == processName) // case-sensitive comparison
+                                .ToArray();
 
+                if (processes.Length == 0)
+                {
+                    Console.WriteLine($"Process '{processName}' not found.");
+                    Thread.Sleep(500);
+                    continue;
+                }
+                else if (processes.Length == 1)
+                {
+                    selectedProcess = processes[0];
+                    Console.WriteLine($"One process found: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
+                }
+                else
+                {
+                    Console.WriteLine($"Multiple processes found with name '{processName}':");
+                    for (int i = 0; i < processes.Length; i++)
+                    {
+                        Console.WriteLine($"{i + 1}: ID={processes[i].Id}, Name={processes[i].ProcessName}, StartTime={(processes[i].StartTime)}");
+                    }
+
+                    Console.WriteLine("Enter the number of the process you want to select (1-9):");
+                    string input = Console.ReadLine();
+
+                    if (int.TryParse(input, out int choice) &&
+                        choice >= 1 && choice <= processes.Length)
+                    {
+                        selectedProcess = processes[choice - 1];
+                        Console.WriteLine($"Selected process: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
+                    }
+                    else
+                    {
+                        Console.WriteLine("Invalid selection. Please try again.");
+                    }
+                }
+            }
+            var process = selectedProcess;
+            FindRealeraWindow(process);
             IntPtr processHandle = OpenProcess(PROCESS_WM_READ, false, process.Id);
             IntPtr moduleBase = process.MainModule.BaseAddress;
 
@@ -210,18 +247,31 @@ class Program
         PostMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
     }
 
-    static void FindRealeraWindow()
+    static void FindRealeraWindow(Process process)
     {
+        if (process == null)
+        {
+            Console.WriteLine("Process is null.");
+            return;
+        }
+
         EnumWindows((hWnd, lParam) =>
         {
-            System.Text.StringBuilder sb = new System.Text.StringBuilder(256);
-            GetWindowText(hWnd, sb, sb.Capacity);
-            if (sb.ToString().Contains("Realera 8.0"))
+            uint windowProcessId;
+            GetWindowThreadProcessId(hWnd, out windowProcessId);
+
+            if (windowProcessId == (uint)process.Id) // Only windows belonging to the provided process
             {
-                targetWindow = hWnd;
-                return false;
+                StringBuilder sb = new StringBuilder(256);
+                GetWindowText(hWnd, sb, sb.Capacity);
+
+                if (sb.ToString().Contains("Realera 8.0"))
+                {
+                    targetWindow = hWnd;
+                    return false; // Found it, stop enumeration
+                }
             }
-            return true;
+            return true; // Continue enumerating
         }, IntPtr.Zero);
     }
 }
