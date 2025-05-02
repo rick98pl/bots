@@ -5,6 +5,9 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Collections.Generic;
 using System.Text;
+using System.IO;
+using System.Text.Json;
+using System.Collections.Concurrent;
 
 class Program
 {
@@ -31,6 +34,11 @@ class Program
     const int PROCESS_WM_READ = 0x0010;
     const uint WM_KEYDOWN = 0x0100;
     const uint WM_KEYUP = 0x0101;
+
+    const int VK_LEFT = 0x25;
+    const int VK_UP = 0x26;
+    const int VK_RIGHT = 0x27;
+    const int VK_DOWN = 0x28;
 
     static class Keys
     {
@@ -60,6 +68,31 @@ class Program
     static IntPtr xAddressOffset = (IntPtr)0x009435FC;
     static IntPtr yAddressOffset = (IntPtr)0x00943600;
     static IntPtr zAddressOffset = (IntPtr)0x00943604;
+    static IntPtr targetIdOffset = (IntPtr)0x009432D4;
+    static IntPtr followOffset = (IntPtr)0x00943380;
+
+    // Memory values (updated by background thread)
+    static double curHP = 0, maxHP = 1, curMana = 0, maxMana = 1;
+    static int posX = 0, posY = 0, posZ = 0, targetId = 0, follow = 0;
+    static bool memoryReadActive = false;
+    static bool programRunning = true;
+
+    // Thread controls and flags
+    static bool autoPotionActive = false;
+    static bool isRecording = false;
+    static bool isPlaying = false;
+    static bool shouldRestartMemoryThread = false;
+
+    // Thread communication
+    static ConcurrentDictionary<string, bool> threadFlags = new ConcurrentDictionary<string, bool>();
+    static object memoryLock = new object();
+
+    static List<Coordinate> recordedCoords = new List<Coordinate>();
+    static string cordsFilePath = "cords.json";
+    static CoordinateData loadedCoords = null;
+    static Process selectedProcess = null;
+    static IntPtr processHandle = IntPtr.Zero;
+    static IntPtr moduleBase = IntPtr.Zero;
 
     struct Variable
     {
@@ -69,30 +102,48 @@ class Program
         public string Type;
     }
 
+    class Coordinate
+    {
+        public int X { get; set; }
+        public int Y { get; set; }
+        public int Z { get; set; }
+    }
+
+    class CoordinateData
+    {
+        public List<Coordinate> cords { get; set; } = new List<Coordinate>();
+    }
+
+    // Path playback status tracking
+    static int currentCoordIndex = -1;
+    static int totalCoords = 0;
+    static Coordinate currentTarget = null;
+    static bool debug = true;
+    static int debugTime = 2;
+
     static void Main()
     {
         Console.WriteLine($"Default HP Key: {DEFAULT_HP_KEY_NAME}");
         Console.WriteLine($"Default Mana Key: {DEFAULT_MANA_KEY_NAME}");
 
+        // Initialize thread flags
+        threadFlags["recording"] = false;
+        threadFlags["playing"] = false;
+        threadFlags["autopot"] = false;
+
+        if (!File.Exists(cordsFilePath))
+        {
+            SaveCoordinates(); // Create empty cords.json if missing
+        }
+
         string processName = "RealeraDX";
 
-        List<Variable> variables = new List<Variable>
+        while (programRunning)
         {
-            new Variable { Name = "Current Mana", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1240 }, Type = "Double" },
-            new Variable { Name = "Current HP", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1184 }, Type = "Double" },
-            new Variable { Name = "Max Mana", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1248 }, Type = "Double" },
-            new Variable { Name = "Max HP", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1192 }, Type = "Double" }
-        };
-
-        
-        Process selectedProcess = null;
-        while (true)
-        {
-            Console.Clear();
             while (selectedProcess == null)
             {
                 var processes = Process.GetProcesses()
-                                .Where(p => p.ProcessName == processName) // case-sensitive comparison
+                                .Where(p => p.ProcessName == processName)
                                 .ToArray();
 
                 if (processes.Length == 0)
@@ -129,106 +180,368 @@ class Program
                     }
                 }
             }
-            var process = selectedProcess;
-            FindRealeraWindow(process);
-            IntPtr processHandle = OpenProcess(PROCESS_WM_READ, false, process.Id);
-            IntPtr moduleBase = process.MainModule.BaseAddress;
 
-            double curHP = 0, maxHP = 1, curMana = 0, maxMana = 1;
-            int posX = 0, posY = 0, posZ = 0;
+            FindRealeraWindow(selectedProcess);
+            processHandle = OpenProcess(PROCESS_WM_READ, false, selectedProcess.Id);
+            moduleBase = selectedProcess.MainModule.BaseAddress;
 
-            foreach (var variable in variables)
+            // Start worker threads
+            StartWorkerThreads();
+
+            // Main loop for UI updates and handling user input
+            while (memoryReadActive && !shouldRestartMemoryThread)
             {
-                IntPtr address = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
-                byte[] buffer;
+                // Display stats periodically
+                DisplayStats();
 
-                try
+                // Handle user input
+                if (Console.KeyAvailable)
                 {
-                    if (variable.Offsets.Count > 0)
-                    {
-                        buffer = new byte[4];
-                        if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _)) continue;
-                        address = (IntPtr)BitConverter.ToInt32(buffer, 0);
-                        address = IntPtr.Add(address, variable.Offsets[0]);
-                    }
-
-                    buffer = variable.Type == "Double" ? new byte[8] : new byte[4];
-                    if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _)) continue;
-
-                    double value = variable.Type == "Double"
-                        ? BitConverter.ToDouble(buffer, 0)
-                        : BitConverter.ToInt32(buffer, 0);
-
-                    if (variable.Name.Contains("HP") && !variable.Name.Contains("Max")) curHP = value;
-                    if (variable.Name.Contains("Mana") && !variable.Name.Contains("Max")) curMana = value;
-                    if (variable.Name.Contains("Max HP")) maxHP = value;
-                    if (variable.Name.Contains("Max Mana")) maxMana = value;
-                }
-                catch { }
-            }
-
-            // Read coordinates
-            posX = ReadInt32(processHandle, moduleBase, xAddressOffset);
-            posY = ReadInt32(processHandle, moduleBase, yAddressOffset);
-            posZ = ReadInt32(processHandle, moduleBase, zAddressOffset);
-
-            double hpPercent = (curHP / maxHP) * 100;
-            double manaPercent = (curMana / maxMana) * 100;
-
-            Console.WriteLine("RealeraDX - Live Stats:\n");
-            Console.WriteLine("{0,-20} {1,15}", "Metric", "Value");
-            Console.WriteLine(new string('-', 40));
-            Console.WriteLine("{0,-20} {1,15:F0}", "Current HP", curHP);
-            Console.WriteLine("{0,-20} {1,15:F0}", "Max HP", maxHP);
-            Console.WriteLine("{0,-20} {1,15:F1}%", "HP %", hpPercent);
-            Console.WriteLine("{0,-20} {1,15:F0}", "Current Mana", curMana);
-            Console.WriteLine("{0,-20} {1,15:F0}", "Max Mana", maxMana);
-            Console.WriteLine("{0,-20} {1,15:F1}%", "Mana %", manaPercent);
-            Console.WriteLine(new string('-', 40));
-            Console.WriteLine($"Position: X={posX}, Y={posY}, Z={posZ}");
-
-            var now = DateTime.Now;
-            var thresholdms = 1000;
-
-            if (targetWindow != IntPtr.Zero)
-            {
-                if (hpPercent <= DEFAULT_HP_THRESHOLD)
-                {
-                    if ((now - lastHpActionTime).TotalMilliseconds >= thresholdms)
-                    {
-                        Console.WriteLine($"⚠ HP below threshold ({DEFAULT_HP_THRESHOLD}%), sending {DEFAULT_HP_KEY_NAME}");
-                        SendKeyPress(DEFAULT_HP_KEY);
-                        lastHpActionTime = now.AddMilliseconds(random.Next(0, 100));
-                    }
-                    else
-                    {
-                        double wait = thresholdms - (now - lastHpActionTime).TotalMilliseconds;
-                        Console.WriteLine($"(HP) {DEFAULT_HP_KEY_NAME} should be sent but cooldown: {wait:F0} ms left");
-                    }
+                    var key = Console.ReadKey(true).Key;
+                    HandleUserInput(key);
                 }
 
-                if (manaPercent <= DEFAULT_MANA_THRESHOLD)
-                {
-                    if ((now - lastManaActionTime).TotalMilliseconds >= thresholdms)
-                    {
-                        Console.WriteLine($"⚠ Mana below threshold ({DEFAULT_MANA_THRESHOLD}%), sending {DEFAULT_MANA_KEY_NAME}");
-                        SendKeyPress(DEFAULT_MANA_KEY);
-                        lastManaActionTime = now.AddMilliseconds(random.Next(0, 100));
-                    }
-                    else
-                    {
-                        double wait = thresholdms - (now - lastManaActionTime).TotalMilliseconds;
-                        Console.WriteLine($"(Mana) {DEFAULT_MANA_KEY_NAME} should be sent but cooldown: {wait:F0} ms left");
-                    }
-                }
-            }
-            else
-            {
-                Console.WriteLine("Realera 8.0 window not found.");
+                Thread.Sleep(250); // Refresh UI at a reasonable rate
             }
 
-            Thread.Sleep(256);
+            if (shouldRestartMemoryThread)
+            {
+                shouldRestartMemoryThread = false;
+                StopWorkerThreads();
+                selectedProcess = null; // Reset to find process again
+            }
         }
+    }
+
+    static void StartWorkerThreads()
+    {
+        // Reset flags
+        memoryReadActive = true;
+
+        // Start memory reading thread
+        Thread memoryThread = new Thread(MemoryReadingThread);
+        memoryThread.IsBackground = true;
+        memoryThread.Name = "MemoryReader";
+        memoryThread.Start();
+
+        // Start auto-potion thread
+        Thread autoPotionThread = new Thread(AutoPotionThread);
+        autoPotionThread.IsBackground = true;
+        autoPotionThread.Name = "AutoPotion";
+        autoPotionThread.Start();
+
+        Console.WriteLine("Worker threads started successfully");
+    }
+
+    static void StopWorkerThreads()
+    {
+        memoryReadActive = false;
+        threadFlags["recording"] = false;
+        threadFlags["playing"] = false;
+
+        Console.WriteLine("Worker threads stopping...");
+        Thread.Sleep(1000); // Give threads time to gracefully exit
+    }
+
+    static List<Variable> variables = new List<Variable>
+        {
+            new Variable { Name = "Current Mana", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1240 }, Type = "Double" },
+            new Variable { Name = "Current HP", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1184 }, Type = "Double" },
+            new Variable { Name = "Max Mana", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1248 }, Type = "Double" },
+            new Variable { Name = "Max HP", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1192 }, Type = "Double" }
+        };
+
+    static void MemoryReadingThread()
+    {
+        Console.WriteLine("Memory reading thread started");
+
+        while (memoryReadActive)
+        {
+            try
+            {
+                // Check if process is still running
+                if (selectedProcess.HasExited)
+                {
+                    shouldRestartMemoryThread = true;
+                    break;
+                }
+
+                // Read memory values
+                foreach (var variable in variables)
+                {
+                    try
+                    {
+                        IntPtr address = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
+                        byte[] buffer;
+
+                        if (variable.Offsets.Count > 0)
+                        {
+                            buffer = new byte[4];
+                            if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _)) continue;
+                            address = (IntPtr)BitConverter.ToInt32(buffer, 0);
+                            address = IntPtr.Add(address, variable.Offsets[0]);
+                        }
+
+                        buffer = variable.Type == "Double" ? new byte[8] : new byte[4];
+                        if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _)) continue;
+
+                        double value = variable.Type == "Double"
+                            ? BitConverter.ToDouble(buffer, 0)
+                            : BitConverter.ToInt32(buffer, 0);
+
+                        lock (memoryLock)
+                        {
+                            if (variable.Name.Contains("HP") && !variable.Name.Contains("Max")) curHP = value;
+                            if (variable.Name.Contains("Mana") && !variable.Name.Contains("Max")) curMana = value;
+                            if (variable.Name.Contains("Max HP")) maxHP = value;
+                            if (variable.Name.Contains("Max Mana")) maxMana = value;
+                        }
+                    }
+                    catch { }
+                }
+
+                // Read position values
+                lock (memoryLock)
+                {
+                    posX = ReadInt32(processHandle, moduleBase, xAddressOffset);
+                    posY = ReadInt32(processHandle, moduleBase, yAddressOffset);
+                    posZ = ReadInt32(processHandle, moduleBase, zAddressOffset);
+                    targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
+                    follow = ReadInt32(processHandle, moduleBase, followOffset);
+
+                    // Record coordinate if recording is active
+                    if (threadFlags["recording"])
+                    {
+                        RecordCoordinate(posX, posY, posZ);
+                    }
+                }
+
+                Thread.Sleep(1); // Read memory at high frequency
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Memory reading error: {ex.Message}");
+                shouldRestartMemoryThread = true;
+                break;
+            }
+        }
+        Console.WriteLine("Memory reading thread exited");
+    }
+
+    static void AutoPotionThread()
+    {
+        Console.WriteLine("Auto-potion thread started");
+
+        while (memoryReadActive)
+        {
+            try
+            {
+                if (threadFlags["autopot"] && targetWindow != IntPtr.Zero)
+                {
+                    var now = DateTime.Now;
+                    var thresholdms = 1000;
+                    double hpPercent, manaPercent;
+
+                    lock (memoryLock)
+                    {
+                        hpPercent = (curHP / maxHP) * 100;
+                        manaPercent = (curMana / maxMana) * 100;
+                    }
+
+                    if (hpPercent == 0)
+                    {
+                        Thread.Sleep(200);
+                        continue;
+                    }
+
+                    if (hpPercent <= DEFAULT_HP_THRESHOLD)
+                    {
+                        if ((now - lastHpActionTime).TotalMilliseconds >= thresholdms)
+                        {
+                            Console.WriteLine($"⚠ HP below threshold ({DEFAULT_HP_THRESHOLD}%), current HP: {curHP}/{maxHP} ({hpPercent:F1}%), sending {DEFAULT_HP_KEY_NAME}");
+                            SendKeyPress(DEFAULT_HP_KEY);
+                            lastHpActionTime = now.AddMilliseconds(random.Next(0, 100));
+                        }
+                    }
+
+                    if (manaPercent <= DEFAULT_MANA_THRESHOLD)
+                    {
+                        if ((now - lastManaActionTime).TotalMilliseconds >= thresholdms)
+                        {
+                            Console.WriteLine($"⚠ Mana below threshold ({DEFAULT_MANA_THRESHOLD}%), sending {DEFAULT_MANA_KEY_NAME}");
+                            SendKeyPress(DEFAULT_MANA_KEY);
+                            lastManaActionTime = now.AddMilliseconds(random.Next(0, 100));
+                        }
+                    }
+                }
+
+                Thread.Sleep(100); // Check potions at moderate frequency
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Auto-potion error: {ex.Message}");
+                Thread.Sleep(1000);
+            }
+        }
+        Console.WriteLine("Auto-potion thread exited");
+    }
+
+    static void DisplayStats()
+    {
+        Console.Clear();
+        double hpPercent;
+        double manaPercent;
+        int currentX, currentY, currentZ;
+
+        lock (memoryLock)
+        {
+            hpPercent = (curHP / maxHP) * 100;
+            manaPercent = (curMana / maxMana) * 100;
+            currentX = posX;
+            currentY = posY;
+            currentZ = posZ;
+        }
+
+        Console.WriteLine("RealeraDX - Live Stats:\n");
+        Console.WriteLine("{0,-20} {1,15}", "Metric", "Value");
+        Console.WriteLine(new string('-', 40));
+        Console.WriteLine("{0,-20} {1,15:F0}", "Current HP", curHP);
+        Console.WriteLine("{0,-20} {1,15:F0}", "Max HP", maxHP);
+        Console.WriteLine("{0,-20} {1,15:F1}%", "HP %", hpPercent);
+        Console.WriteLine("{0,-20} {1,15:F0}", "Current Mana", curMana);
+        Console.WriteLine("{0,-20} {1,15:F0}", "Max Mana", maxMana);
+        Console.WriteLine("{0,-20} {1,15:F1}%", "Mana %", manaPercent);
+        Console.WriteLine("{0,-20} {1,15:F0}", "targetId", targetId);
+        Console.WriteLine("{0,-20} {1,15:F0}", "follow", follow);
+        Console.WriteLine(new string('-', 40));
+        Console.WriteLine($"Position: X={currentX}, Y={currentY}, Z={currentZ}");
+
+        if (threadFlags["recording"])
+        {
+            Console.WriteLine("🔴 Recording coordinates...");
+            Console.WriteLine($"Coordinates recorded: {recordedCoords.Count}");
+        }
+
+        if (threadFlags["playing"] && currentTarget != null)
+        {
+            Console.WriteLine("\n▶️ PLAYING PATH:");
+            Console.WriteLine(new string('-', 40));
+            Console.WriteLine($"Progress: {currentCoordIndex + 1}/{totalCoords} ({(((float)(currentCoordIndex + 1) / totalCoords) * 100):F1}%)");
+            Console.WriteLine($"Current: X={currentX}, Y={currentY}, Z={currentZ}");
+            Console.WriteLine($"Target:  X={currentTarget.X}, Y={currentTarget.Y}, Z={currentTarget.Z}");
+
+            int distanceX = Math.Abs(currentTarget.X - currentX);
+            int distanceY = Math.Abs(currentTarget.Y - currentY);
+            Console.WriteLine($"Distance: {distanceX + distanceY} steps");
+
+            // Draw a simple progress bar
+            int barLength = 20;
+            int progress = (int)Math.Round((double)(currentCoordIndex + 1) / totalCoords * barLength);
+            Console.Write("[");
+            for (int i = 0; i < barLength; i++)
+            {
+                Console.Write(i < progress ? "█" : " ");
+            }
+            Console.WriteLine($"] {(((float)(currentCoordIndex + 1) / totalCoords) * 100):F1}%");
+        }
+
+        Console.WriteLine("\nActive Features:");
+        Console.WriteLine($"Auto-Potions: {(threadFlags["autopot"] ? "✅ ON" : "❌ OFF")} (A)");
+        Console.WriteLine($"Recording: {(threadFlags["recording"] ? "✅ ON" : "❌ OFF")} (R)");
+        Console.WriteLine($"Playback: {(threadFlags["playing"] ? "✅ ON" : "❌ OFF")} (P)");
+
+        Console.WriteLine("\nCommands:");
+        Console.WriteLine("R - Start/Stop Recording");
+        Console.WriteLine("P - Start/Stop Path Playback");
+        Console.WriteLine("A - Toggle Auto-Potions");
+        Console.WriteLine("Q - Quit");
+    }
+
+    static void HandleUserInput(ConsoleKey key)
+    {
+        switch (key)
+        {
+            case ConsoleKey.R:
+                // Toggle recording
+                if (!threadFlags["recording"] && !threadFlags["playing"])
+                {
+                    Console.Write("Start recording coordinates? (y/n): ");
+                    string confirm = Console.ReadLine();
+                    if (confirm.ToLower() == "y")
+                    {
+                        threadFlags["recording"] = true;
+                        recordedCoords.Clear();
+                        Console.WriteLine("Started recording coordinates...");
+                    }
+                }
+                else if (threadFlags["recording"])
+                {
+                    threadFlags["recording"] = false;
+                    SaveCoordinates();
+                    Console.WriteLine("Stopped recording and saved coordinates.");
+                }
+                break;
+
+            case ConsoleKey.P:
+                // Toggle path playback
+                if (!threadFlags["playing"] && !threadFlags["recording"])
+                {
+                    if (File.Exists(cordsFilePath))
+                    {
+                        threadFlags["playing"] = true;
+                        StartPathPlayback();
+                    }
+                    else
+                    {
+                        Console.WriteLine("cords.json not found!");
+                        Thread.Sleep(1000);
+                    }
+                }
+                else if (threadFlags["playing"])
+                {
+                    // Stop playback
+                    threadFlags["playing"] = false;
+                    Console.WriteLine("Path playback stopped.");
+                }
+                break;
+
+            case ConsoleKey.A:
+                // Toggle auto-potions
+                threadFlags["autopot"] = !threadFlags["autopot"];
+                Console.WriteLine($"Auto-potions {(threadFlags["autopot"] ? "enabled" : "disabled")}");
+                break;
+
+            case ConsoleKey.Q:
+                programRunning = false;
+                memoryReadActive = false;
+                threadFlags["recording"] = false;
+                threadFlags["playing"] = false;
+                threadFlags["autopot"] = false;
+                break;
+        }
+    }
+
+    static void StartPathPlayback()
+    {
+        Thread playThread = new Thread(() =>
+        {
+            try
+            {
+                PlayCoordinates();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Path playback error: {ex.Message}");
+            }
+            finally
+            {
+                // Make sure to reset flag if thread exits for any reason
+                threadFlags["playing"] = false;
+            }
+        });
+        playThread.IsBackground = true;
+        playThread.Name = "PathPlayer";
+        playThread.Start();
     }
 
     static int ReadInt32(IntPtr handle, IntPtr moduleBase, IntPtr offset)
@@ -249,18 +562,12 @@ class Program
 
     static void FindRealeraWindow(Process process)
     {
-        if (process == null)
-        {
-            Console.WriteLine("Process is null.");
-            return;
-        }
-
         EnumWindows((hWnd, lParam) =>
         {
             uint windowProcessId;
             GetWindowThreadProcessId(hWnd, out windowProcessId);
 
-            if (windowProcessId == (uint)process.Id) // Only windows belonging to the provided process
+            if (windowProcessId == (uint)process.Id)
             {
                 StringBuilder sb = new StringBuilder(256);
                 GetWindowText(hWnd, sb, sb.Capacity);
@@ -268,10 +575,567 @@ class Program
                 if (sb.ToString().Contains("Realera 8.0"))
                 {
                     targetWindow = hWnd;
-                    return false; // Found it, stop enumeration
+                    return false;
                 }
             }
-            return true; // Continue enumerating
+            return true;
         }, IntPtr.Zero);
     }
+
+    static void SaveCoordinates()
+    {
+        CoordinateData data = new CoordinateData { cords = recordedCoords };
+        string json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(cordsFilePath, json);
+    }
+
+    static void RecordCoordinate(int x, int y, int z)
+    {
+        if (recordedCoords.Count == 0 || recordedCoords.Last().X != x || recordedCoords.Last().Y != y || recordedCoords.Last().Z != z)
+        {
+            recordedCoords.Add(new Coordinate { X = x, Y = y, Z = z });
+        }
+    }
+
+    static void PlayCoordinates()
+    {
+        try
+        {
+            loadedCoords = JsonSerializer.Deserialize<CoordinateData>(File.ReadAllText(cordsFilePath));
+            if (loadedCoords == null || loadedCoords.cords.Count == 0)
+            {
+                Console.WriteLine("No coordinates to play!");
+                threadFlags["playing"] = false;
+                return;
+            }
+            // Initialize path tracking variables
+            totalCoords = loadedCoords.cords.Count;
+            bool playingInReverse = false;
+
+            // Main playback loop - will continue until stopped by user
+            while (threadFlags["playing"] && memoryReadActive)
+            {
+                // Find closest coordinate to start from
+                int currentX, currentY, currentZ;
+                lock (memoryLock)
+                {
+                    currentX = posX;
+                    currentY = posY;
+                    currentZ = posZ;
+                }
+
+                List<Coordinate> currentPath = loadedCoords.cords;
+                int startIndex;
+
+                if (!playingInReverse)
+                {
+                    Coordinate start = FindClosestCoordinate(currentX, currentY, currentZ, currentPath);
+                    startIndex = currentPath.IndexOf(start);
+                    Console.WriteLine($"Starting from coordinate index {startIndex}: X={start.X}, Y={start.Y}, Z={start.Z}");
+                    Console.WriteLine($"Total waypoints: {totalCoords}");
+                }
+                else
+                {
+                    // If playing in reverse, start from the beginning of the reversed path
+                    startIndex = 0;
+                    Console.WriteLine("Playing path in reverse order");
+                    Console.WriteLine($"Total waypoints: {totalCoords}");
+                }
+
+                // Determine the range to iterate
+                int startPos = playingInReverse ? currentPath.Count - 1 : startIndex;
+                int endPos = playingInReverse ? 0 : currentPath.Count;
+                int increment = playingInReverse ? -1 : 1;
+
+                // Loop through coordinates in forward or reverse order
+                for (int i = startPos;
+                    (playingInReverse ? i >= endPos : i < endPos) && threadFlags["playing"];
+                    i += 1 * increment) // Step by 2, not 1
+                {
+                    currentCoordIndex = playingInReverse ? currentPath.Count - 1 - i : i;
+                    currentTarget = currentPath[i];
+
+                    int waypointNumber;
+                    int totalWaypoints;
+                    string directionText;
+
+                    if (playingInReverse)
+                    {
+                        waypointNumber = Math.Abs(i - startPos) + 1;
+                        totalWaypoints = startPos + 1;
+                        directionText = "Reverse";
+                    }
+                    else
+                    {
+                        waypointNumber = Math.Abs(i - startPos) + 1;
+                        totalWaypoints = totalCoords - startIndex;
+                        directionText = "Forward";
+                    }
+
+                    Console.WriteLine($"Moving to waypoint {waypointNumber}/{totalWaypoints}: " +
+                                      $"X={currentTarget.X}, Y={currentTarget.Y}, Z={currentTarget.Z} " +
+                                      $"({directionText})");
+
+                    // Try to reach this coordinate
+                    if (!WalkTo(currentTarget, currentPath))
+                    {
+                        if (!threadFlags["playing"])
+                        {
+                            Console.WriteLine("Path following interrupted by user.");
+                            break;
+                        }
+
+                        // [ADDED]: Re-find the closest waypoint if walk failed
+                        Console.WriteLine("WalkTo failed, recalculating closest waypoint...");
+
+                        // Recalculate position
+                        lock (memoryLock)
+                        {
+                            currentX = posX;
+                            currentY = posY;
+                            currentZ = posZ;
+                        }
+
+                        Coordinate newStart = FindClosestCoordinate(currentX, currentY, currentZ, currentPath);
+                        i = currentPath.IndexOf(newStart) - increment; // -increment because the loop will +increment after
+
+                        Console.WriteLine($"New closest waypoint found at index {i + increment}: X={newStart.X}, Y={newStart.Y}, Z={newStart.Z}");
+
+                        // Continue with new coordinate without changing direction
+                        continue;
+                    }
+
+                    // Small pause at each waypoint
+                    Thread.Sleep(1);
+                }
+
+                // Toggle direction when we reach the end
+                playingInReverse = !playingInReverse;
+
+                // Small pause between direction changes
+                Console.WriteLine(playingInReverse ?
+                    "Destination reached. Reversing direction..." :
+                    "Start reached. Resuming forward direction...");
+                Thread.Sleep(1000);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error playing coordinates: {ex.Message}");
+        }
+        finally
+        {
+            // Reset tracking variables
+            currentCoordIndex = -1;
+            totalCoords = 0;
+            currentTarget = null;
+        }
+    }
+
+
+    static Coordinate FindClosestCoordinate(int x, int y, int z, List<Coordinate> coords)
+    {
+        return coords.OrderBy(c => Math.Abs(c.X - x) + Math.Abs(c.Y - y) + Math.Abs(c.Z - z)).First();
+    }
+
+    static bool WalkTo(Coordinate target, List<Coordinate> coords)
+    {
+        int currentX, currentY, currentZ;
+        int targetX = target.X;
+        int targetY = target.Y;
+        DateTime startTime = DateTime.Now;
+        TimeSpan maxWaitTime = TimeSpan.FromSeconds(30);
+        int lastX = -1, lastY = -1;
+        DateTime lastMoveTime = DateTime.Now;
+
+        double squareSize = 72.6667; // Size of one tile in pixels
+        int centerX = 548;
+        int centerY = 648;
+        int currentFollow = 0;
+
+        while (threadFlags["playing"])
+        {
+            lock (memoryLock)
+            {
+                currentX = posX;
+                currentY = posY;
+                currentZ = posZ;
+                currentFollow = follow;
+            }
+
+            if (currentFollow == 0)
+            {
+                ClickFollow(targetWindow);
+                Thread.Sleep(100);
+                continue;
+            }
+
+            int currentTargetId = GetTargetId();
+
+            // If fighting a monster, wait
+            if (currentTargetId != 0)
+            {
+                Thread.Sleep(300);
+                lastX = currentX;   // [ADDED] Update lastX and lastY so we don't incorrectly detect stuck during fight
+                lastY = currentY;
+                lastMoveTime = DateTime.Now;
+                continue;
+            }
+
+            // [ADDED] Check if stuck (no position change for >1 second)
+            if (currentX == lastX && currentY == lastY && targetId == 0)
+            {
+                if ((DateTime.Now - lastMoveTime).TotalMilliseconds > 3000)
+                {
+                    if (debug)
+                    {
+                        Console.WriteLine("[DEBUG] No movement detected for more than 1 second, exiting WalkTo.");
+                        Thread.Sleep(debugTime);
+                    }
+                    return false;
+                }
+            }
+            else
+            {
+                // Position changed, update tracking variables
+                lastX = currentX;
+                lastY = currentY;
+                lastMoveTime = DateTime.Now;
+            }
+
+            // Check if reached target
+            int diffX = targetX - currentX;
+            int diffY = targetY - currentY;
+            if (Math.Abs(diffX) <= 0 && Math.Abs(diffY) <= 0)
+            {
+                if (debug)
+                {
+                    Console.WriteLine($"[DEBUG] Reached destination (within 1 tile) at X={currentX}, Y={currentY}.");
+                    Thread.Sleep(debugTime);
+                }
+                return true;
+            }
+
+            WaitForTargetClear();
+            ClickAroundCharacter(targetWindow);
+            VirtualClick(targetWindow, diffX, diffY);
+            //SendF6IfNoTarget();
+            
+
+            Thread.Sleep(200); // Allow some time to walk
+        }
+
+        return false;
+    }
+
+
+
+    // --- Helper methods added below ---
+
+    static void WaitForTargetClear()
+    {
+        Thread.Sleep(100); // Wait 100ms first
+
+        // Now check if targetId is zero
+        while (GetTargetId() != 0)
+        {
+            Thread.Sleep(100); // Keep waiting
+        }
+    }
+    const int VK_F6 = 0x75;
+
+    static void SendF6IfNoTarget()
+    {
+        if (GetTargetId() == 0)
+        {
+            SendKeyPress(VK_F6); // Press F6 if no target
+        }
+    }
+
+    // Assuming you already have this method or field
+    static int GetTargetId()
+    {
+        lock (memoryLock)
+        {
+            return targetId;
+        }
+    }
+
+    static void MoveToCoordinate(Coordinate coord)
+    {
+        lock (memoryLock)
+        {
+            if (posX < coord.X) SendKeyPress(VK_RIGHT);
+            else if (posX > coord.X) SendKeyPress(VK_LEFT);
+            else if (posY < coord.Y) SendKeyPress(VK_DOWN);
+            else if (posY > coord.Y) SendKeyPress(VK_UP);
+        }
+
+        WaitForTargetClear();
+        SendF6IfNoTarget();
+        Thread.Sleep(100);
+    }
+
+    // --- Virtual Mouse Click using PostMessage ---
+    const int WM_LBUTTONDOWN = 0x0201;
+    const int WM_LBUTTONUP = 0x0202;
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct INPUT
+    {
+        public uint type;
+        public InputUnion u;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    struct InputUnion
+    {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    const int INPUT_MOUSE = 0;
+    const uint MOUSEEVENTF_MOVE = 0x0001;
+    const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+    const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    const uint MOUSEEVENTF_LEFTUP = 0x0004;
+
+    [DllImport("user32.dll")]
+    static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+    //static void VirtualClick(IntPtr hWnd)
+    //{
+    //    Console.WriteLine("RealClicking with SendInput");
+
+    //    // Get client rect
+    //    GetClientRect(hWnd, out RECT rect);
+
+    //    // Calculate center + 30 offset
+    //    int centerX = (rect.Right - rect.Left) / 2 + 30;
+    //    int centerY = (rect.Bottom - rect.Top) / 2 + 30;
+
+    //    // Convert client coordinates to screen coordinates
+    //    POINT point = new POINT { X = centerX, Y = centerY };
+    //    ClientToScreen(hWnd, ref point);
+
+    //    // Calculate absolute coordinates (0-65535 scale)
+    //    int screenWidth = GetSystemMetrics(0);
+    //    int screenHeight = GetSystemMetrics(1);
+
+    //    int absX = (point.X * 65536) / screenWidth;
+    //    int absY = (point.Y * 65536) / screenHeight;
+
+    //    // Prepare inputs
+    //    INPUT[] inputs = new INPUT[2];
+
+    //    inputs[0].type = INPUT_MOUSE;
+    //    inputs[0].u.mi.dx = absX;
+    //    inputs[0].u.mi.dy = absY;
+    //    inputs[0].u.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_LEFTDOWN;
+    //    inputs[0].u.mi.mouseData = 0;
+    //    inputs[0].u.mi.dwExtraInfo = IntPtr.Zero;
+    //    inputs[0].u.mi.time = 0;
+
+    //    inputs[1].type = INPUT_MOUSE;
+    //    inputs[1].u.mi.dx = absX;
+    //    inputs[1].u.mi.dy = absY;
+    //    inputs[1].u.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_LEFTUP;
+    //    inputs[1].u.mi.mouseData = 0;
+    //    inputs[1].u.mi.dwExtraInfo = IntPtr.Zero;
+    //    inputs[1].u.mi.time = 0;
+
+    //    // Send inputs
+    //    SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    //}
+
+    [DllImport("user32.dll")]
+    static extern int GetSystemMetrics(int nIndex);
+    static void VirtualClick(IntPtr hWnd, int x, int y)
+    {
+        Console.WriteLine("VirtualClicking (PostMessage version)");
+
+        // Get client area size
+        GetClientRect(hWnd, out RECT rect);
+
+        // Calculate the "character center" first (base point)
+        int baseX = (rect.Right - rect.Left) / 2 - 186;
+        int baseY = (rect.Bottom - rect.Top) / 2 - 300;
+
+        // Each x,y unit moves 72 pixels
+        int targetX = baseX + (x * 68);
+        int targetY = baseY + (y * 68);
+
+        // lParam packs the x and y into a single 32-bit value
+        int lParam = (targetY << 16) | (targetX & 0xFFFF);
+
+        int currentTarget;
+        lock (memoryLock)
+        {
+            currentTarget = targetId;
+        }
+        if (targetId != 0)
+        {
+            return;
+        }
+        // First move the mouse inside the window
+        PostMessage(hWnd, 0x0200, IntPtr.Zero, (IntPtr)lParam);
+
+        Thread.Sleep(16); // Small delay to simulate real move
+
+        // Then send left button down
+        PostMessage(hWnd, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
+
+        Thread.Sleep(16); // Short pause to simulate holding click
+
+        // Then send left button up
+        PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
+        Thread.Sleep(1); // Short pause to simulate holding click
+
+        lParam = (baseY << 16) | (baseX & 0xFFFF);
+        //PostMessage(hWnd, 0x0200, IntPtr.Zero, (IntPtr)lParam);
+    }
+
+    [DllImport("user32.dll")]
+    static extern bool SetCursorPos(int X, int Y);
+    public static void ClickFollow(IntPtr hWnd)
+    {
+        Console.WriteLine("CLICKING FOLLOW");
+
+        GetClientRect(hWnd, out RECT rect);
+
+        int baseX = (rect.Right - rect.Left) / 2 - 186;
+        int baseY = (rect.Bottom - rect.Top) / 2 - 300;
+
+        int targetX = baseX + (1 * 72);
+        int targetY = baseY - (5 * 72);
+
+        targetY += 74;
+        targetX += 725;
+
+        // Convert target to screen coordinates
+        POINT pt = new POINT { X = targetX, Y = targetY };
+        ClientToScreen(hWnd, ref pt);
+
+        // Move real mouse cursor
+        //SetCursorPos(pt.X, pt.Y);
+        int currentFollow = 0;
+        lock (memoryLock)
+        {
+            currentFollow = follow;
+        }
+
+
+        while (currentFollow == 0)
+        {
+            Thread.Sleep(500);
+            lock (memoryLock)
+            {
+                currentFollow = follow;
+            }
+            if(currentFollow == 1)
+            {
+                return;
+            }
+            // Now simulate click at the calculated position
+            int lParam = (targetY << 16) | (targetX & 0xFFFF);
+
+            PostMessage(hWnd, 0x0200, IntPtr.Zero, (IntPtr)lParam); // WM_MOUSEMOVE
+            Thread.Sleep(16);
+
+            PostMessage(hWnd, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
+            Thread.Sleep(16);
+
+            PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
+            
+        }
+    }
+
+    static void ClickAroundCharacter(IntPtr hWnd)
+    {
+        double squareSize = 68; // Size of one tile
+       
+
+        // Directions: (X offset, Y offset) in tiles
+        (int dx, int dy)[] directions = new (int, int)[]
+        {
+        (0, -1),  // Top
+        (1, -1),  // Top-Right
+        (1, 0),   // Right
+        (1, 1),   // Bottom-Right
+        (0, 1),   // Bottom
+        (-1, 1),  // Bottom-Left
+        (-1, 0),  // Left
+        (-1, -1)  // Top-Left
+        };
+
+        // Get client area size
+        GetClientRect(hWnd, out RECT rect);
+        // Calculate the "character center" first (base point)
+        int centerX = (rect.Right - rect.Left) / 2 - 186;
+        int centerY = (rect.Bottom - rect.Top) / 2 - 300;
+        foreach (var (dx, dy) in directions)
+        {
+            int clickX = centerX + (int)(dx * squareSize);
+            int clickY = centerY + (int)(dy * squareSize);
+
+            VirtualRightClick(targetWindow, clickX, clickY);
+            Thread.Sleep(1); // Small delay between clicks
+
+            int currentTargetId = GetTargetId();
+            if (currentTargetId != 0)
+            {
+                Console.WriteLine($"Target acquired after clicking at ({clickX}, {clickY}). Target ID: {currentTargetId}");
+                return; // Exit early if something is targeted
+            }
+        }
+
+        Console.WriteLine("Finished clicking all 8 tiles, no target found.");
+    }
+
+    const int WM_MOUSEMOVE = 0x0200;
+    const int WM_RBUTTONDOWN = 0x0204;
+    const int WM_RBUTTONUP = 0x0205;
+
+    static void VirtualRightClick(IntPtr hWnd, int x, int y)
+    {
+        int lParam = (y << 16) | (x & 0xFFFF);
+
+        PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
+        Thread.Sleep(1);
+
+        PostMessage(hWnd, WM_RBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
+        Thread.Sleep(1);
+
+        PostMessage(hWnd, WM_RBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
+        Thread.Sleep(1);
+    }
+
 }
