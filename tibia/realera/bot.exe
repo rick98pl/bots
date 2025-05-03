@@ -1140,6 +1140,8 @@ class Program
             int lParam = (targetY << 16) | (targetX & 0xFFFF);
 
             // Send click
+            SendKeyPress(VK_ESCAPE); // Press ESC to cancel targeting
+            Thread.Sleep(25);
             PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)lParam);
             Thread.Sleep(50);
             PostMessage(targetWindow, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
@@ -1231,6 +1233,46 @@ class Program
     [DllImport("user32.dll")]
     static extern bool SetCursorPos(int X, int Y);
 
+    static void CloseCorspe(IntPtr hWnd)
+    {
+        // Define the specific coordinates to click
+        (int x, int y)[] locations = new (int, int)[]
+        {
+        (1262, 320)
+        };
+
+        // Get client area size to verify window is ready
+        GetClientRect(hWnd, out RECT rect);
+
+        // Ensure the window is large enough for these coordinates
+        if (rect.Right < 1237 || rect.Bottom < 319)
+        {
+            Console.WriteLine($"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates");
+        }
+
+        foreach (var location in locations)
+        {
+            int x = location.x;
+            int y = location.y;
+
+            // Convert client coordinates to screen coordinates
+            POINT screenPoint = new POINT { X = x, Y = y };
+            ClientToScreen(hWnd, ref screenPoint);
+
+            // Move mouse to the location
+            //Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
+            //SetCursorPos(screenPoint.X, screenPoint.Y);
+            Thread.Sleep(1); // Pause so you can see the mouse movement
+
+            // Right-click at the location
+            //Console.WriteLine($"Right-clicking at ({x}, {y})");
+            VirtualLeftClick(hWnd, x, y);
+            Thread.Sleep(1); // Small delay between clicks
+        }
+
+        //Console.WriteLine("Finished clicking all specified locations.");
+    }
+
     static void CorpseEatFood(IntPtr hWnd)
     {
         // Define the specific coordinates to click
@@ -1239,7 +1281,11 @@ class Program
         (1126, 325),
         (1165, 325),
         (1203, 325),
-        (1236, 325)
+        (1236, 325),
+        (1126, 340),
+        (1165, 340),
+        (1203, 340),
+        (1236, 340)
         };
 
         // Get client area size to verify window is ready
@@ -1269,15 +1315,6 @@ class Program
             //Console.WriteLine($"Right-clicking at ({x}, {y})");
             VirtualRightClick(hWnd, x, y);
             Thread.Sleep(1); // Small delay between clicks
-
-            // Optional: Check for target after each click
-            int currentTargetId = GetTargetId();
-            if (currentTargetId != 0)
-            {
-                Console.WriteLine($"Target acquired after clicking at ({x}, {y}). Target ID: {currentTargetId}");
-                // You can choose to return here if you want to stop after finding a target
-                // return;
-            }
         }
 
         //Console.WriteLine("Finished clicking all specified locations.");
@@ -1375,21 +1412,6 @@ class Program
         Console.WriteLine($"Completed drag from ({sourceX}, {sourceY}) to ({centerX}, {centerY})");
     }
 
-    // Helper function for smooth dragging with intermediate positions
-    static void SmoothDrag(IntPtr hWnd, int startX, int startY, int endX, int endY)
-    {
-        int steps = 5; // Number of intermediate positions
-        for (int i = 1; i <= steps; i++)
-        {
-            int x = startX + (endX - startX) * i / (steps + 1);
-            int y = startY + (endY - startY) * i / (steps + 1);
-
-            IntPtr lParam = MakeLParam(x, y);
-            SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lParam);
-            Thread.Sleep(10); // Small delay between steps
-        }
-    }
-
     const int MK_LBUTTON = 0x0001;
 
     // MakeLParam function remains the same
@@ -1440,7 +1462,7 @@ class Program
         // Calculate the "character center" first (base point)
         int centerX = (rect.Right - rect.Left) / 2 - 186;
         int centerY = (rect.Bottom - rect.Top) / 2 - 300;
-
+       
         foreach (var direction in directions)
         {
             int dx = direction.dx;
@@ -1451,6 +1473,7 @@ class Program
 
             VirtualRightClick(targetWindow, clickX, clickY);
             Thread.Sleep(1); // Small delay between clicks
+
             int currentTargetId = GetTargetId();
             if (currentTargetId != 0)
             {
@@ -1458,9 +1481,10 @@ class Program
                 return; // Exit early if something is targeted
             }
         }
-
-        //Console.WriteLine("Finished clicking all 8 tiles, no target found.");
         CorpseEatFood(targetWindow);
+        CloseCorspe(targetWindow);
+        //Console.WriteLine("Finished clicking all 8 tiles, no target found.");
+
     }
 
     const int WM_MOUSEMOVE = 0x0200;
@@ -1484,6 +1508,20 @@ class Program
         Thread.Sleep(1);
 
         PostMessage(hWnd, WM_RBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
+        Thread.Sleep(1);
+    }
+
+    static void VirtualLeftClick(IntPtr hWnd, int x, int y)
+    {
+        int lParam = (y << 16) | (x & 0xFFFF);
+
+        PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
+        Thread.Sleep(1);
+
+        PostMessage(hWnd, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
+        Thread.Sleep(1);
+
+        PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
         Thread.Sleep(1);
     }
 
@@ -1721,4 +1759,5 @@ class Program
 
         return (monsterX, monsterY, monsterZ, monsterName);
     }
+
 }
