@@ -52,8 +52,8 @@ class Program
         public static int GetKeyCode(string keyName) => KeyMap.ContainsKey(keyName) ? KeyMap[keyName] : -1;
     }
 
-    const int DEFAULT_HP_THRESHOLD = 50;
-    const int DEFAULT_MANA_THRESHOLD = 70;
+    const int DEFAULT_HP_THRESHOLD = 75;
+    const int DEFAULT_MANA_THRESHOLD = -1;
     const string DEFAULT_HP_KEY_NAME = "F1";
     const string DEFAULT_MANA_KEY_NAME = "F2";
 
@@ -192,7 +192,7 @@ class Program
             while (memoryReadActive && !shouldRestartMemoryThread)
             {
                 // Display stats periodically
-               // DisplayStats();
+               //DisplayStats();
 
                 // Handle user input
                 if (Console.KeyAvailable)
@@ -661,64 +661,104 @@ class Program
                     currentTargetId = targetId;
                 }
 
-                // If we have a target, handle combat
+                // If we have a target, check if it's within 5 sqm of our path
                 if (currentTargetId != 0)
                 {
-                    // If target is blacklisted, press ESC to cancel target and continue
+
+                    var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
+
+                    if (debug) Console.WriteLine($"[DEBUG] Monster found: {monsterName} at X={monsterX}, Y={monsterY}, Z={monsterZ}");
+
+                    // If target is blacklisted by ID, press ESC to cancel target and continue
                     if (blacklistedTargets.Contains(currentTargetId))
                     {
-                        if (debug) Console.WriteLine($"[DEBUG] Skipping blacklisted target: {currentTargetId}");
+                        if (debug) Console.WriteLine($"[DEBUG] Skipping blacklisted target ID: {currentTargetId}");
                         SendKeyPress(VK_ESCAPE); // Press ESC to cancel targeting
                         Thread.Sleep(100);
                         continue;
                     }
 
-                    // Combat in progress, wait for it to resolve
-                    DateTime combatStartTime = DateTime.Now;
-                    bool combatTimeout = false;
-                    int lastSeenTargetId = currentTargetId;
-
-                    // Wait for combat to resolve (up to 30 seconds)
-                    while (currentTargetId != 0 && !combatTimeout)
+                    // If target is blacklisted by name, press ESC to cancel target and continue
+                    if (!string.IsNullOrEmpty(monsterName) && blacklistedMonsterNames.Contains(monsterName))
                     {
-                        // Check for timeout (30 seconds)
-                        if ((DateTime.Now - combatStartTime).TotalSeconds > 30)
-                        {
-                            combatTimeout = true;
-                            if (debug) Console.WriteLine($"[DEBUG] Combat timeout after 30 seconds, blacklisting target: {currentTargetId}");
-
-                            // Blacklist this target
-                            blacklistedTargets.Add(currentTargetId);
-
-                            // Press ESC to cancel targeting
-                            SendKeyPress(VK_ESCAPE);
-                        }
-
+                        if (debug) Console.WriteLine($"[DEBUG] Skipping blacklisted monster: {monsterName}");
+                        SendKeyPress(VK_ESCAPE); // Press ESC to cancel targeting
                         Thread.Sleep(100);
-
-                        lock (memoryLock)
-                        {
-                            currentTargetId = targetId;
-                        }
-
-                        // Check if target changed during combat (new creature)
-                        if (currentTargetId != 0 && currentTargetId != lastSeenTargetId)
-                        {
-                            if (debug) Console.WriteLine($"[DEBUG] Target changed during combat from {lastSeenTargetId} to {currentTargetId}");
-                            lastSeenTargetId = currentTargetId;
-                            combatStartTime = DateTime.Now; // Reset timeout for new target
-                        }
+                        continue;
                     }
 
-                    // Combat has ended, loot the corpse
-                    if (!combatTimeout)
+                    // Find closest waypoint to the monster
+                    int closestWaypointIndex = FindClosestWaypointIndex(waypoints, monsterX, monsterY, monsterZ);
+                    Coordinate closestWaypoint = waypoints[closestWaypointIndex];
+
+                    // Calculate distance from monster to closest waypoint
+                    int monsterDistanceToPath = Math.Abs(monsterX - closestWaypoint.X) +
+                                               Math.Abs(monsterY - closestWaypoint.Y);
+
+                    if (monsterDistanceToPath <= 5)
                     {
-                        if (debug) Console.WriteLine("[DEBUG] Combat ended, searching for loot");
-                        ClickAroundCharacter(targetWindow);
-                        Thread.Sleep(1); // Give time for loot to be picked up
+                        // Monster is close to our path, chase it with arrow keys
+                        if (debug) Console.WriteLine($"[DEBUG] Monster '{monsterName}' is within 5 sqm of path, chasing with arrow keys");
+
+                        bool chased = ChaseMonsterWithArrowKeys(currentX, currentY, monsterX, monsterY);
+
+                        if (chased)
+                        {
+                            // Wait for combat to resolve
+                            DateTime combatStartTime = DateTime.Now;
+                            bool combatTimeout = false;
+                            int lastSeenTargetId = currentTargetId;
+
+                            // Wait for combat to resolve (up to 30 seconds)
+                            while (currentTargetId != 0 && !combatTimeout)
+                            {
+                                // Check for timeout (30 seconds)
+                                if ((DateTime.Now - combatStartTime).TotalSeconds > 30)
+                                {
+                                    combatTimeout = true;
+                                    if (debug) Console.WriteLine($"[DEBUG] Combat timeout after 30 seconds, blacklisting target: {currentTargetId}");
+
+                                    // Blacklist this target
+                                    blacklistedTargets.Add(currentTargetId);
+
+                                    // Press ESC to cancel targeting
+                                    SendKeyPress(VK_ESCAPE);
+                                }
+
+                                Thread.Sleep(100);
+
+                                lock (memoryLock)
+                                {
+                                    currentTargetId = targetId;
+                                }
+
+                                // Check if target changed during combat (new creature)
+                                if (currentTargetId != 0 && currentTargetId != lastSeenTargetId)
+                                {
+                                    if (debug) Console.WriteLine($"[DEBUG] Target changed during combat from {lastSeenTargetId} to {currentTargetId}");
+                                    lastSeenTargetId = currentTargetId;
+                                    combatStartTime = DateTime.Now; // Reset timeout for new target
+                                }
+                            }
+
+                            // Combat has ended, loot the corpse
+                            if (!combatTimeout)
+                            {
+                                if (debug) Console.WriteLine("[DEBUG] Combat ended, searching for loot");
+                                ClickAroundCharacter(targetWindow);
+                                Thread.Sleep(1000); // Give time for loot to be picked up
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Monster is too far from path, press ESC to cancel targeting
+                        if (debug) Console.WriteLine($"[DEBUG] Monster '{monsterName}' is too far from path ({monsterDistanceToPath} sqm), canceling target");
+                        SendKeyPress(VK_ESCAPE);
+                        Thread.Sleep(100);
                     }
 
-                    // After combat ends, find closest waypoint to resume path
+                    // After combat or canceling, update position and find closest waypoint to resume path
                     lock (memoryLock)
                     {
                         currentX = posX;
@@ -738,7 +778,7 @@ class Program
                 SendKeyPress(VK_F6);
 
                 // Wait for results of F6 (target search)
-                Thread.Sleep(1);
+                Thread.Sleep(100);
 
                 lock (memoryLock)
                 {
@@ -756,7 +796,7 @@ class Program
                 if (debug) Console.WriteLine("[DEBUG] No target found, proceeding with movement");
 
                 // Wait a bit before moving (as requested)
-                Thread.Sleep(1);
+                Thread.Sleep(100);
 
                 // Check if we need to find the closest waypoint again (in case we're off track)
                 bool potentiallyOffTrack = false;
@@ -799,7 +839,7 @@ class Program
                 int totalDistance = distanceX + distanceY;
 
                 // Check if we need to reverse direction
-                if (totalDistance > 7 && !isReversed)
+                if (totalDistance > 10 && !isReversed)
                 {
                     if (debug) Console.WriteLine("[DEBUG] Distance too far, reversing waypoint list");
                     isReversed = true;
@@ -820,20 +860,12 @@ class Program
                 }
 
                 // Check if waypoint is within reachable distance
-                if (totalDistance <= 7)
+                if (totalDistance <= 10)
                 {
-                    // Use ClickWaypoint to move to the target with a pixel size of 32
                     if (debug) Console.WriteLine($"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
-                    bool clickSuccess = ClickWaypoint(nextWaypoint, 32);
+                    bool clickSuccess = ClickWaypoint(nextWaypoint);
+                    Thread.Sleep(500);
 
-                    if (!clickSuccess)
-                    {
-                        if (debug) Console.WriteLine("[DEBUG] Click failed, trying again with different pixel size");
-                        // Try with a different pixel size as fallback
-                        clickSuccess = ClickWaypoint(nextWaypoint, 36);
-                    }
-
-                    // Wait for movement to complete
                     if (clickSuccess)
                     {
                         // Check for follow status (if follow == 1 we're still moving)
@@ -957,6 +989,14 @@ class Program
         Console.WriteLine("Path playback ended");
     }
 
+
+
+
+
+
+
+
+
     // Helper function to find the index of the closest waypoint
     static int FindClosestWaypointIndex(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
     {
@@ -980,12 +1020,13 @@ class Program
 
     // Helper function to find the best next waypoint
     static Coordinate FindNextWaypoint(List<Coordinate> waypoints, int currentX, int currentY, int currentZ,
-                                      int currentIndex, bool isReversed)
+                                  int currentIndex, bool isReversed)
     {
-        // Try to find waypoint at least 5 sqms away
-        int minDistance = 5;
+        // Try to find farthest waypoint where both |deltaX| and |deltaY| are max 5
+        int maxDistance = 5;
         int maxSearchRange = 10; // Look at most 10 waypoints ahead
         int targetIndex = currentIndex;
+        double bestDistance = 0;
 
         if (!isReversed)
         {
@@ -993,18 +1034,27 @@ class Program
             for (int i = currentIndex; i < Math.Min(currentIndex + maxSearchRange, waypoints.Count); i++)
             {
                 var waypoint = waypoints[i];
-                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+                int deltaX = Math.Abs(waypoint.X - currentX);
+                int deltaY = Math.Abs(waypoint.Y - currentY);
 
-                if (distance >= minDistance)
+                // Check if both X and Y distances are within max limit
+                if (deltaX <= maxDistance && deltaY <= maxDistance)
                 {
-                    targetIndex = i;
-                    break;
+                    // Calculate Euclidean distance
+                    double distance = Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
+
+                    // Keep track of the farthest valid waypoint
+                    if (distance > bestDistance)
+                    {
+                        bestDistance = distance;
+                        targetIndex = i;
+                    }
                 }
 
-                // If we're getting close to the end, just use the last waypoint
-                if (i == waypoints.Count - 1)
+                // If we're at the end, use the last valid waypoint found
+                if (i == waypoints.Count - 1 && targetIndex != currentIndex)
                 {
-                    targetIndex = i;
+                    break;
                 }
             }
         }
@@ -1014,20 +1064,36 @@ class Program
             for (int i = currentIndex; i >= Math.Max(currentIndex - maxSearchRange, 0); i--)
             {
                 var waypoint = waypoints[i];
-                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+                int deltaX = Math.Abs(waypoint.X - currentX);
+                int deltaY = Math.Abs(waypoint.Y - currentY);
 
-                if (distance >= minDistance)
+                // Check if both X and Y distances are within max limit
+                if (deltaX <= maxDistance && deltaY <= maxDistance)
                 {
-                    targetIndex = i;
+                    // Calculate Euclidean distance
+                    double distance = Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
+
+                    // Keep track of the farthest valid waypoint
+                    if (distance > bestDistance)
+                    {
+                        bestDistance = distance;
+                        targetIndex = i;
+                    }
+                }
+
+                // If we're at the beginning, use the last valid waypoint found
+                if (i == 0 && targetIndex != currentIndex)
+                {
                     break;
                 }
-
-                // If we're getting close to the beginning, just use the first waypoint
-                if (i == 0)
-                {
-                    targetIndex = i;
-                }
             }
+        }
+
+        // If no valid waypoint found within the constraints, return current waypoint
+        if (targetIndex == currentIndex)
+        {
+            // Use the endpoint if we didn't find a suitable waypoint
+            targetIndex = isReversed ? 0 : waypoints.Count - 1;
         }
 
         return waypoints[targetIndex];
@@ -1035,12 +1101,12 @@ class Program
 
 
 
-    static bool ClickWaypoint(Coordinate target, int pixelSize)
+    static bool ClickWaypoint(Coordinate target)
     {
         try
         {
             // Get current position
-            pixelSize = 58;
+            int pixelSize = 58;
             int currentX, currentY;
             lock (memoryLock)
             {
@@ -1195,12 +1261,12 @@ class Program
             ClientToScreen(hWnd, ref screenPoint);
 
             // Move mouse to the location
-            Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
+            //Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
             //SetCursorPos(screenPoint.X, screenPoint.Y);
             Thread.Sleep(1); // Pause so you can see the mouse movement
 
             // Right-click at the location
-            Console.WriteLine($"Right-clicking at ({x}, {y})");
+            //Console.WriteLine($"Right-clicking at ({x}, {y})");
             VirtualRightClick(hWnd, x, y);
             Thread.Sleep(1); // Small delay between clicks
 
@@ -1214,7 +1280,7 @@ class Program
             }
         }
 
-        Console.WriteLine("Finished clicking all specified locations.");
+        //Console.WriteLine("Finished clicking all specified locations.");
     }
 
     static void ClickSpecificLocationsWithMouseMovement(IntPtr hWnd)
@@ -1222,14 +1288,14 @@ class Program
         // Define the specific coordinates to click
         (int x, int y)[] locations = new (int, int)[]
         {
-        (1129, 250),
-        (1165, 250),
-        (1203, 250),
-        (1236, 250),
-        (1126, 285),
-        (1165, 285),
-        (1203, 285),
-        (1236, 285)
+        //(1129, 250)
+        (1165, 250)
+        //(1203, 250),
+        //(1236, 250),
+        //(1126, 285),
+        //(1165, 285),
+        //(1203, 285),
+        //(1236, 285)
         };
 
         // Get client area size to verify window is ready
@@ -1251,12 +1317,12 @@ class Program
             ClientToScreen(hWnd, ref screenPoint);
 
             // Move mouse to the location
-            Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
+            //Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
             //SetCursorPos(screenPoint.X, screenPoint.Y);
             Thread.Sleep(10); // Pause so you can see the mouse movement
 
             // Right-click at the location
-            Console.WriteLine($"Right-clicking at ({x}, {y})");
+            //Console.WriteLine($"Right-clicking at ({x}, {y})");
             VirtualRightClick(hWnd, x, y);
             Thread.Sleep(10); // Small delay between clicks
 
@@ -1270,7 +1336,7 @@ class Program
             }
         }
 
-        Console.WriteLine("Finished clicking all specified locations.");
+        //Console.WriteLine("Finished clicking all specified locations.");
     }
 
     static void DragItemToCharacterCenter(IntPtr hWnd)
@@ -1393,7 +1459,7 @@ class Program
             }
         }
 
-        Console.WriteLine("Finished clicking all 8 tiles, no target found.");
+        //Console.WriteLine("Finished clicking all 8 tiles, no target found.");
         CorpseEatFood(targetWindow);
     }
 
@@ -1427,5 +1493,232 @@ class Program
         {
             return targetId;
         }
+    }
+
+    static (int monsterX, int monsterY, int monsterZ) GetTargetMonsterCoordinates()
+    {
+        int targetId = 0;
+        int monsterX = 0, monsterY = 0, monsterZ = 0;
+
+        lock (memoryLock)
+        {
+            // Get target ID
+            targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
+
+            if (targetId != 0)
+            {
+                // Read monster instance pointer
+                IntPtr monsterInstancePtr = IntPtr.Zero;
+                byte[] buffer = new byte[4];
+
+                if (ReadProcessMemory(processHandle, IntPtr.Add(moduleBase, (int)targetIdOffset), buffer, buffer.Length, out _))
+                {
+                    // This is the pointer to the monster instance
+                    monsterInstancePtr = (IntPtr)BitConverter.ToInt32(buffer, 0);
+
+                    // Now read X coordinate (offset 0x000C from monster instance)
+                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x000C), buffer, buffer.Length, out _))
+                    {
+                        monsterX = BitConverter.ToInt32(buffer, 0);
+                    }
+
+                    // Read Y coordinate (offset 0x0010 from monster instance)
+                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x0010), buffer, buffer.Length, out _))
+                    {
+                        monsterY = BitConverter.ToInt32(buffer, 0);
+                    }
+
+                    // Read Z coordinate (offset 0x0014 from monster instance)
+                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x0014), buffer, buffer.Length, out _))
+                    {
+                        monsterZ = BitConverter.ToInt32(buffer, 0);
+                    }
+                }
+            }
+        }
+
+        return (monsterX, monsterY, monsterZ);
+    }
+
+    static bool ChaseMonsterWithArrowKeys(int playerX, int playerY, int monsterX, int monsterY)
+    {
+        // Calculate direction to monster
+        int deltaX = monsterX - playerX;
+        int deltaY = monsterY - playerY;
+
+        // Max chase attempts
+        int maxAttempts = 10;
+        int attempts = 0;
+
+        // Chase until we're adjacent to the monster or reach max attempts
+        while ((Math.Abs(deltaX) > 1 || Math.Abs(deltaY) > 1) && attempts < maxAttempts)
+        {
+            // Determine which direction to move
+            if (Math.Abs(deltaX) > Math.Abs(deltaY))
+            {
+                // Move horizontally first
+                if (deltaX > 0)
+                {
+                    // Move right
+                    if (debug) Console.WriteLine("[DEBUG] Pressing RIGHT to chase monster");
+                    SendKeyPress(VK_RIGHT);
+                }
+                else
+                {
+                    // Move left
+                    if (debug) Console.WriteLine("[DEBUG] Pressing LEFT to chase monster");
+                    SendKeyPress(VK_LEFT);
+                }
+            }
+            else
+            {
+                // Move vertically first
+                if (deltaY > 0)
+                {
+                    // Move down
+                    if (debug) Console.WriteLine("[DEBUG] Pressing DOWN to chase monster");
+                    SendKeyPress(VK_DOWN);
+                }
+                else
+                {
+                    // Move up
+                    if (debug) Console.WriteLine("[DEBUG] Pressing UP to chase monster");
+                    SendKeyPress(VK_UP);
+                }
+            }
+
+            // Wait for movement to complete
+            Thread.Sleep(300);
+
+            // Check if target is still valid
+            int currentTargetId;
+            lock (memoryLock)
+            {
+                playerX = posX;
+                playerY = posY;
+                currentTargetId = targetId;
+            }
+
+            // If target is gone, stop chasing
+            if (currentTargetId == 0)
+            {
+                if (debug) Console.WriteLine("[DEBUG] Lost target while chasing");
+                return false;
+            }
+
+            // Get updated monster position
+            var (updatedMonsterX, updatedMonsterY, _) = GetTargetMonsterCoordinates();
+
+            // Update deltas
+            deltaX = updatedMonsterX - playerX;
+            deltaY = updatedMonsterY - playerY;
+
+            // Check if we're adjacent to monster
+            if (Math.Abs(deltaX) <= 1 && Math.Abs(deltaY) <= 1)
+            {
+                if (debug) Console.WriteLine("[DEBUG] Now adjacent to monster, combat can begin");
+                return true;
+            }
+
+            attempts++;
+        }
+
+        if (attempts >= maxAttempts)
+        {
+            if (debug) Console.WriteLine("[DEBUG] Failed to reach monster after max attempts");
+            return false;
+        }
+
+        return true;
+    }
+
+    static string ReadStringFromMemory(IntPtr handle, IntPtr address, int maxLength = 128)
+    {
+        try
+        {
+            byte[] buffer = new byte[maxLength];
+            int bytesRead;
+
+            if (!ReadProcessMemory(handle, address, buffer, buffer.Length, out bytesRead))
+            {
+                return string.Empty;
+            }
+
+            // Find null terminator (end of string)
+            int nullTerminatorPos = 0;
+            while (nullTerminatorPos < buffer.Length && buffer[nullTerminatorPos] != 0)
+            {
+                nullTerminatorPos++;
+            }
+
+            // Convert bytes to string, stopping at null terminator
+            if (nullTerminatorPos > 0)
+            {
+                return Encoding.ASCII.GetString(buffer, 0, nullTerminatorPos);
+            }
+
+            return string.Empty;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error reading string from memory: {ex.Message}");
+            return string.Empty;
+        }
+    }
+    static List<string> blacklistedMonsterNames = new List<string>
+    {
+        // Add monster names you want to avoid here, e.g.:
+        "Rat",
+        "Rabbit",
+        "Snake"
+        // You can add more as needed
+    };
+    static (int monsterX, int monsterY, int monsterZ, string monsterName) GetTargetMonsterInfo()
+    {
+        int targetId = 0;
+        int monsterX = 0, monsterY = 0, monsterZ = 0;
+        string monsterName = "";
+
+        lock (memoryLock)
+        {
+            // Get target ID
+            targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
+
+            if (targetId != 0)
+            {
+                // Read monster instance pointer
+                IntPtr monsterInstancePtr = IntPtr.Zero;
+                byte[] buffer = new byte[4];
+
+                if (ReadProcessMemory(processHandle, IntPtr.Add(moduleBase, (int)targetIdOffset), buffer, buffer.Length, out _))
+                {
+                    // This is the pointer to the monster instance
+                    monsterInstancePtr = (IntPtr)BitConverter.ToInt32(buffer, 0);
+
+                    // Now read X coordinate (offset 0x000C from monster instance)
+                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x000C), buffer, buffer.Length, out _))
+                    {
+                        monsterX = BitConverter.ToInt32(buffer, 0);
+                    }
+
+                    // Read Y coordinate (offset 0x0010 from monster instance)
+                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x0010), buffer, buffer.Length, out _))
+                    {
+                        monsterY = BitConverter.ToInt32(buffer, 0);
+                    }
+
+                    // Read Z coordinate (offset 0x0014 from monster instance)
+                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x0014), buffer, buffer.Length, out _))
+                    {
+                        monsterZ = BitConverter.ToInt32(buffer, 0);
+                    }
+
+                    // Read monster name (offset 0x0030 from monster instance)
+                    monsterName = ReadStringFromMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x0030));
+                }
+            }
+        }
+
+        return (monsterX, monsterY, monsterZ, monsterName);
     }
 }
