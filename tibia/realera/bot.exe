@@ -192,7 +192,7 @@ class Program
             while (memoryReadActive && !shouldRestartMemoryThread)
             {
                 // Display stats periodically
-                DisplayStats();
+               // DisplayStats();
 
                 // Handle user input
                 if (Console.KeyAvailable)
@@ -597,286 +597,512 @@ class Program
         }
     }
 
-    static void PlayCoordinates()
-    {
-        try
-        {
-            loadedCoords = JsonSerializer.Deserialize<CoordinateData>(File.ReadAllText(cordsFilePath));
-            if (loadedCoords == null || loadedCoords.cords.Count == 0)
-            {
-                Console.WriteLine("No coordinates to play!");
-                threadFlags["playing"] = false;
-                return;
-            }
-            // Initialize path tracking variables
-            totalCoords = loadedCoords.cords.Count;
-            bool playingInReverse = false;
-
-            // Main playback loop - will continue until stopped by user
-            while (threadFlags["playing"] && memoryReadActive)
-            {
-                // Find closest coordinate to start from
-                int currentX, currentY, currentZ;
-                lock (memoryLock)
-                {
-                    currentX = posX;
-                    currentY = posY;
-                    currentZ = posZ;
-                }
-
-                List<Coordinate> currentPath = loadedCoords.cords;
-                int startIndex;
-
-                if (!playingInReverse)
-                {
-                    Coordinate start = FindClosestCoordinate(currentX, currentY, currentZ, currentPath);
-                    startIndex = currentPath.IndexOf(start);
-                    Console.WriteLine($"Starting from coordinate index {startIndex}: X={start.X}, Y={start.Y}, Z={start.Z}");
-                    Console.WriteLine($"Total waypoints: {totalCoords}");
-                }
-                else
-                {
-                    // If playing in reverse, start from the beginning of the reversed path
-                    startIndex = 0;
-                    Console.WriteLine("Playing path in reverse order");
-                    Console.WriteLine($"Total waypoints: {totalCoords}");
-                }
-
-                // Determine the range to iterate
-                int startPos = playingInReverse ? currentPath.Count - 1 : startIndex;
-                int endPos = playingInReverse ? 0 : currentPath.Count;
-                int increment = playingInReverse ? -1 : 1;
-
-                // Loop through coordinates in forward or reverse order
-                for (int i = startPos;
-                    (playingInReverse ? i >= endPos : i < endPos) && threadFlags["playing"];
-                    i += 1 * increment) // Step by 2, not 1
-                {
-                    currentCoordIndex = playingInReverse ? currentPath.Count - 1 - i : i;
-                    currentTarget = currentPath[i];
-
-                    int waypointNumber;
-                    int totalWaypoints;
-                    string directionText;
-
-                    if (playingInReverse)
-                    {
-                        waypointNumber = Math.Abs(i - startPos) + 1;
-                        totalWaypoints = startPos + 1;
-                        directionText = "Reverse";
-                    }
-                    else
-                    {
-                        waypointNumber = Math.Abs(i - startPos) + 1;
-                        totalWaypoints = totalCoords - startIndex;
-                        directionText = "Forward";
-                    }
-
-                    Console.WriteLine($"Moving to waypoint {waypointNumber}/{totalWaypoints}: " +
-                                      $"X={currentTarget.X}, Y={currentTarget.Y}, Z={currentTarget.Z} " +
-                                      $"({directionText})");
-
-                    // Try to reach this coordinate
-                    if (!WalkTo(currentTarget, currentPath))
-                    {
-                        if (!threadFlags["playing"])
-                        {
-                            Console.WriteLine("Path following interrupted by user.");
-                            break;
-                        }
-
-                        // [ADDED]: Re-find the closest waypoint if walk failed
-                        Console.WriteLine("WalkTo failed, recalculating closest waypoint...");
-
-                        // Recalculate position
-                        lock (memoryLock)
-                        {
-                            currentX = posX;
-                            currentY = posY;
-                            currentZ = posZ;
-                        }
-
-                        Coordinate newStart = FindClosestCoordinate(currentX, currentY, currentZ, currentPath);
-                        i = currentPath.IndexOf(newStart) - increment; // -increment because the loop will +increment after
-
-                        Console.WriteLine($"New closest waypoint found at index {i + increment}: X={newStart.X}, Y={newStart.Y}, Z={newStart.Z}");
-
-                        // Continue with new coordinate without changing direction
-                        continue;
-                    }
-
-                    // Small pause at each waypoint
-                    Thread.Sleep(1);
-                }
-
-                // Toggle direction when we reach the end
-                playingInReverse = !playingInReverse;
-
-                // Small pause between direction changes
-                Console.WriteLine(playingInReverse ?
-                    "Destination reached. Reversing direction..." :
-                    "Start reached. Resuming forward direction...");
-                Thread.Sleep(1000);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error playing coordinates: {ex.Message}");
-        }
-        finally
-        {
-            // Reset tracking variables
-            currentCoordIndex = -1;
-            totalCoords = 0;
-            currentTarget = null;
-        }
-    }
-
-
     static Coordinate FindClosestCoordinate(int x, int y, int z, List<Coordinate> coords)
     {
         return coords.OrderBy(c => Math.Abs(c.X - x) + Math.Abs(c.Y - y) + Math.Abs(c.Z - z)).First();
     }
 
-    static bool WalkTo(Coordinate target, List<Coordinate> coords)
-    {
-        int currentX, currentY, currentZ;
-        int targetX = target.X;
-        int targetY = target.Y;
-        DateTime startTime = DateTime.Now;
-        TimeSpan maxWaitTime = TimeSpan.FromSeconds(30);
-        int lastX = -1, lastY = -1;
-        DateTime lastMoveTime = DateTime.Now;
 
-        double squareSize = 72.6667; // Size of one tile in pixels
-        int centerX = 548;
-        int centerY = 648;
-        int currentFollow = 0;
+
+
+
+
+
+
+
+    static void PlayCoordinates()
+    {
+        Console.WriteLine("Path playback starting...");
+
+        // Load coordinates from file
+        string json = File.ReadAllText(cordsFilePath);
+        loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
+
+        if (loadedCoords == null || loadedCoords.cords.Count == 0)
+        {
+            Console.WriteLine("No coordinates found in cords.json!");
+            threadFlags["playing"] = false;
+            return;
+        }
+
+        // Initialize variables for path playback
+        List<Coordinate> waypoints = loadedCoords.cords;
+        totalCoords = waypoints.Count;
+        HashSet<int> blacklistedTargets = new HashSet<int>();
+        bool isReversed = false;
+
+        Console.WriteLine($"Loaded {totalCoords} coordinates from cords.json");
+
+        // Always find closest waypoint on startup or resuming
+        int currentX, currentY, currentZ;
+        lock (memoryLock)
+        {
+            currentX = posX;
+            currentY = posY;
+            currentZ = posZ;
+        }
+
+        // Find the closest waypoint to start with
+        currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+        if (debug) Console.WriteLine($"[DEBUG] Starting at closest waypoint: index {currentCoordIndex}");
 
         while (threadFlags["playing"])
         {
+            try
+            {
+                // Get current position
+                int currentTargetId;
+
+                lock (memoryLock)
+                {
+                    currentX = posX;
+                    currentY = posY;
+                    currentZ = posZ;
+                    currentTargetId = targetId;
+                }
+
+                // If we have a target, handle combat
+                if (currentTargetId != 0)
+                {
+                    // If target is blacklisted, press ESC to cancel target and continue
+                    if (blacklistedTargets.Contains(currentTargetId))
+                    {
+                        if (debug) Console.WriteLine($"[DEBUG] Skipping blacklisted target: {currentTargetId}");
+                        SendKeyPress(VK_ESCAPE); // Press ESC to cancel targeting
+                        Thread.Sleep(100);
+                        continue;
+                    }
+
+                    // Combat in progress, wait for it to resolve
+                    DateTime combatStartTime = DateTime.Now;
+                    bool combatTimeout = false;
+                    int lastSeenTargetId = currentTargetId;
+
+                    // Wait for combat to resolve (up to 30 seconds)
+                    while (currentTargetId != 0 && !combatTimeout)
+                    {
+                        // Check for timeout (30 seconds)
+                        if ((DateTime.Now - combatStartTime).TotalSeconds > 30)
+                        {
+                            combatTimeout = true;
+                            if (debug) Console.WriteLine($"[DEBUG] Combat timeout after 30 seconds, blacklisting target: {currentTargetId}");
+
+                            // Blacklist this target
+                            blacklistedTargets.Add(currentTargetId);
+
+                            // Press ESC to cancel targeting
+                            SendKeyPress(VK_ESCAPE);
+                        }
+
+                        Thread.Sleep(100);
+
+                        lock (memoryLock)
+                        {
+                            currentTargetId = targetId;
+                        }
+
+                        // Check if target changed during combat (new creature)
+                        if (currentTargetId != 0 && currentTargetId != lastSeenTargetId)
+                        {
+                            if (debug) Console.WriteLine($"[DEBUG] Target changed during combat from {lastSeenTargetId} to {currentTargetId}");
+                            lastSeenTargetId = currentTargetId;
+                            combatStartTime = DateTime.Now; // Reset timeout for new target
+                        }
+                    }
+
+                    // Combat has ended, loot the corpse
+                    if (!combatTimeout)
+                    {
+                        if (debug) Console.WriteLine("[DEBUG] Combat ended, searching for loot");
+                        ClickAroundCharacter(targetWindow);
+                        Thread.Sleep(1); // Give time for loot to be picked up
+                    }
+
+                    // After combat ends, find closest waypoint to resume path
+                    lock (memoryLock)
+                    {
+                        currentX = posX;
+                        currentY = posY;
+                        currentZ = posZ;
+                    }
+
+                    // Find the closest waypoint to resume from
+                    currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+                    if (debug) Console.WriteLine($"[DEBUG] Resuming from closest waypoint: index {currentCoordIndex}");
+
+                    continue; // Go back to main loop to check for new targets or movement
+                }
+
+                // No target, try pressing F6 to find one
+                if (debug) Console.WriteLine("[DEBUG] No target, pressing F6 to search");
+                SendKeyPress(VK_F6);
+
+                // Wait for results of F6 (target search)
+                Thread.Sleep(1);
+
+                lock (memoryLock)
+                {
+                    currentTargetId = targetId;
+                }
+
+                // If we got a target, continue to combat loop
+                if (currentTargetId != 0)
+                {
+                    if (debug) Console.WriteLine($"[DEBUG] Found target: {currentTargetId}");
+                    continue;
+                }
+
+                // No target found, proceed with movement
+                if (debug) Console.WriteLine("[DEBUG] No target found, proceeding with movement");
+
+                // Wait a bit before moving (as requested)
+                Thread.Sleep(1);
+
+                // Check if we need to find the closest waypoint again (in case we're off track)
+                bool potentiallyOffTrack = false;
+
+                // Check if current position is far from the expected path
+                if (currentCoordIndex < waypoints.Count)
+                {
+                    var expectedWaypoint = waypoints[currentCoordIndex];
+                    int distanceToExpected = Math.Abs(expectedWaypoint.X - currentX) +
+                                            Math.Abs(expectedWaypoint.Y - currentY);
+
+                    // If we're more than 3 tiles away from where we should be, consider off track
+                    if (distanceToExpected > 3)
+                    {
+                        potentiallyOffTrack = true;
+                    }
+                }
+
+                // Re-find closest waypoint if potentially off track
+                if (potentiallyOffTrack)
+                {
+                    int newIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+                    if (newIndex != currentCoordIndex)
+                    {
+                        if (debug) Console.WriteLine($"[DEBUG] Off track detected, adjusting to waypoint: {newIndex}");
+                        currentCoordIndex = newIndex;
+                    }
+                }
+
+                // Find best candidate for next waypoint (at least 5 sqms away if possible)
+                Coordinate nextWaypoint = FindNextWaypoint(waypoints, currentX, currentY, currentZ,
+                                                         currentCoordIndex, isReversed);
+                currentTarget = nextWaypoint;
+
+                if (debug) Console.WriteLine($"[DEBUG] Moving to waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
+
+                // Calculate distance to target
+                int distanceX = Math.Abs(nextWaypoint.X - currentX);
+                int distanceY = Math.Abs(nextWaypoint.Y - currentY);
+                int totalDistance = distanceX + distanceY;
+
+                // Check if we need to reverse direction
+                if (totalDistance > 7 && !isReversed)
+                {
+                    if (debug) Console.WriteLine("[DEBUG] Distance too far, reversing waypoint list");
+                    isReversed = true;
+                    waypoints.Reverse();
+
+                    // Find closest waypoint in reversed list
+                    currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+
+                    // Recalculate next waypoint
+                    nextWaypoint = FindNextWaypoint(waypoints, currentX, currentY, currentZ,
+                                                  currentCoordIndex, isReversed);
+                    currentTarget = nextWaypoint;
+
+                    // Recalculate distance
+                    distanceX = Math.Abs(nextWaypoint.X - currentX);
+                    distanceY = Math.Abs(nextWaypoint.Y - currentY);
+                    totalDistance = distanceX + distanceY;
+                }
+
+                // Check if waypoint is within reachable distance
+                if (totalDistance <= 7)
+                {
+                    // Use ClickWaypoint to move to the target with a pixel size of 32
+                    if (debug) Console.WriteLine($"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
+                    bool clickSuccess = ClickWaypoint(nextWaypoint, 32);
+
+                    if (!clickSuccess)
+                    {
+                        if (debug) Console.WriteLine("[DEBUG] Click failed, trying again with different pixel size");
+                        // Try with a different pixel size as fallback
+                        clickSuccess = ClickWaypoint(nextWaypoint, 36);
+                    }
+
+                    // Wait for movement to complete
+                    if (clickSuccess)
+                    {
+                        // Check for follow status (if follow == 1 we're still moving)
+                        int followStatus;
+                        lock (memoryLock)
+                        {
+                            followStatus = follow;
+                        }
+
+                        // Wait for movement to complete if follow is active
+                        DateTime moveStart = DateTime.Now;
+                        while (followStatus == 1 &&
+                               (DateTime.Now - moveStart).TotalSeconds < 5 && // Max 5 seconds wait
+                               threadFlags["playing"])
+                        {
+                            Thread.Sleep(100);
+                            lock (memoryLock)
+                            {
+                                followStatus = follow;
+                                currentX = posX;
+                                currentY = posY;
+                                currentTargetId = targetId;
+                            }
+
+                            // Check for combat interrupt
+                            if (currentTargetId != 0)
+                            {
+                                if (debug) Console.WriteLine("[DEBUG] Target found while waiting for movement, switching to combat");
+                                break;
+                            }
+                        }
+
+                        // Press F6 after movement completes to check for targets
+                        if (currentTargetId == 0)
+                        {
+                            SendKeyPress(VK_F6);
+                            Thread.Sleep(200);
+                            lock (memoryLock)
+                            {
+                                currentTargetId = targetId;
+                            }
+
+                            if (currentTargetId != 0)
+                            {
+                                if (debug) Console.WriteLine("[DEBUG] Target found after movement, switching to combat");
+                                continue;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    if (debug) Console.WriteLine($"[DEBUG] Waypoint too far ({totalDistance} steps), cannot reach");
+                    // Skip this waypoint and try the next one
+                }
+
+                // Update position for next iteration
+                lock (memoryLock)
+                {
+                    currentX = posX;
+                    currentY = posY;
+                }
+
+                // Check if we reached the waypoint (or close enough)
+                int finalDistanceX = Math.Abs(nextWaypoint.X - currentX);
+                int finalDistanceY = Math.Abs(nextWaypoint.Y - currentY);
+                int finalTotalDistance = finalDistanceX + finalDistanceY;
+
+                // Consider waypoint reached if within 2 sqms (to account for obstacles)
+                if (finalTotalDistance <= 2)
+                {
+                    if (debug) Console.WriteLine("[DEBUG] Waypoint reached");
+
+                    // Update current index based on direction
+                    if (isReversed)
+                    {
+                        currentCoordIndex--;
+                        if (currentCoordIndex < 0)
+                        {
+                            // Reached the beginning, reverse again
+                            waypoints.Reverse();
+                            isReversed = false;
+                            currentCoordIndex = 1; // Start at second waypoint
+                        }
+                    }
+                    else
+                    {
+                        currentCoordIndex++;
+                        if (currentCoordIndex >= waypoints.Count)
+                        {
+                            // Reached the end, reverse
+                            waypoints.Reverse();
+                            isReversed = true;
+                            currentCoordIndex = 1; // Start at second waypoint
+                        }
+                    }
+                }
+                else
+                {
+                    // If we didn't reach the destination after movement, check if we're off track
+                    if (debug) Console.WriteLine($"[DEBUG] Could not reach waypoint, distance: {finalTotalDistance}");
+
+                    // Try to find closest waypoint for next iteration
+                    int newIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+                    if (newIndex != currentCoordIndex)
+                    {
+                        if (debug) Console.WriteLine($"[DEBUG] Adjusting to closest waypoint: {newIndex}");
+                        currentCoordIndex = newIndex;
+                    }
+                }
+
+                Thread.Sleep(100); // Slow down for debugging if needed
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in path playback: {ex.Message}");
+                Thread.Sleep(1000);
+            }
+        }
+
+        Console.WriteLine("Path playback ended");
+    }
+
+    // Helper function to find the index of the closest waypoint
+    static int FindClosestWaypointIndex(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
+    {
+        int closestIndex = 0;
+        int minDistance = int.MaxValue;
+
+        for (int i = 0; i < waypoints.Count; i++)
+        {
+            var waypoint = waypoints[i];
+            int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+
+            if (distance < minDistance)
+            {
+                minDistance = distance;
+                closestIndex = i;
+            }
+        }
+
+        return closestIndex;
+    }
+
+    // Helper function to find the best next waypoint
+    static Coordinate FindNextWaypoint(List<Coordinate> waypoints, int currentX, int currentY, int currentZ,
+                                      int currentIndex, bool isReversed)
+    {
+        // Try to find waypoint at least 5 sqms away
+        int minDistance = 5;
+        int maxSearchRange = 10; // Look at most 10 waypoints ahead
+        int targetIndex = currentIndex;
+
+        if (!isReversed)
+        {
+            // Forward search
+            for (int i = currentIndex; i < Math.Min(currentIndex + maxSearchRange, waypoints.Count); i++)
+            {
+                var waypoint = waypoints[i];
+                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+
+                if (distance >= minDistance)
+                {
+                    targetIndex = i;
+                    break;
+                }
+
+                // If we're getting close to the end, just use the last waypoint
+                if (i == waypoints.Count - 1)
+                {
+                    targetIndex = i;
+                }
+            }
+        }
+        else
+        {
+            // Backward search
+            for (int i = currentIndex; i >= Math.Max(currentIndex - maxSearchRange, 0); i--)
+            {
+                var waypoint = waypoints[i];
+                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+
+                if (distance >= minDistance)
+                {
+                    targetIndex = i;
+                    break;
+                }
+
+                // If we're getting close to the beginning, just use the first waypoint
+                if (i == 0)
+                {
+                    targetIndex = i;
+                }
+            }
+        }
+
+        return waypoints[targetIndex];
+    }
+
+
+
+    static bool ClickWaypoint(Coordinate target, int pixelSize)
+    {
+        try
+        {
+            // Get current position
+            pixelSize = 58;
+            int currentX, currentY;
             lock (memoryLock)
             {
                 currentX = posX;
                 currentY = posY;
-                currentZ = posZ;
-                currentFollow = follow;
             }
 
-            if (currentFollow == 0)
+            // Get client area size
+            GetClientRect(targetWindow, out RECT rect);
+
+            // Calculate the character center (base point)
+            int baseX = (rect.Right - rect.Left) / 2 - 186;
+            int baseY = (rect.Bottom - rect.Top) / 2 - 300;
+
+            // Calculate movement vector
+            int diffX = target.X - currentX;
+            int diffY = target.Y - currentY;
+
+            // Use the provided pixel size
+            int targetX = baseX + (diffX * pixelSize);
+            int targetY = baseY + (diffY * pixelSize);
+
+            // Final combat check
+            if (GetTargetId() != 0)
             {
-                ClickFollow(targetWindow);
-                Thread.Sleep(100);
-                continue;
+                Console.WriteLine("[DEBUG] Combat detected, canceling movement");
+                return false;
             }
 
-            int currentTargetId = GetTargetId();
+            // Pack coordinates
+            int lParam = (targetY << 16) | (targetX & 0xFFFF);
 
-            // If fighting a monster, wait
-            if (currentTargetId != 0)
-            {
-                Thread.Sleep(300);
-                lastX = currentX;   // [ADDED] Update lastX and lastY so we don't incorrectly detect stuck during fight
-                lastY = currentY;
-                lastMoveTime = DateTime.Now;
-                continue;
-            }
+            // Send click
+            PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)lParam);
+            Thread.Sleep(50);
+            PostMessage(targetWindow, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
+            Thread.Sleep(30);
+            PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
+            Thread.Sleep(20);
 
-            // [ADDED] Check if stuck (no position change for >1 second)
-            if (currentX == lastX && currentY == lastY && targetId == 0)
-            {
-                if ((DateTime.Now - lastMoveTime).TotalMilliseconds > 3000)
-                {
-                    if (debug)
-                    {
-                        Console.WriteLine("[DEBUG] No movement detected for more than 1 second, exiting WalkTo.");
-                        Thread.Sleep(debugTime);
-                    }
-                    return false;
-                }
-            }
-            else
-            {
-                // Position changed, update tracking variables
-                lastX = currentX;
-                lastY = currentY;
-                lastMoveTime = DateTime.Now;
-            }
+            // Return mouse to center as requested
+            int centerLParam = (baseY << 16) | (baseX & 0xFFFF);
+            PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)centerLParam);
 
-            // Check if reached target
-            int diffX = targetX - currentX;
-            int diffY = targetY - currentY;
-            if (Math.Abs(diffX) <= 0 && Math.Abs(diffY) <= 0)
-            {
-                if (debug)
-                {
-                    Console.WriteLine($"[DEBUG] Reached destination (within 1 tile) at X={currentX}, Y={currentY}.");
-                    Thread.Sleep(debugTime);
-                }
-                return true;
-            }
-
-            WaitForTargetClear();
-            ClickAroundCharacter(targetWindow);
-            VirtualClick(targetWindow, diffX, diffY);
-            //SendF6IfNoTarget();
-            
-
-            Thread.Sleep(200); // Allow some time to walk
+            Console.WriteLine($"[DEBUG] Clicked: X={diffX}, Y={diffY} (Screen: {targetX}, {targetY}, Pixel Size: {pixelSize})");
+            return true;
         }
-
-        return false;
-    }
-
-
-
-    // --- Helper methods added below ---
-
-    static void WaitForTargetClear()
-    {
-        Thread.Sleep(100); // Wait 100ms first
-
-        // Now check if targetId is zero
-        while (GetTargetId() != 0)
+        catch (Exception ex)
         {
-            Thread.Sleep(100); // Keep waiting
+            Console.WriteLine($"[DEBUG] Click Error: {ex.Message}");
+            return false;
         }
     }
+
+
+    // Constants needed
+    const byte VK_ESCAPE = 0x1B; // ESC key
+
+  
     const int VK_F6 = 0x75;
 
-    static void SendF6IfNoTarget()
-    {
-        if (GetTargetId() == 0)
-        {
-            SendKeyPress(VK_F6); // Press F6 if no target
-        }
-    }
-
-    // Assuming you already have this method or field
-    static int GetTargetId()
-    {
-        lock (memoryLock)
-        {
-            return targetId;
-        }
-    }
-
-    static void MoveToCoordinate(Coordinate coord)
-    {
-        lock (memoryLock)
-        {
-            if (posX < coord.X) SendKeyPress(VK_RIGHT);
-            else if (posX > coord.X) SendKeyPress(VK_LEFT);
-            else if (posY < coord.Y) SendKeyPress(VK_DOWN);
-            else if (posY > coord.Y) SendKeyPress(VK_UP);
-        }
-
-        WaitForTargetClear();
-        SendF6IfNoTarget();
-        Thread.Sleep(100);
-    }
-
-    // --- Virtual Mouse Click using PostMessage ---
+    
     const int WM_LBUTTONDOWN = 0x0201;
     const int WM_LBUTTONUP = 0x0202;
 
@@ -931,157 +1157,203 @@ class Program
         public int X;
         public int Y;
     }
-    //static void VirtualClick(IntPtr hWnd)
-    //{
-    //    Console.WriteLine("RealClicking with SendInput");
-
-    //    // Get client rect
-    //    GetClientRect(hWnd, out RECT rect);
-
-    //    // Calculate center + 30 offset
-    //    int centerX = (rect.Right - rect.Left) / 2 + 30;
-    //    int centerY = (rect.Bottom - rect.Top) / 2 + 30;
-
-    //    // Convert client coordinates to screen coordinates
-    //    POINT point = new POINT { X = centerX, Y = centerY };
-    //    ClientToScreen(hWnd, ref point);
-
-    //    // Calculate absolute coordinates (0-65535 scale)
-    //    int screenWidth = GetSystemMetrics(0);
-    //    int screenHeight = GetSystemMetrics(1);
-
-    //    int absX = (point.X * 65536) / screenWidth;
-    //    int absY = (point.Y * 65536) / screenHeight;
-
-    //    // Prepare inputs
-    //    INPUT[] inputs = new INPUT[2];
-
-    //    inputs[0].type = INPUT_MOUSE;
-    //    inputs[0].u.mi.dx = absX;
-    //    inputs[0].u.mi.dy = absY;
-    //    inputs[0].u.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_LEFTDOWN;
-    //    inputs[0].u.mi.mouseData = 0;
-    //    inputs[0].u.mi.dwExtraInfo = IntPtr.Zero;
-    //    inputs[0].u.mi.time = 0;
-
-    //    inputs[1].type = INPUT_MOUSE;
-    //    inputs[1].u.mi.dx = absX;
-    //    inputs[1].u.mi.dy = absY;
-    //    inputs[1].u.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_LEFTUP;
-    //    inputs[1].u.mi.mouseData = 0;
-    //    inputs[1].u.mi.dwExtraInfo = IntPtr.Zero;
-    //    inputs[1].u.mi.time = 0;
-
-    //    // Send inputs
-    //    SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
-    //}
 
     [DllImport("user32.dll")]
     static extern int GetSystemMetrics(int nIndex);
-    static void VirtualClick(IntPtr hWnd, int x, int y)
-    {
-        Console.WriteLine("VirtualClicking (PostMessage version)");
-
-        // Get client area size
-        GetClientRect(hWnd, out RECT rect);
-
-        // Calculate the "character center" first (base point)
-        int baseX = (rect.Right - rect.Left) / 2 - 186;
-        int baseY = (rect.Bottom - rect.Top) / 2 - 300;
-
-        // Each x,y unit moves 72 pixels
-        int targetX = baseX + (x * 68);
-        int targetY = baseY + (y * 68);
-
-        // lParam packs the x and y into a single 32-bit value
-        int lParam = (targetY << 16) | (targetX & 0xFFFF);
-
-        int currentTarget;
-        lock (memoryLock)
-        {
-            currentTarget = targetId;
-        }
-        if (targetId != 0)
-        {
-            return;
-        }
-        // First move the mouse inside the window
-        PostMessage(hWnd, 0x0200, IntPtr.Zero, (IntPtr)lParam);
-
-        Thread.Sleep(16); // Small delay to simulate real move
-
-        // Then send left button down
-        PostMessage(hWnd, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
-
-        Thread.Sleep(16); // Short pause to simulate holding click
-
-        // Then send left button up
-        PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
-        Thread.Sleep(1); // Short pause to simulate holding click
-
-        lParam = (baseY << 16) | (baseX & 0xFFFF);
-        //PostMessage(hWnd, 0x0200, IntPtr.Zero, (IntPtr)lParam);
-    }
+    
 
     [DllImport("user32.dll")]
     static extern bool SetCursorPos(int X, int Y);
-    public static void ClickFollow(IntPtr hWnd)
-    {
-        Console.WriteLine("CLICKING FOLLOW");
 
+    static void CorpseEatFood(IntPtr hWnd)
+    {
+        // Define the specific coordinates to click
+        (int x, int y)[] locations = new (int, int)[]
+        {
+        (1126, 325),
+        (1165, 325),
+        (1203, 325),
+        (1236, 325)
+        };
+
+        // Get client area size to verify window is ready
         GetClientRect(hWnd, out RECT rect);
 
-        int baseX = (rect.Right - rect.Left) / 2 - 186;
-        int baseY = (rect.Bottom - rect.Top) / 2 - 300;
-
-        int targetX = baseX + (1 * 72);
-        int targetY = baseY - (5 * 72);
-
-        targetY += 74;
-        targetX += 725;
-
-        // Convert target to screen coordinates
-        POINT pt = new POINT { X = targetX, Y = targetY };
-        ClientToScreen(hWnd, ref pt);
-
-        // Move real mouse cursor
-        //SetCursorPos(pt.X, pt.Y);
-        int currentFollow = 0;
-        lock (memoryLock)
+        // Ensure the window is large enough for these coordinates
+        if (rect.Right < 1237 || rect.Bottom < 319)
         {
-            currentFollow = follow;
+            Console.WriteLine($"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates");
         }
 
-
-        while (currentFollow == 0)
+        foreach (var location in locations)
         {
-            Thread.Sleep(500);
-            lock (memoryLock)
+            int x = location.x;
+            int y = location.y;
+
+            // Convert client coordinates to screen coordinates
+            POINT screenPoint = new POINT { X = x, Y = y };
+            ClientToScreen(hWnd, ref screenPoint);
+
+            // Move mouse to the location
+            Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
+            //SetCursorPos(screenPoint.X, screenPoint.Y);
+            Thread.Sleep(1); // Pause so you can see the mouse movement
+
+            // Right-click at the location
+            Console.WriteLine($"Right-clicking at ({x}, {y})");
+            VirtualRightClick(hWnd, x, y);
+            Thread.Sleep(1); // Small delay between clicks
+
+            // Optional: Check for target after each click
+            int currentTargetId = GetTargetId();
+            if (currentTargetId != 0)
             {
-                currentFollow = follow;
+                Console.WriteLine($"Target acquired after clicking at ({x}, {y}). Target ID: {currentTargetId}");
+                // You can choose to return here if you want to stop after finding a target
+                // return;
             }
-            if(currentFollow == 1)
-            {
-                return;
-            }
-            // Now simulate click at the calculated position
-            int lParam = (targetY << 16) | (targetX & 0xFFFF);
-
-            PostMessage(hWnd, 0x0200, IntPtr.Zero, (IntPtr)lParam); // WM_MOUSEMOVE
-            Thread.Sleep(16);
-
-            PostMessage(hWnd, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
-            Thread.Sleep(16);
-
-            PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
-            
         }
+
+        Console.WriteLine("Finished clicking all specified locations.");
+    }
+
+    static void ClickSpecificLocationsWithMouseMovement(IntPtr hWnd)
+    {
+        // Define the specific coordinates to click
+        (int x, int y)[] locations = new (int, int)[]
+        {
+        (1129, 250),
+        (1165, 250),
+        (1203, 250),
+        (1236, 250),
+        (1126, 285),
+        (1165, 285),
+        (1203, 285),
+        (1236, 285)
+        };
+
+        // Get client area size to verify window is ready
+        GetClientRect(hWnd, out RECT rect);
+
+        // Ensure the window is large enough for these coordinates
+        if (rect.Right < 1237 || rect.Bottom < 319)
+        {
+            Console.WriteLine($"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates");
+        }
+
+        foreach (var location in locations)
+        {
+            int x = location.x;
+            int y = location.y;
+
+            // Convert client coordinates to screen coordinates
+            POINT screenPoint = new POINT { X = x, Y = y };
+            ClientToScreen(hWnd, ref screenPoint);
+
+            // Move mouse to the location
+            Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
+            //SetCursorPos(screenPoint.X, screenPoint.Y);
+            Thread.Sleep(10); // Pause so you can see the mouse movement
+
+            // Right-click at the location
+            Console.WriteLine($"Right-clicking at ({x}, {y})");
+            VirtualRightClick(hWnd, x, y);
+            Thread.Sleep(10); // Small delay between clicks
+
+            // Optional: Check for target after each click
+            int currentTargetId = GetTargetId();
+            if (currentTargetId != 0)
+            {
+                Console.WriteLine($"Target acquired after clicking at ({x}, {y}). Target ID: {currentTargetId}");
+                // You can choose to return here if you want to stop after finding a target
+                // return;
+            }
+        }
+
+        Console.WriteLine("Finished clicking all specified locations.");
+    }
+
+    static void DragItemToCharacterCenter(IntPtr hWnd)
+    {
+        // Source coordinates (where to pick up the item)
+        int sourceX = 1236;
+        int sourceY = 285;
+
+        // Get client rectangle to calculate character center
+        GetClientRect(hWnd, out RECT rect);
+
+        // Calculate the character center (destination)
+        int centerX = (rect.Right - rect.Left) / 2 - 186;
+        int centerY = (rect.Bottom - rect.Top) / 2 - 300;
+
+        Console.WriteLine($"Moving to source position ({sourceX}, {sourceY})");
+
+        // 1. Move mouse to source position
+        IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
+        SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
+        Thread.Sleep(100); // Wait for cursor to move
+
+        // 2. Press left mouse button down at source position
+        SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
+        Thread.Sleep(50);
+
+        // 3. Move mouse to destination (character center) with left button held
+        IntPtr centerLParam = MakeLParam(centerX, centerY);
+        SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), centerLParam);
+        Thread.Sleep(100);
+
+        // 4. Release left mouse button at destination
+        SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, centerLParam);
+        Thread.Sleep(50);
+
+        Console.WriteLine($"Completed drag from ({sourceX}, {sourceY}) to ({centerX}, {centerY})");
+    }
+
+    // Helper function for smooth dragging with intermediate positions
+    static void SmoothDrag(IntPtr hWnd, int startX, int startY, int endX, int endY)
+    {
+        int steps = 5; // Number of intermediate positions
+        for (int i = 1; i <= steps; i++)
+        {
+            int x = startX + (endX - startX) * i / (steps + 1);
+            int y = startY + (endY - startY) * i / (steps + 1);
+
+            IntPtr lParam = MakeLParam(x, y);
+            SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lParam);
+            Thread.Sleep(10); // Small delay between steps
+        }
+    }
+
+    const int MK_LBUTTON = 0x0001;
+
+    // MakeLParam function remains the same
+    static IntPtr MakeLParam(int x, int y)
+    {
+        return (IntPtr)((y << 16) | (x & 0xFFFF));
+    }
+
+    [DllImport("user32.dll")]
+    static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    // Helper function to send left mouse button down
+    static void SendLeftMouseDown(IntPtr hWnd, int x, int y)
+    {
+        IntPtr lParam = MakeLParam(x, y);
+        SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lParam);
+    }
+
+    // Helper function to send left mouse button up
+    static void SendLeftMouseUp(IntPtr hWnd, int x, int y)
+    {
+        IntPtr lParam = MakeLParam(x, y);
+        SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lParam);
     }
 
     static void ClickAroundCharacter(IntPtr hWnd)
     {
-        double squareSize = 68; // Size of one tile
-       
+       // DragItemToCharacterCenter(hWnd);
+        ClickSpecificLocationsWithMouseMovement(hWnd);
+        double squareSize = 57; // Size of one tile
 
         // Directions: (X offset, Y offset) in tiles
         (int dx, int dy)[] directions = new (int, int)[]
@@ -1098,17 +1370,21 @@ class Program
 
         // Get client area size
         GetClientRect(hWnd, out RECT rect);
+
         // Calculate the "character center" first (base point)
         int centerX = (rect.Right - rect.Left) / 2 - 186;
         int centerY = (rect.Bottom - rect.Top) / 2 - 300;
-        foreach (var (dx, dy) in directions)
+
+        foreach (var direction in directions)
         {
+            int dx = direction.dx;
+            int dy = direction.dy;
+
             int clickX = centerX + (int)(dx * squareSize);
             int clickY = centerY + (int)(dy * squareSize);
 
             VirtualRightClick(targetWindow, clickX, clickY);
             Thread.Sleep(1); // Small delay between clicks
-
             int currentTargetId = GetTargetId();
             if (currentTargetId != 0)
             {
@@ -1118,11 +1394,18 @@ class Program
         }
 
         Console.WriteLine("Finished clicking all 8 tiles, no target found.");
+        CorpseEatFood(targetWindow);
     }
 
     const int WM_MOUSEMOVE = 0x0200;
     const int WM_RBUTTONDOWN = 0x0204;
     const int WM_RBUTTONUP = 0x0205;
+    const uint VK_LCONTROL = 0xA2; // Left Control key
+    const uint VK_LMENU = 0xA4;    // Left Alt key
+    const uint KEYEVENTF_KEYUP = 0x0002; // Key up flag
+
+    [DllImport("user32.dll")]
+    static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, uint dwExtraInfo);
 
     static void VirtualRightClick(IntPtr hWnd, int x, int y)
     {
@@ -1138,4 +1421,11 @@ class Program
         Thread.Sleep(1);
     }
 
+    static int GetTargetId()
+    {
+        lock (memoryLock)
+        {
+            return targetId;
+        }
+    }
 }
