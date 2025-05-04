@@ -140,43 +140,44 @@ class Program
 
         while (programRunning)
         {
-            while (selectedProcess == null)
             {
-                var processes = Process.GetProcesses()
-                                .Where(p => p.ProcessName == processName)
-                                .ToArray();
-
-                if (processes.Length == 0)
+                while (selectedProcess == null)
                 {
-                    Console.WriteLine($"Process '{processName}' not found.");
-                    Thread.Sleep(500);
-                    continue;
-                }
-                else if (processes.Length == 1)
-                {
-                    selectedProcess = processes[0];
-                    Console.WriteLine($"One process found: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
-                }
-                else
-                {
-                    Console.WriteLine($"Multiple processes found with name '{processName}':");
-                    for (int i = 0; i < processes.Length; i++)
+                    var processes = Process.GetProcesses()
+                                    .Where(p => p.ProcessName == processName)
+                                    .ToArray();
+                    if (processes.Length == 0)
                     {
-                        Console.WriteLine($"{i + 1}: ID={processes[i].Id}, Name={processes[i].ProcessName}, StartTime={(processes[i].StartTime)}");
+                        Console.WriteLine($"Process '{processName}' not found.");
+                        Thread.Sleep(500);
+                        continue;
                     }
-
-                    Console.WriteLine("Enter the number of the process you want to select (1-9):");
-                    string input = Console.ReadLine();
-
-                    if (int.TryParse(input, out int choice) &&
-                        choice >= 1 && choice <= processes.Length)
+                    else if (processes.Length == 1)
                     {
-                        selectedProcess = processes[choice - 1];
-                        Console.WriteLine($"Selected process: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
+                        selectedProcess = processes[0];
+                        Console.WriteLine($"One process found: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
+                        Console.WriteLine($"Window Title: {selectedProcess.MainWindowTitle}");
                     }
                     else
                     {
-                        Console.WriteLine("Invalid selection. Please try again.");
+                        Console.WriteLine($"Multiple processes found with name '{processName}':");
+                        for (int i = 0; i < processes.Length; i++)
+                        {
+                            Console.WriteLine($"{i + 1}: ID={processes[i].Id}, Name={processes[i].ProcessName}, Window Title={processes[i].MainWindowTitle}, StartTime={(processes[i].StartTime)}");
+                        }
+                        Console.WriteLine("Enter the number of the process you want to select (1-9):");
+                        string input = Console.ReadLine();
+                        if (int.TryParse(input, out int choice) &&
+                            choice >= 1 && choice <= processes.Length)
+                        {
+                            selectedProcess = processes[choice - 1];
+                            Console.WriteLine($"Selected process: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
+                            Console.WriteLine($"Window Title: {selectedProcess.MainWindowTitle}");
+                        }
+                        else
+                        {
+                            Console.WriteLine("Invalid selection. Please try again.");
+                        }
                     }
                 }
             }
@@ -744,10 +745,13 @@ class Program
                     currentZ = posZ;
                     currentTargetId = targetId;
                 }
-
                 // Check if a fight just finished (previousTargetId was non-zero but currentTargetId is zero)
                 if (previousTargetId != 0 && currentTargetId == 0)
                 {
+                    if (debug) Console.WriteLine("[DEBUG] Fight finished, de-equipping time ring");
+                    ToggleTimeRing(targetWindow, false); // De-equip time ring
+                    Thread.Sleep(100); // Small delay after de-equipping
+
                     if (debug) Console.WriteLine("[DEBUG] Fight finished, calling ClickAroundCharacter");
                     ClickAroundCharacter(targetWindow);
                     Thread.Sleep(1); // Give some time for the click to register
@@ -759,6 +763,10 @@ class Program
                 // If we have a target, check if it's within 5 sqm of our path
                 if (currentTargetId != 0)
                 {
+                    if(debug) Console.WriteLine("[DEBUG] Target found, equipping time ring");
+                    ToggleTimeRing(targetWindow, true); // Equip time ring
+                    Thread.Sleep(100); // Small delay after equipping
+
                     var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
 
                     if (debug) Console.WriteLine($"[DEBUG] Monster found: {monsterName} at X={monsterX}, Y={monsterY}, Z={monsterZ}");
@@ -896,6 +904,7 @@ class Program
 
                 if (debug) Console.WriteLine($"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
                 bool clickSuccess = ClickWaypoint(nextWaypoint);
+                
                 Thread.Sleep(900);
 
                 if (clickSuccess)
@@ -1304,7 +1313,7 @@ class Program
 
             // Move mouse to the location
             //Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
-            //SetCursorPos(screenPoint.X, screenPoint.Y);
+            SetCursorPos(screenPoint.X, screenPoint.Y);
             Thread.Sleep(1); // Pause so you can see the mouse movement
 
             // Right-click at the location
@@ -1756,4 +1765,46 @@ class Program
         return (monsterX, monsterY, monsterZ, monsterName);
     }
 
+    static void ToggleTimeRing(IntPtr hWnd, bool equip)
+    {
+        try
+        {
+            int inventoryX = 940;
+            int inventoryY = 65;
+            int equipmentX = 1115;
+            int equipmentY = 150;
+
+            // Determine source and destination based on equip parameter
+            int sourceX = equip ? inventoryX : equipmentX;
+            int sourceY = equip ? inventoryY : equipmentY;
+            int destX = equip ? equipmentX : inventoryX;
+            int destY = equip ? equipmentY : inventoryY;
+
+            if (debug) Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} time ring");
+
+            // 1. Move mouse to source position
+            IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
+            PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
+            Thread.Sleep(50); // Small delay for mouse movement
+
+            // 2. Press left mouse button down at source position
+            PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
+            Thread.Sleep(50); // Small delay
+
+            // 3. Move mouse to destination with left button held
+            IntPtr destLParam = MakeLParam(destX, destY);
+            PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
+            Thread.Sleep(50); // Small delay for mouse movement
+
+            // 4. Release left mouse button at destination
+            PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
+            Thread.Sleep(50); // Small delay
+
+            if (debug) Console.WriteLine($"[DEBUG] Successfully {(equip ? "equipped" : "de-equipped")} time ring");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DEBUG] Error toggling time ring: {ex.Message}");
+        }
+    }
 }
