@@ -1,99 +1,97 @@
-using System;
 using System.Diagnostics;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Threading;
-using System.Collections.Generic;
 using System.Text;
-using System.IO;
 using System.Text.Json;
 using System.Collections.Concurrent;
-
 class Program
 {
     [DllImport("kernel32.dll")]
     static extern IntPtr OpenProcess(int dwDesiredAccess, bool bInheritHandle, int processId);
-
     [DllImport("user32.dll", SetLastError = true)]
     static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
     [DllImport("kernel32.dll")]
-    static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] buffer, int size, out int lpNumberOfBytesRead);
-
+    static extern bool ReadProcessMemory(
+        IntPtr hProcess,
+        IntPtr lpBaseAddress,
+        byte[] buffer,
+        int size,
+        out int lpNumberOfBytesRead
+    );
     [DllImport("user32.dll")]
     static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-
     [DllImport("user32.dll")]
     static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
-
     [DllImport("user32.dll")]
     static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-
     delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
     const int PROCESS_WM_READ = 0x0010;
     const uint WM_KEYDOWN = 0x0100;
     const uint WM_KEYUP = 0x0101;
-
     const int VK_LEFT = 0x25;
     const int VK_UP = 0x26;
     const int VK_RIGHT = 0x27;
     const int VK_DOWN = 0x28;
-
     static class Keys
     {
         public static readonly Dictionary<string, int> KeyMap = new Dictionary<string, int>
         {
-            { "F1", 0x70 }, { "F2", 0x71 }, { "F3", 0x72 }, { "F4", 0x73 },
-            { "F5", 0x74 }, { "F6", 0x75 }, { "F7", 0x76 }, { "F8", 0x77 },
-            { "F9", 0x78 }, { "F10", 0x79 }, { "F11", 0x7A }, { "F12", 0x7B }
+            { "F1", 0x70 },
+            { "F2", 0x71 },
+            { "F3", 0x72 },
+            { "F4", 0x73 },
+            { "F5", 0x74 },
+            { "F6", 0x75 },
+            { "F7", 0x76 },
+            { "F8", 0x77 },
+            { "F9", 0x78 },
+            { "F10", 0x79 },
+            { "F11", 0x7A },
+            { "F12", 0x7B }
         };
-
-        public static int GetKeyCode(string keyName) => KeyMap.ContainsKey(keyName) ? KeyMap[keyName] : -1;
+        public static int GetKeyCode(string keyName) =>
+            KeyMap.ContainsKey(keyName) ? KeyMap[keyName] : -1;
     }
-
     const int DEFAULT_HP_THRESHOLD = 75;
     const int DEFAULT_MANA_THRESHOLD = -1;
     const string DEFAULT_HP_KEY_NAME = "F1";
     const string DEFAULT_MANA_KEY_NAME = "F2";
-
     static int DEFAULT_HP_KEY => Keys.GetKeyCode(DEFAULT_HP_KEY_NAME);
     static int DEFAULT_MANA_KEY => Keys.GetKeyCode(DEFAULT_MANA_KEY_NAME);
-
     static IntPtr targetWindow = IntPtr.Zero;
     static DateTime lastHpActionTime = DateTime.MinValue;
     static DateTime lastManaActionTime = DateTime.MinValue;
     static Random random = new Random();
-
     static IntPtr xAddressOffset = (IntPtr)0x009435FC;
     static IntPtr yAddressOffset = (IntPtr)0x00943600;
     static IntPtr zAddressOffset = (IntPtr)0x00943604;
     static IntPtr targetIdOffset = (IntPtr)0x009432D4;
     static IntPtr followOffset = (IntPtr)0x00943380;
-
-    // Memory values (updated by background thread)
-    static double curHP = 0, maxHP = 1, curMana = 0, maxMana = 1;
-    static int posX = 0, posY = 0, posZ = 0, targetId = 0, follow = 0;
+    static double curHP = 0,
+        maxHP = 1,
+        curMana = 0,
+        maxMana = 1;
+    static int posX = 0,
+        posY = 0,
+        posZ = 0,
+        targetId = 0,
+        follow = 0;
     static bool memoryReadActive = false;
     static bool programRunning = true;
-
-    // Thread controls and flags
     static bool autoPotionActive = false;
     static bool isRecording = false;
     static bool isPlaying = false;
     static bool shouldRestartMemoryThread = false;
-
-    // Thread communication
-    static ConcurrentDictionary<string, bool> threadFlags = new ConcurrentDictionary<string, bool>();
+    static ConcurrentDictionary<string, bool> threadFlags = new ConcurrentDictionary<
+        string,
+        bool
+    >();
     static object memoryLock = new object();
-
     static List<Coordinate> recordedCoords = new List<Coordinate>();
     static string cordsFilePath = "cords.json";
     static CoordinateData loadedCoords = null;
     static Process selectedProcess = null;
     static IntPtr processHandle = IntPtr.Zero;
     static IntPtr moduleBase = IntPtr.Zero;
-
     struct Variable
     {
         public string Name;
@@ -101,51 +99,42 @@ class Program
         public List<int> Offsets;
         public string Type;
     }
-
     class Coordinate
     {
         public int X { get; set; }
         public int Y { get; set; }
         public int Z { get; set; }
     }
-
     class CoordinateData
     {
         public List<Coordinate> cords { get; set; } = new List<Coordinate>();
     }
-
-    // Path playback status tracking
     static int currentCoordIndex = -1;
     static int totalCoords = 0;
     static Coordinate currentTarget = null;
     static bool debug = true;
     static int debugTime = 2;
-
     static void Main()
     {
         Console.WriteLine($"Default HP Key: {DEFAULT_HP_KEY_NAME}");
         Console.WriteLine($"Default Mana Key: {DEFAULT_MANA_KEY_NAME}");
-
-        // Initialize thread flags
         threadFlags["recording"] = false;
         threadFlags["playing"] = false;
         threadFlags["autopot"] = false;
-
         if (!File.Exists(cordsFilePath))
         {
-            SaveCoordinates(); // Create empty cords.json if missing
+            SaveCoordinates();
         }
-
         string processName = "RealeraDX";
-
         while (programRunning)
         {
             {
                 while (selectedProcess == null)
                 {
-                    var processes = Process.GetProcesses()
-                                    .Where(p => p.ProcessName == processName)
-                                    .ToArray();
+                    var processes = Process
+                        .GetProcesses()
+                        .Where(p => p.ProcessName == processName)
+                        .ToArray();
                     if (processes.Length == 0)
                     {
                         Console.WriteLine($"Process '{processName}' not found.");
@@ -155,7 +144,9 @@ class Program
                     else if (processes.Length == 1)
                     {
                         selectedProcess = processes[0];
-                        Console.WriteLine($"One process found: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
+                        Console.WriteLine(
+                            $"One process found: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})"
+                        );
                         Console.WriteLine($"Window Title: {selectedProcess.MainWindowTitle}");
                     }
                     else
@@ -163,15 +154,24 @@ class Program
                         Console.WriteLine($"Multiple processes found with name '{processName}':");
                         for (int i = 0; i < processes.Length; i++)
                         {
-                            Console.WriteLine($"{i + 1}: ID={processes[i].Id}, Name={processes[i].ProcessName}, Window Title={processes[i].MainWindowTitle}, StartTime={(processes[i].StartTime)}");
+                            Console.WriteLine(
+                                $"{i + 1}: ID={processes[i].Id}, Name={processes[i].ProcessName}, Window Title={processes[i].MainWindowTitle}, StartTime={(processes[i].StartTime)}"
+                            );
                         }
-                        Console.WriteLine("Enter the number of the process you want to select (1-9):");
+                        Console.WriteLine(
+                            "Enter the number of the process you want to select (1-9):"
+                        );
                         string input = Console.ReadLine();
-                        if (int.TryParse(input, out int choice) &&
-                            choice >= 1 && choice <= processes.Length)
+                        if (
+                            int.TryParse(input, out int choice)
+                            && choice >= 1
+                            && choice <= processes.Length
+                        )
                         {
                             selectedProcess = processes[choice - 1];
-                            Console.WriteLine($"Selected process: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
+                            Console.WriteLine(
+                                $"Selected process: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})"
+                            );
                             Console.WriteLine($"Window Title: {selectedProcess.MainWindowTitle}");
                         }
                         else
@@ -181,127 +181,136 @@ class Program
                     }
                 }
             }
-
             FindRealeraWindow(selectedProcess);
             processHandle = OpenProcess(PROCESS_WM_READ, false, selectedProcess.Id);
             moduleBase = selectedProcess.MainModule.BaseAddress;
-
-            // Start worker threads
             StartWorkerThreads();
-
-            // Main loop for UI updates and handling user input
             while (memoryReadActive && !shouldRestartMemoryThread)
             {
-                // Display stats periodically
-                //DisplayStats();
-
-                // Handle user input
                 if (Console.KeyAvailable)
                 {
                     var key = Console.ReadKey(true).Key;
                     HandleUserInput(key);
                 }
-
-                Thread.Sleep(250); // Refresh UI at a reasonable rate
+                Thread.Sleep(250);
             }
-
             if (shouldRestartMemoryThread)
             {
                 shouldRestartMemoryThread = false;
                 StopWorkerThreads();
-                selectedProcess = null; // Reset to find process again
+                selectedProcess = null;
             }
         }
     }
-
     static void StartWorkerThreads()
     {
-        // Reset flags
         memoryReadActive = true;
-
-        // Start memory reading thread
         Thread memoryThread = new Thread(MemoryReadingThread);
         memoryThread.IsBackground = true;
         memoryThread.Name = "MemoryReader";
         memoryThread.Start();
-
-        // Start auto-potion thread
         Thread autoPotionThread = new Thread(AutoPotionThread);
         autoPotionThread.IsBackground = true;
         autoPotionThread.Name = "AutoPotion";
         autoPotionThread.Start();
-
         Console.WriteLine("Worker threads started successfully");
     }
-
     static void StopWorkerThreads()
     {
         memoryReadActive = false;
         threadFlags["recording"] = false;
         threadFlags["playing"] = false;
-
         Console.WriteLine("Worker threads stopping...");
-        Thread.Sleep(1000); // Give threads time to gracefully exit
+        Thread.Sleep(1000);
     }
-
     static List<Variable> variables = new List<Variable>
+    {
+        new Variable
         {
-            new Variable { Name = "Current Mana", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1240 }, Type = "Double" },
-            new Variable { Name = "Current HP", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1184 }, Type = "Double" },
-            new Variable { Name = "Max Mana", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1248 }, Type = "Double" },
-            new Variable { Name = "Max HP", BaseAddress = (IntPtr)0x009432D0, Offsets = new List<int>{ 1192 }, Type = "Double" }
-        };
-
+            Name = "Current Mana",
+            BaseAddress = (IntPtr)0x009432D0,
+            Offsets = new List<int> { 1240 },
+            Type = "Double"
+        },
+        new Variable
+        {
+            Name = "Current HP",
+            BaseAddress = (IntPtr)0x009432D0,
+            Offsets = new List<int> { 1184 },
+            Type = "Double"
+        },
+        new Variable
+        {
+            Name = "Max Mana",
+            BaseAddress = (IntPtr)0x009432D0,
+            Offsets = new List<int> { 1248 },
+            Type = "Double"
+        },
+        new Variable
+        {
+            Name = "Max HP",
+            BaseAddress = (IntPtr)0x009432D0,
+            Offsets = new List<int> { 1192 },
+            Type = "Double"
+        }
+    };
     static void MemoryReadingThread()
     {
         Console.WriteLine("Memory reading thread started");
-
         while (memoryReadActive)
         {
             try
             {
-                // Check if process is still running
                 if (selectedProcess.HasExited)
                 {
                     shouldRestartMemoryThread = true;
                     break;
                 }
-
-                // Read memory values
                 foreach (var variable in variables)
                 {
                     try
                     {
                         IntPtr address = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
                         byte[] buffer;
-
                         if (variable.Offsets.Count > 0)
                         {
                             buffer = new byte[4];
-                            if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _)) continue;
+                            if (
+                                !ReadProcessMemory(
+                                    processHandle,
+                                    address,
+                                    buffer,
+                                    buffer.Length,
+                                    out _
+                                )
+                            )
+                                continue;
                             address = (IntPtr)BitConverter.ToInt32(buffer, 0);
                             address = IntPtr.Add(address, variable.Offsets[0]);
                         }
-
                         buffer = variable.Type == "Double" ? new byte[8] : new byte[4];
-                        if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _)) continue;
-
-                        double value = variable.Type == "Double"
-                            ? BitConverter.ToDouble(buffer, 0)
-                            : BitConverter.ToInt32(buffer, 0);
-
+                        if (
+                            !ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _)
+                        )
+                            continue;
+                        double value =
+                            variable.Type == "Double"
+                                ? BitConverter.ToDouble(buffer, 0)
+                                : BitConverter.ToInt32(buffer, 0);
                         lock (memoryLock)
                         {
-                            if (variable.Name.Contains("HP") && !variable.Name.Contains("Max")) curHP = value;
-                            if (variable.Name.Contains("Mana") && !variable.Name.Contains("Max")) curMana = value;
-                            if (variable.Name.Contains("Max HP")) maxHP = value;
-                            if (variable.Name.Contains("Max Mana")) maxMana = value;
+                            if (variable.Name.Contains("HP") && !variable.Name.Contains("Max"))
+                                curHP = value;
+                            if (variable.Name.Contains("Mana") && !variable.Name.Contains("Max"))
+                                curMana = value;
+                            if (variable.Name.Contains("Max HP"))
+                                maxHP = value;
+                            if (variable.Name.Contains("Max Mana"))
+                                maxMana = value;
                         }
                     }
                     catch { }
                 }
-
-                // Read position values
                 lock (memoryLock)
                 {
                     posX = ReadInt32(processHandle, moduleBase, xAddressOffset);
@@ -309,15 +318,12 @@ class Program
                     posZ = ReadInt32(processHandle, moduleBase, zAddressOffset);
                     targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
                     follow = ReadInt32(processHandle, moduleBase, followOffset);
-
-                    // Record coordinate if recording is active
                     if (threadFlags["recording"])
                     {
                         RecordCoordinate(posX, posY, posZ);
                     }
                 }
-
-                Thread.Sleep(1); // Read memory at high frequency
+                Thread.Sleep(1);
             }
             catch (Exception ex)
             {
@@ -328,11 +334,9 @@ class Program
         }
         Console.WriteLine("Memory reading thread exited");
     }
-
     static void AutoPotionThread()
     {
         Console.WriteLine("Auto-potion thread started");
-
         while (memoryReadActive)
         {
             try
@@ -341,42 +345,42 @@ class Program
                 {
                     var now = DateTime.Now;
                     var thresholdms = 1000;
-                    double hpPercent, manaPercent;
-
+                    double hpPercent,
+                        manaPercent;
                     lock (memoryLock)
                     {
                         hpPercent = (curHP / maxHP) * 100;
                         manaPercent = (curMana / maxMana) * 100;
                     }
-
                     if (hpPercent == 0)
                     {
                         Thread.Sleep(1);
                         continue;
                     }
-
                     if (hpPercent <= DEFAULT_HP_THRESHOLD)
                     {
                         if ((now - lastHpActionTime).TotalMilliseconds >= thresholdms)
                         {
-                            Console.WriteLine($"⚠ HP below threshold ({DEFAULT_HP_THRESHOLD}%), current HP: {curHP}/{maxHP} ({hpPercent:F1}%), sending {DEFAULT_HP_KEY_NAME}");
+                            Console.WriteLine(
+                                $"⚠ HP below threshold ({DEFAULT_HP_THRESHOLD}%), current HP: {curHP}/{maxHP} ({hpPercent:F1}%), sending {DEFAULT_HP_KEY_NAME}"
+                            );
                             SendKeyPress(DEFAULT_HP_KEY);
                             lastHpActionTime = now.AddMilliseconds(random.Next(0, 100));
                         }
                     }
-
                     if (manaPercent <= DEFAULT_MANA_THRESHOLD)
                     {
                         if ((now - lastManaActionTime).TotalMilliseconds >= thresholdms)
                         {
-                            Console.WriteLine($"⚠ Mana below threshold ({DEFAULT_MANA_THRESHOLD}%), sending {DEFAULT_MANA_KEY_NAME}");
+                            Console.WriteLine(
+                                $"⚠ Mana below threshold ({DEFAULT_MANA_THRESHOLD}%), sending {DEFAULT_MANA_KEY_NAME}"
+                            );
                             SendKeyPress(DEFAULT_MANA_KEY);
                             lastManaActionTime = now.AddMilliseconds(random.Next(0, 100));
                         }
                     }
                 }
-
-                Thread.Sleep(100); // Check potions at moderate frequency
+                Thread.Sleep(100);
             }
             catch (Exception ex)
             {
@@ -386,14 +390,14 @@ class Program
         }
         Console.WriteLine("Auto-potion thread exited");
     }
-
     static void DisplayStats()
     {
         Console.Clear();
         double hpPercent;
         double manaPercent;
-        int currentX, currentY, currentZ;
-
+        int currentX,
+            currentY,
+            currentZ;
         lock (memoryLock)
         {
             hpPercent = (curHP / maxHP) * 100;
@@ -402,7 +406,6 @@ class Program
             currentY = posY;
             currentZ = posZ;
         }
-
         Console.WriteLine("RealeraDX - Live Stats:\n");
         Console.WriteLine("{0,-20} {1,15}", "Metric", "Value");
         Console.WriteLine(new string('-', 40));
@@ -416,28 +419,29 @@ class Program
         Console.WriteLine("{0,-20} {1,15:F0}", "follow", follow);
         Console.WriteLine(new string('-', 40));
         Console.WriteLine($"Position: X={currentX}, Y={currentY}, Z={currentZ}");
-
         if (threadFlags["recording"])
         {
             Console.WriteLine("🔴 Recording coordinates...");
             Console.WriteLine($"Coordinates recorded: {recordedCoords.Count}");
         }
-
         if (threadFlags["playing"] && currentTarget != null)
         {
             Console.WriteLine("\n▶️ PLAYING PATH:");
             Console.WriteLine(new string('-', 40));
-            Console.WriteLine($"Progress: {currentCoordIndex + 1}/{totalCoords} ({(((float)(currentCoordIndex + 1) / totalCoords) * 100):F1}%)");
+            Console.WriteLine(
+                $"Progress: {currentCoordIndex + 1}/{totalCoords} ({(((float)(currentCoordIndex + 1) / totalCoords) * 100):F1}%)"
+            );
             Console.WriteLine($"Current: X={currentX}, Y={currentY}, Z={currentZ}");
-            Console.WriteLine($"Target:  X={currentTarget.X}, Y={currentTarget.Y}, Z={currentTarget.Z}");
-
+            Console.WriteLine(
+                $"Target:  X={currentTarget.X}, Y={currentTarget.Y}, Z={currentTarget.Z}"
+            );
             int distanceX = Math.Abs(currentTarget.X - currentX);
             int distanceY = Math.Abs(currentTarget.Y - currentY);
             Console.WriteLine($"Distance: {distanceX + distanceY} steps");
-
-            // Draw a simple progress bar
             int barLength = 20;
-            int progress = (int)Math.Round((double)(currentCoordIndex + 1) / totalCoords * barLength);
+            int progress = (int)Math.Round(
+                (double)(currentCoordIndex + 1) / totalCoords * barLength
+            );
             Console.Write("[");
             for (int i = 0; i < barLength; i++)
             {
@@ -445,25 +449,21 @@ class Program
             }
             Console.WriteLine($"] {(((float)(currentCoordIndex + 1) / totalCoords) * 100):F1}%");
         }
-
         Console.WriteLine("\nActive Features:");
         Console.WriteLine($"Auto-Potions: {(threadFlags["autopot"] ? "✅ ON" : "❌ OFF")} (A)");
         Console.WriteLine($"Recording: {(threadFlags["recording"] ? "✅ ON" : "❌ OFF")} (R)");
         Console.WriteLine($"Playback: {(threadFlags["playing"] ? "✅ ON" : "❌ OFF")} (P)");
-
         Console.WriteLine("\nCommands:");
         Console.WriteLine("R - Start/Stop Recording");
         Console.WriteLine("P - Start/Stop Path Playback");
         Console.WriteLine("A - Toggle Auto-Potions");
         Console.WriteLine("Q - Quit");
     }
-
     static void HandleUserInput(ConsoleKey key)
     {
         switch (key)
         {
             case ConsoleKey.R:
-                // Toggle recording
                 if (!threadFlags["recording"] && !threadFlags["playing"])
                 {
                     Console.Write("Start recording coordinates? (y/n): ");
@@ -482,9 +482,7 @@ class Program
                     Console.WriteLine("Stopped recording and saved coordinates.");
                 }
                 break;
-
             case ConsoleKey.P:
-                // Toggle path playback
                 if (!threadFlags["playing"] && !threadFlags["recording"])
                 {
                     if (File.Exists(cordsFilePath))
@@ -500,18 +498,16 @@ class Program
                 }
                 else if (threadFlags["playing"])
                 {
-                    // Stop playback
                     threadFlags["playing"] = false;
                     Console.WriteLine("Path playback stopped.");
                 }
                 break;
-
             case ConsoleKey.A:
-                // Toggle auto-potions
                 threadFlags["autopot"] = !threadFlags["autopot"];
-                Console.WriteLine($"Auto-potions {(threadFlags["autopot"] ? "enabled" : "disabled")}");
+                Console.WriteLine(
+                    $"Auto-potions {(threadFlags["autopot"] ? "enabled" : "disabled")}"
+                );
                 break;
-
             case ConsoleKey.Q:
                 programRunning = false;
                 memoryReadActive = false;
@@ -521,30 +517,29 @@ class Program
                 break;
         }
     }
-
     static void StartPathPlayback()
     {
-        Thread playThread = new Thread(() =>
-        {
-            try
+        Thread playThread = new Thread(
+            () =>
             {
-                PlayCoordinates();
+                try
+                {
+                    PlayCoordinates();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Path playback error: {ex.Message}");
+                }
+                finally
+                {
+                    threadFlags["playing"] = false;
+                }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Path playback error: {ex.Message}");
-            }
-            finally
-            {
-                // Make sure to reset flag if thread exits for any reason
-                threadFlags["playing"] = false;
-            }
-        });
+        );
         playThread.IsBackground = true;
         playThread.Name = "PathPlayer";
         playThread.Start();
     }
-
     static int ReadInt32(IntPtr handle, IntPtr moduleBase, IntPtr offset)
     {
         IntPtr address = IntPtr.Add(moduleBase, (int)offset);
@@ -553,191 +548,156 @@ class Program
             return BitConverter.ToInt32(buffer, 0);
         return 0;
     }
-
     static void SendKeyPress(int key)
     {
         PostMessage(targetWindow, WM_KEYDOWN, (IntPtr)key, IntPtr.Zero);
         Thread.Sleep(random.Next(10, 25));
         PostMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
     }
-
     static void FindRealeraWindow(Process process)
     {
-        EnumWindows((hWnd, lParam) =>
-        {
-            uint windowProcessId;
-            GetWindowThreadProcessId(hWnd, out windowProcessId);
-
-            if (windowProcessId == (uint)process.Id)
+        EnumWindows(
+            (hWnd, lParam) =>
             {
-                StringBuilder sb = new StringBuilder(256);
-                GetWindowText(hWnd, sb, sb.Capacity);
-
-                if (sb.ToString().Contains("Realera 8.0"))
+                uint windowProcessId;
+                GetWindowThreadProcessId(hWnd, out windowProcessId);
+                if (windowProcessId == (uint)process.Id)
                 {
-                    targetWindow = hWnd;
-                    return false;
+                    StringBuilder sb = new StringBuilder(256);
+                    GetWindowText(hWnd, sb, sb.Capacity);
+                    if (sb.ToString().Contains("Realera 8.0"))
+                    {
+                        targetWindow = hWnd;
+                        return false;
+                    }
                 }
-            }
-            return true;
-        }, IntPtr.Zero);
+                return true;
+            },
+            IntPtr.Zero
+        );
     }
-
     static void SaveCoordinates()
     {
         CoordinateData data = new CoordinateData { cords = recordedCoords };
-        string json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+        string json = JsonSerializer.Serialize(
+            data,
+            new JsonSerializerOptions { WriteIndented = true }
+        );
         File.WriteAllText(cordsFilePath, json);
     }
-
     static void RecordCoordinate(int x, int y, int z)
     {
-        if (recordedCoords.Count == 0 || recordedCoords.Last().X != x || recordedCoords.Last().Y != y || recordedCoords.Last().Z != z)
+        if (
+            recordedCoords.Count == 0
+            || recordedCoords.Last().X != x
+            || recordedCoords.Last().Y != y
+            || recordedCoords.Last().Z != z
+        )
         {
             recordedCoords.Add(new Coordinate { X = x, Y = y, Z = z });
         }
     }
-
-    static Coordinate FindClosestCoordinate(int x, int y, int z, List<Coordinate> coords)
+    private static void MoveCharacterTowardsWaypoint(
+        int currentX,
+        int currentY,
+        int waypointX,
+        int waypointY
+    )
     {
-        return coords.OrderBy(c => Math.Abs(c.X - x) + Math.Abs(c.Y - y) + Math.Abs(c.Z - z)).First();
-    }
-
-
-
-
-
-
-
-
-
-    // Add this helper method to determine directional movement
-    private static void MoveCharacterTowardsWaypoint(int currentX, int currentY, int waypointX, int waypointY)
-    {
-        // Calculate differences
         int diffX = waypointX - currentX;
         int diffY = waypointY - currentY;
-
-        // Decide which direction to try first (X or Y)
         bool tryXFirst = Math.Abs(diffX) > Math.Abs(diffY);
-
         if (tryXFirst)
         {
-            // Try X movement first, then Y
             if (diffX > 0)
             {
-                // Move east
-                if (debug) Console.WriteLine("[DEBUG] Moving EAST with arrow key");
+                if (debug)
+                    Console.WriteLine("[DEBUG] Moving EAST with arrow key");
                 SendKeyPress(VK_RIGHT);
             }
             else if (diffX < 0)
             {
-                // Move west
-                if (debug) Console.WriteLine("[DEBUG] Moving WEST with arrow key");
+                if (debug)
+                    Console.WriteLine("[DEBUG] Moving WEST with arrow key");
                 SendKeyPress(VK_LEFT);
             }
-
-            Thread.Sleep(150); // Wait for movement
-
-            // Then try Y
+            Thread.Sleep(150);
             if (diffY > 0)
             {
-                // Move south
-                if (debug) Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
+                if (debug)
+                    Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
                 SendKeyPress(VK_DOWN);
             }
             else if (diffY < 0)
             {
-                // Move north
-                if (debug) Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
+                if (debug)
+                    Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
                 SendKeyPress(VK_UP);
             }
         }
         else
         {
-            // Try Y movement first, then X
             if (diffY > 0)
             {
-                // Move south
-                if (debug) Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
+                if (debug)
+                    Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
                 SendKeyPress(VK_DOWN);
             }
             else if (diffY < 0)
             {
-                // Move north
-                if (debug) Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
+                if (debug)
+                    Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
                 SendKeyPress(VK_UP);
             }
-
-            Thread.Sleep(150); // Wait for movement
-
-            // Then try X
+            Thread.Sleep(150);
             if (diffX > 0)
             {
-                // Move east
-                if (debug) Console.WriteLine("[DEBUG] Moving EAST with arrow key");
+                if (debug)
+                    Console.WriteLine("[DEBUG] Moving EAST with arrow key");
                 SendKeyPress(VK_RIGHT);
             }
             else if (diffX < 0)
             {
-                // Move west
-                if (debug) Console.WriteLine("[DEBUG] Moving WEST with arrow key");
+                if (debug)
+                    Console.WriteLine("[DEBUG] Moving WEST with arrow key");
                 SendKeyPress(VK_LEFT);
             }
         }
     }
-
-
-
-
-
-
-
-
     private static int previousTargetId = 0;
     static void PlayCoordinates()
     {
         Console.WriteLine("Path playback starting...");
-
-        // Load coordinates from file
         string json = File.ReadAllText(cordsFilePath);
         loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
-
         if (loadedCoords == null || loadedCoords.cords.Count == 0)
         {
             Console.WriteLine("No coordinates found in cords.json!");
             threadFlags["playing"] = false;
             return;
         }
-
-        // Initialize variables for path playback
         List<Coordinate> waypoints = loadedCoords.cords;
         totalCoords = waypoints.Count;
         HashSet<int> blacklistedTargets = new HashSet<int>();
         bool isReversed = false;
-
         Console.WriteLine($"Loaded {totalCoords} coordinates from cords.json");
-
-        // Always find closest waypoint on startup or resuming
-        int currentX, currentY, currentZ;
+        int currentX,
+            currentY,
+            currentZ;
         lock (memoryLock)
         {
             currentX = posX;
             currentY = posY;
             currentZ = posZ;
         }
-
-        // Find the closest waypoint to start with
         currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-        if (debug) Console.WriteLine($"[DEBUG] Starting at closest waypoint: index {currentCoordIndex}");
-
+        if (debug)
+            Console.WriteLine($"[DEBUG] Starting at closest waypoint: index {currentCoordIndex}");
         while (threadFlags["playing"])
         {
             try
             {
-                // Get current position
                 int currentTargetId;
-
                 lock (memoryLock)
                 {
                     currentX = posX;
@@ -745,190 +705,177 @@ class Program
                     currentZ = posZ;
                     currentTargetId = targetId;
                 }
-                // Check if a fight just finished (previousTargetId was non-zero but currentTargetId is zero)
                 if (previousTargetId != 0 && currentTargetId == 0)
                 {
-
-                    //if (debug) Console.WriteLine("[DEBUG] Fight finished, de-equipping time ring");
-                    ToggleRing(targetWindow, false); // De-equip time ring
-                    Thread.Sleep(1); // Small delay after de-equipping
-
-                    if (debug) Console.WriteLine("[DEBUG] Fight finished, calling ClickAroundCharacter");
+                    ToggleRing(targetWindow, false);
+                    Thread.Sleep(1);
+                    if (debug)
+                        Console.WriteLine("[DEBUG] Fight finished, calling ClickAroundCharacter");
                     ClickAroundCharacter(targetWindow);
-                    Thread.Sleep(1); // Give some time for the click to register
-
+                    Thread.Sleep(1);
                     lock (memoryLock)
                     {
                         currentTargetId = targetId;
                     }
-                    //if (previousTargetId != 0 && currentTargetId == 0)
-                    //{
-                    //    if (debug) Console.WriteLine("[DEBUG] Fight finished, de-equipping time ring");
-                    //    ToggleTimeRing(targetWindow, false); // De-equip time ring
-                    //    Thread.Sleep(100); // Small delay after de-equipping
-                    //}
                 }
-
-                // Store current targetId for next iteration
                 previousTargetId = currentTargetId;
-
-                // If we have a target, check if it's within 5 sqm of our path
                 if (currentTargetId != 0)
                 {
-                    //if(debug) Console.WriteLine("[DEBUG] Target found, equipping time ring");
-                    ToggleRing(targetWindow, true); // Equip time ring
-                    Thread.Sleep(1); // Small delay after equipping
-
-                    var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
-
-                    //if (debug) Console.WriteLine($"[DEBUG] Monster found: {monsterName} at X={monsterX}, Y={monsterY}, Z={monsterZ}");
+                    ToggleRing(targetWindow, true);
                     Thread.Sleep(1);
-                    // If target is blacklisted by ID, press ESC to cancel target and continue
+                    var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
+                    Thread.Sleep(1);
                     if (blacklistedTargets.Contains(currentTargetId))
                     {
-                        if (debug) Console.WriteLine($"[DEBUG] Skipping blacklisted target ID: {currentTargetId}");
-                        SendKeyPress(VK_ESCAPE); // Press ESC to cancel targeting
+                        if (debug)
+                            Console.WriteLine(
+                                $"[DEBUG] Skipping blacklisted target ID: {currentTargetId}"
+                            );
+                        SendKeyPress(VK_ESCAPE);
                         Thread.Sleep(1);
                         continue;
                     }
-
-                    // If target is blacklisted by name, press ESC to cancel target and continue
-                    if (!string.IsNullOrEmpty(monsterName) && blacklistedMonsterNames.Contains(monsterName))
+                    if (
+                        !string.IsNullOrEmpty(monsterName)
+                        && blacklistedMonsterNames.Contains(monsterName)
+                    )
                     {
-                        if (debug) Console.WriteLine($"[DEBUG] Skipping blacklisted monster: {monsterName}");
-                        SendKeyPress(VK_ESCAPE); // Press ESC to cancel targeting
+                        if (debug)
+                            Console.WriteLine(
+                                $"[DEBUG] Skipping blacklisted monster: {monsterName}"
+                            );
+                        SendKeyPress(VK_ESCAPE);
                         Thread.Sleep(1);
                         continue;
                     }
-
-                    // After combat or canceling, update position and find closest waypoint to resume path
                     lock (memoryLock)
                     {
                         currentX = posX;
                         currentY = posY;
                         currentZ = posZ;
                     }
-                    continue; // Go back to main loop to check for new targets or movement
-                }
-
-                // No target, try pressing F6 to find one
-                lock (memoryLock)
-                {
-                    currentTargetId = targetId;
-                }
-                // If we got a target, continue to combat loop
-                if (currentTargetId == 0)
-                {
-                    if (debug) Console.WriteLine("[DEBUG] No target, pressing F6 to search");
-                    SendKeyPress(VK_F6);
-                }
-
-                // Wait for results of F6 (target search)
-                Thread.Sleep(1);
-
-                lock (memoryLock)
-                {
-                    currentTargetId = targetId;
-                }
-
-                // If we got a target, continue to combat loop
-                if (currentTargetId != 0)
-                {
-                    if (debug) Console.WriteLine($"[DEBUG] Found target: {currentTargetId}");
                     continue;
                 }
-
-                // No target found, proceed with movement
-                if (debug) Console.WriteLine("[DEBUG] No target found, proceeding with movement");
-
-                // Wait a bit before moving (as requested)
+                lock (memoryLock)
+                {
+                    currentTargetId = targetId;
+                }
+                if (currentTargetId == 0)
+                {
+                    if (debug)
+                        Console.WriteLine("[DEBUG] No target, pressing F6 to search");
+                    SendKeyPress(VK_F6);
+                }
                 Thread.Sleep(1);
-
-                Coordinate nextWaypoint = FindNextWaypoint(ref waypoints, currentX, currentY, currentZ, ref currentCoordIndex);
+                lock (memoryLock)
+                {
+                    currentTargetId = targetId;
+                }
+                if (currentTargetId != 0)
+                {
+                    if (debug)
+                        Console.WriteLine($"[DEBUG] Found target: {currentTargetId}");
+                    continue;
+                }
+                if (debug)
+                    Console.WriteLine("[DEBUG] No target found, proceeding with movement");
+                Thread.Sleep(1);
+                Coordinate nextWaypoint = FindNextWaypoint(
+                    ref waypoints,
+                    currentX,
+                    currentY,
+                    currentZ,
+                    ref currentCoordIndex
+                );
                 currentTarget = nextWaypoint;
-
-                if (debug) Console.WriteLine($"[DEBUG] Moving to waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
-
-                // Calculate distance to target
+                if (debug)
+                    Console.WriteLine(
+                        $"[DEBUG] Moving to waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                    );
                 int distanceX = Math.Abs(nextWaypoint.X - currentX);
                 int distanceY = Math.Abs(nextWaypoint.Y - currentY);
                 int totalDistance = distanceX + distanceY;
-
-                // NEW CODE: Check if the waypoint is too far to click (> 5 tiles away in either direction)
                 if (distanceX > 5 || distanceY > 5)
                 {
-                    if (debug) Console.WriteLine($"[DEBUG] Waypoint too far to click: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
-                    if (debug) Console.WriteLine($"[DEBUG] Current position: X={currentX}, Y={currentY}, Z={currentZ}");
-                    if (debug) Console.WriteLine($"[DEBUG] Distance: X={distanceX}, Y={distanceY}");
-
-                    // Use arrow keys to move closer to the waypoint
-                    // Try up to 5 moves to get closer
+                    if (debug)
+                        Console.WriteLine(
+                            $"[DEBUG] Waypoint too far to click: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                        );
+                    if (debug)
+                        Console.WriteLine(
+                            $"[DEBUG] Current position: X={currentX}, Y={currentY}, Z={currentZ}"
+                        );
+                    if (debug)
+                        Console.WriteLine($"[DEBUG] Distance: X={distanceX}, Y={distanceY}");
                     int maxMoves = 5;
                     int movesMade = 0;
-
                     while ((distanceX > 5 || distanceY > 5) && movesMade < maxMoves)
                     {
-                        // Use arrow keys based on relative position
-                        MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypoint.X, nextWaypoint.Y);
-
-                        // Wait for movement to complete
+                        MoveCharacterTowardsWaypoint(
+                            currentX,
+                            currentY,
+                            nextWaypoint.X,
+                            nextWaypoint.Y
+                        );
                         Thread.Sleep(150);
-
-                        // Update current position
                         lock (memoryLock)
                         {
                             currentX = posX;
                             currentY = posY;
                             currentZ = posZ;
                         }
-
-                        // Recalculate distance
                         distanceX = Math.Abs(nextWaypoint.X - currentX);
                         distanceY = Math.Abs(nextWaypoint.Y - currentY);
-
-                        if (debug) Console.WriteLine($"[DEBUG] After move #{movesMade + 1}, new position: X={currentX}, Y={currentY}");
-                        if (debug) Console.WriteLine($"[DEBUG] New distance: X={distanceX}, Y={distanceY}");
-
+                        if (debug)
+                            Console.WriteLine(
+                                $"[DEBUG] After move #{movesMade + 1}, new position: X={currentX}, Y={currentY}"
+                            );
+                        if (debug)
+                            Console.WriteLine(
+                                $"[DEBUG] New distance: X={distanceX}, Y={distanceY}"
+                            );
                         movesMade++;
-
-                        // Check if we're close enough to click now
                         if (distanceX <= 5 && distanceY <= 5)
                         {
-                            if (debug) Console.WriteLine("[DEBUG] Now within clickable range");
+                            if (debug)
+                                Console.WriteLine("[DEBUG] Now within clickable range");
                             break;
                         }
-
-                        // If we haven't made progress after two tries, try alternating direction
                         if (movesMade % 2 == 0)
                         {
-                            if (debug) Console.WriteLine("[DEBUG] Switching movement priority");
+                            if (debug)
+                                Console.WriteLine("[DEBUG] Switching movement priority");
                         }
                     }
-
-                    // If we're still too far after all attempts, try finding a closer waypoint
                     if (distanceX > 5 || distanceY > 5)
                     {
-                        if (debug) Console.WriteLine("[DEBUG] Still too far after arrow movement, finding a new waypoint");
-                        currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                        continue; // Go back to start of loop with new waypoint
+                        if (debug)
+                            Console.WriteLine(
+                                "[DEBUG] Still too far after arrow movement, finding a new waypoint"
+                            );
+                        currentCoordIndex = FindClosestWaypointIndex(
+                            waypoints,
+                            currentX,
+                            currentY,
+                            currentZ
+                        );
+                        continue;
                     }
                 }
-
-                if (debug) Console.WriteLine($"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
+                if (debug)
+                    Console.WriteLine(
+                        $"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                    );
                 bool clickSuccess = ClickWaypoint(nextWaypoint);
-                
                 Thread.Sleep(900);
-
                 if (clickSuccess)
                 {
-                    // Check for follow status (if follow == 1 we're still moving)
                     int followStatus;
                     lock (memoryLock)
                     {
                         followStatus = follow;
                         currentTargetId = targetId;
                     }
-
                     if (currentTargetId == 0)
                     {
                         SendKeyPress(VK_F6);
@@ -937,16 +884,17 @@ class Program
                         {
                             currentTargetId = targetId;
                         }
-
                         if (currentTargetId != 0)
                         {
-                            if (debug) Console.WriteLine("[DEBUG] Target found after movement, switching to combat");
+                            if (debug)
+                                Console.WriteLine(
+                                    "[DEBUG] Target found after movement, switching to combat"
+                                );
                             continue;
                         }
                     }
                 }
-
-                Thread.Sleep(1); // Slow down for debugging if needed
+                Thread.Sleep(1);
             }
             catch (Exception ex)
             {
@@ -954,124 +902,91 @@ class Program
                 Thread.Sleep(1);
             }
         }
-
         Console.WriteLine("Path playback ended");
     }
-
-
-
-
-
-
-    // Helper function to find the index of the closest waypoint
-    static int FindClosestWaypointIndex(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
+    static int FindClosestWaypointIndex(
+        List<Coordinate> waypoints,
+        int currentX,
+        int currentY,
+        int currentZ
+    )
     {
         int closestIndex = 0;
         int minDistance = int.MaxValue;
-
         for (int i = 0; i < waypoints.Count; i++)
         {
             var waypoint = waypoints[i];
             int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-
             if (distance < minDistance)
             {
                 minDistance = distance;
                 closestIndex = i;
             }
         }
-
         return closestIndex;
     }
-
-    static Coordinate FindNextWaypoint(ref List<Coordinate> waypoints, int currentX, int currentY, int currentZ, ref int currentIndex)
+    static Coordinate FindNextWaypoint(
+        ref List<Coordinate> waypoints,
+        int currentX,
+        int currentY,
+        int currentZ,
+        ref int currentIndex
+    )
     {
         Console.WriteLine("\n=== FIND NEXT WAYPOINT DEBUG ===");
         Console.WriteLine($"Current position: X={currentX}, Y={currentY}, Z={currentZ}");
         Console.WriteLine($"Current index: {currentIndex}");
         Console.WriteLine($"Total waypoints: {waypoints.Count}");
-
-        // Safety check
         if (waypoints.Count == 0)
         {
             Console.WriteLine("ERROR: Empty waypoints list");
             return new Coordinate { X = currentX, Y = currentY, Z = currentZ };
         }
-
         if (currentIndex < 0 || currentIndex >= waypoints.Count)
         {
             Console.WriteLine($"ERROR: Current index {currentIndex} out of bounds");
             currentIndex = Math.Max(0, Math.Min(waypoints.Count - 1, currentIndex));
             Console.WriteLine($"Corrected to index {currentIndex}");
         }
-
-        // Check if we're at the last waypoint
         if (currentIndex == waypoints.Count - 1)
         {
             Console.WriteLine("At last waypoint, checking if we should reverse list...");
-
-            // Calculate distance to the first waypoint
-            int distanceToFirst = Math.Abs(waypoints[0].X - currentX) + Math.Abs(waypoints[0].Y - currentY);
-
+            int distanceToFirst =
+                Math.Abs(waypoints[0].X - currentX) + Math.Abs(waypoints[0].Y - currentY);
             Console.WriteLine($"Distance to first waypoint: {distanceToFirst} steps");
-
-            // If distance to first waypoint is too large, reverse the list
             if (distanceToFirst > 12)
             {
                 Console.WriteLine("Distance > 12, REVERSING THE LIST NOW");
                 waypoints.Reverse();
-
-                // Update current index after reversing
-                currentIndex = 0;  // We were at the end, now we're at the beginning
-
+                currentIndex = 0;
                 Console.WriteLine("List reversed, now at index 0");
             }
         }
-
-        // Maximum search range and distance constraints
-        int maxSearchCount = 10;    // Look at maximum 10 waypoints
-        int maxAllowedX = 5;        // Maximum X distance
-        int maxAllowedY = 5;        // Maximum Y distance
-
-        // Variables to track the best waypoint
-        int bestIndex = -1;         // Best waypoint found so far (-1 means none)
-        double maxDistance = 0;     // Maximum distance found so far
-
+        int maxSearchCount = 10;
+        int maxAllowedX = 5;
+        int maxAllowedY = 5;
+        int bestIndex = -1;
+        double maxDistance = 0;
         Console.WriteLine("Starting waypoint search...");
-
-        // Determine search direction - always move forward
-        int startIndex, endIndex;
-
-        // Always search ahead (after current position)
+        int startIndex,
+            endIndex;
         startIndex = currentIndex + 1;
         endIndex = Math.Min(waypoints.Count - 1, currentIndex + maxSearchCount);
-
         Console.WriteLine($"Searching forward from index {startIndex} to {endIndex}");
-
-        // Search for the best waypoint
         for (int index = startIndex; index <= endIndex; index++)
         {
-            // Skip if index is out of bounds
             if (index < 0 || index >= waypoints.Count)
                 continue;
-
             Coordinate waypoint = waypoints[index];
-
-            // Calculate distance to this waypoint
             int deltaX = Math.Abs(waypoint.X - currentX);
             int deltaY = Math.Abs(waypoint.Y - currentY);
-
-            Console.WriteLine($"  Checking waypoint[{index}]: X={waypoint.X}, Y={waypoint.Y}, deltaX={deltaX}, deltaY={deltaY}");
-
-            // Check if the waypoint is within the maximum allowed distance
+            Console.WriteLine(
+                $"  Checking waypoint[{index}]: X={waypoint.X}, Y={waypoint.Y}, deltaX={deltaX}, deltaY={deltaY}"
+            );
             if (deltaX <= maxAllowedX && deltaY <= maxAllowedY)
             {
-                // Calculate Euclidean distance
                 double distance = Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
-
                 Console.WriteLine($"  Distance: {distance:F2} (within limits)");
-
-                // Keep track of the farthest valid waypoint
                 if (distance > maxDistance)
                 {
                     maxDistance = distance;
@@ -1084,80 +999,57 @@ class Program
                 Console.WriteLine($"  Skipped: Outside distance limits");
             }
         }
-
-        // If no valid waypoint found ahead, choose next index if possible
         if (bestIndex == -1)
         {
             Console.WriteLine("No valid waypoint found ahead. Choosing adjacent waypoint...");
-
             if (currentIndex < waypoints.Count - 1)
             {
-                bestIndex = currentIndex + 1; // Move to next waypoint
+                bestIndex = currentIndex + 1;
                 Console.WriteLine($"Moving to next waypoint (index {bestIndex})");
             }
             else
             {
-                // We're at the end, check if we should stay or reverse
                 bestIndex = currentIndex;
-                Console.WriteLine("At last waypoint, no valid waypoint ahead. Staying at current position.");
+                Console.WriteLine(
+                    "At last waypoint, no valid waypoint ahead. Staying at current position."
+                );
             }
         }
-
-        // Final safety check
         bestIndex = Math.Max(0, Math.Min(waypoints.Count - 1, bestIndex));
-
-        // Update the current index
         currentIndex = bestIndex;
-
         Coordinate result = waypoints[bestIndex];
-        Console.WriteLine($"Final choice: waypoint[{bestIndex}]: X={result.X}, Y={result.Y}, Z={result.Z}");
+        Console.WriteLine(
+            $"Final choice: waypoint[{bestIndex}]: X={result.X}, Y={result.Y}, Z={result.Z}"
+        );
         Console.WriteLine("=== END FIND NEXT WAYPOINT DEBUG ===\n");
-
         return result;
     }
-
-
-
     static bool ClickWaypoint(Coordinate target)
     {
         try
         {
-            // Get current position
             int pixelSize = 58;
-            int currentX, currentY;
+            int currentX,
+                currentY;
             lock (memoryLock)
             {
                 currentX = posX;
                 currentY = posY;
             }
-
-            // Get client area size
             GetClientRect(targetWindow, out RECT rect);
-
-            // Calculate the character center (base point)
             int baseX = (rect.Right - rect.Left) / 2 - 186;
             int baseY = (rect.Bottom - rect.Top) / 2 - 300;
-
-            // Calculate movement vector
             int diffX = target.X - currentX;
             int diffY = target.Y - currentY;
-
-            // Use the provided pixel size
             int targetX = baseX + (diffX * pixelSize);
             int targetY = baseY + (diffY * pixelSize);
-
-            // Final combat check
             if (GetTargetId() != 0)
             {
                 Console.WriteLine("[DEBUG] Combat detected, canceling movement");
                 return false;
             }
-
-            // Pack coordinates
             int lParam = (targetY << 16) | (targetX & 0xFFFF);
-
-            // Send click
-            SendKeyPress(VK_ESCAPE); // Press ESC to cancel targeting
+            SendKeyPress(VK_ESCAPE);
             Thread.Sleep(1);
             PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)lParam);
             Thread.Sleep(1);
@@ -1165,12 +1057,11 @@ class Program
             Thread.Sleep(1);
             PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
             Thread.Sleep(1);
-
-            // Return mouse to center as requested
             int centerLParam = (baseY << 16) | (baseX & 0xFFFF);
             PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)centerLParam);
-
-            Console.WriteLine($"[DEBUG] Clicked: X={diffX}, Y={diffY} (Screen: {targetX}, {targetY}, Pixel Size: {pixelSize})");
+            Console.WriteLine(
+                $"[DEBUG] Clicked: X={diffX}, Y={diffY} (Screen: {targetX}, {targetY}, Pixel Size: {pixelSize})"
+            );
             return true;
         }
         catch (Exception ex)
@@ -1179,31 +1070,22 @@ class Program
             return false;
         }
     }
-
-
-    // Constants needed
-    const byte VK_ESCAPE = 0x1B; // ESC key
-
-
+    const byte VK_ESCAPE = 0x1B;
     const int VK_F6 = 0x75;
-
-
     const int WM_LBUTTONDOWN = 0x0201;
     const int WM_LBUTTONUP = 0x0202;
-
     [StructLayout(LayoutKind.Sequential)]
     struct INPUT
     {
         public uint type;
         public InputUnion u;
     }
-
     [StructLayout(LayoutKind.Explicit)]
     struct InputUnion
     {
-        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)]
+        public MOUSEINPUT mi;
     }
-
     [StructLayout(LayoutKind.Sequential)]
     struct MOUSEINPUT
     {
@@ -1214,334 +1096,207 @@ class Program
         public uint time;
         public IntPtr dwExtraInfo;
     }
-
     const int INPUT_MOUSE = 0;
     const uint MOUSEEVENTF_MOVE = 0x0001;
     const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
     const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
     const uint MOUSEEVENTF_LEFTUP = 0x0004;
-
     [DllImport("user32.dll")]
     static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
-
     [DllImport("user32.dll")]
     static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
-
     [DllImport("user32.dll")]
     static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
     [StructLayout(LayoutKind.Sequential)]
     struct RECT
     {
-        public int Left, Top, Right, Bottom;
+        public int Left,
+            Top,
+            Right,
+            Bottom;
     }
-
     [StructLayout(LayoutKind.Sequential)]
     struct POINT
     {
         public int X;
         public int Y;
     }
-
     [DllImport("user32.dll")]
     static extern int GetSystemMetrics(int nIndex);
-
-
     [DllImport("user32.dll")]
     static extern bool SetCursorPos(int X, int Y);
-
     static void CloseCorspe(IntPtr hWnd)
     {
-        // Define the specific coordinates to click
-        (int x, int y)[] locations = new (int, int)[]
-        {
-        (1262, 320)
-        };
-
-        // Get client area size to verify window is ready
+        (int x, int y)[] locations = new (int, int)[] { (1262, 320) };
         GetClientRect(hWnd, out RECT rect);
-
-        // Ensure the window is large enough for these coordinates
         if (rect.Right < 1237 || rect.Bottom < 319)
         {
-            Console.WriteLine($"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates");
+            Console.WriteLine(
+                $"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates"
+            );
         }
-
         foreach (var location in locations)
         {
             int x = location.x;
             int y = location.y;
-
-            // Convert client coordinates to screen coordinates
             POINT screenPoint = new POINT { X = x, Y = y };
             ClientToScreen(hWnd, ref screenPoint);
-
-            // Move mouse to the location
-            //Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
-            //SetCursorPos(screenPoint.X, screenPoint.Y);
-            Thread.Sleep(1); // Pause so you can see the mouse movement
-
-            // Right-click at the location
-            //Console.WriteLine($"Right-clicking at ({x}, {y})");
+            Thread.Sleep(1);
             VirtualLeftClick(hWnd, x, y);
-            Thread.Sleep(1); // Small delay between clicks
+            Thread.Sleep(1);
         }
-
-        //Console.WriteLine("Finished clicking all specified locations.");
     }
-
     static void CorpseEatFood(IntPtr hWnd)
     {
-        // Define the specific coordinates to click
         (int x, int y)[] locations = new (int, int)[]
         {
-        (1126, 325),
-        (1165, 325),
-        (1203, 325),
-        (1236, 325),
-        (1126, 340),
-        (1165, 340),
-        (1203, 340),
-        (1236, 340)
+            (1126, 325),
+            (1165, 325),
+            (1203, 325),
+            (1236, 325),
+            (1126, 340),
+            (1165, 340),
+            (1203, 340),
+            (1236, 340)
         };
-
-        // Get client area size to verify window is ready
         GetClientRect(hWnd, out RECT rect);
-
-        // Ensure the window is large enough for these coordinates
         if (rect.Right < 1237 || rect.Bottom < 319)
         {
-            Console.WriteLine($"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates");
+            Console.WriteLine(
+                $"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates"
+            );
         }
-
         foreach (var location in locations)
         {
             int x = location.x;
             int y = location.y;
-
-            // Convert client coordinates to screen coordinates
             POINT screenPoint = new POINT { X = x, Y = y };
             ClientToScreen(hWnd, ref screenPoint);
-
-            // Move mouse to the location
-            //Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
-            //SetCursorPos(screenPoint.X, screenPoint.Y);
-            Thread.Sleep(1); // Pause so you can see the mouse movement
-
-            // Right-click at the location
-            //Console.WriteLine($"Right-clicking at ({x}, {y})");
+            Thread.Sleep(1);
             VirtualRightClick(hWnd, x, y);
-            Thread.Sleep(1); // Small delay between clicks
+            Thread.Sleep(1);
         }
-
-        //Console.WriteLine("Finished clicking all specified locations.");
     }
-
     static void ClickSpecificLocationsWithMouseMovement(IntPtr hWnd)
     {
-        // Define the specific coordinates to click
-        (int x, int y)[] locations = new (int, int)[]
-        {
-        //(1129, 250)
-        (1165, 250)
-        //(1203, 250),
-        //(1236, 250),
-        //(1126, 285),
-        //(1165, 285),
-        //(1203, 285),
-        //(1236, 285)
-        };
-
-        // Get client area size to verify window is ready
+        (int x, int y)[] locations = new (int, int)[] { (1165, 250) };
         GetClientRect(hWnd, out RECT rect);
-
-        // Ensure the window is large enough for these coordinates
         if (rect.Right < 1237 || rect.Bottom < 319)
         {
-            Console.WriteLine($"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates");
+            Console.WriteLine(
+                $"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates"
+            );
         }
-
         foreach (var location in locations)
         {
             int x = location.x;
             int y = location.y;
-
-            // Convert client coordinates to screen coordinates
             POINT screenPoint = new POINT { X = x, Y = y };
             ClientToScreen(hWnd, ref screenPoint);
-
-            // Move mouse to the location
-            //Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
-            //SetCursorPos(screenPoint.X, screenPoint.Y);
-            Thread.Sleep(1); // Pause so you can see the mouse movement
-
-            // Right-click at the location
-            //Console.WriteLine($"Right-clicking at ({x}, {y})");
+            Thread.Sleep(1);
             VirtualRightClick(hWnd, x, y);
-            Thread.Sleep(1); // Small delay between clicks
-
-            // Optional: Check for target after each click
+            Thread.Sleep(1);
             int currentTargetId = GetTargetId();
             if (currentTargetId != 0)
             {
-                Console.WriteLine($"Target acquired after clicking at ({x}, {y}). Target ID: {currentTargetId}");
-                // You can choose to return here if you want to stop after finding a target
-                // return;
+                Console.WriteLine(
+                    $"Target acquired after clicking at ({x}, {y}). Target ID: {currentTargetId}"
+                );
             }
         }
-
-        //Console.WriteLine("Finished clicking all specified locations.");
     }
-
     static void DragItemToCharacterCenter(IntPtr hWnd)
     {
-        // Source coordinates (where to pick up the item)
         int sourceX = 1236;
         int sourceY = 285;
-
-        // Get client rectangle to calculate character center
         GetClientRect(hWnd, out RECT rect);
-
-        // Calculate the character center (destination)
         int centerX = (rect.Right - rect.Left) / 2 - 186;
         int centerY = (rect.Bottom - rect.Top) / 2 - 300;
-
         Console.WriteLine($"Moving to source position ({sourceX}, {sourceY})");
-
-        // 1. Move mouse to source position
         IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
         SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
-        Thread.Sleep(1); // Wait for cursor to move
-
-        // 2. Press left mouse button down at source position
+        Thread.Sleep(1);
         SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
         Thread.Sleep(1);
-
-        // 3. Move mouse to destination (character center) with left button held
         IntPtr centerLParam = MakeLParam(centerX, centerY);
         SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), centerLParam);
         Thread.Sleep(1);
-
-        // 4. Release left mouse button at destination
         SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, centerLParam);
         Thread.Sleep(1);
-
         Console.WriteLine($"Completed drag from ({sourceX}, {sourceY}) to ({centerX}, {centerY})");
     }
-
     const int MK_LBUTTON = 0x0001;
-
-    // MakeLParam function remains the same
     static IntPtr MakeLParam(int x, int y)
     {
         return (IntPtr)((y << 16) | (x & 0xFFFF));
     }
-
     [DllImport("user32.dll")]
     static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-
-    // Helper function to send left mouse button down
-    static void SendLeftMouseDown(IntPtr hWnd, int x, int y)
-    {
-        IntPtr lParam = MakeLParam(x, y);
-        SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lParam);
-    }
-
-    // Helper function to send left mouse button up
-    static void SendLeftMouseUp(IntPtr hWnd, int x, int y)
-    {
-        IntPtr lParam = MakeLParam(x, y);
-        SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lParam);
-    }
-
     static void ClickAroundCharacter(IntPtr hWnd)
     {
-        // DragItemToCharacterCenter(hWnd);
         ClickSpecificLocationsWithMouseMovement(hWnd);
-        double squareSize = 57; // Size of one tile
-
-        // Directions: (X offset, Y offset) in tiles
+        double squareSize = 57;
         (int dx, int dy)[] directions = new (int, int)[]
         {
-        (0, -1),  // Top
-        (1, -1),  // Top-Right
-        (1, 0),   // Right
-        (1, 1),   // Bottom-Right
-        (0, 1),   // Bottom
-        (-1, 1),  // Bottom-Left
-        (-1, 0),  // Left
-        (-1, -1)  // Top-Left
+            (0, -1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+            (0, 1),
+            (-1, 1),
+            (-1, 0),
+            (-1, -1)
         };
-
-        // Get client area size
         GetClientRect(hWnd, out RECT rect);
-
-        // Calculate the "character center" first (base point)
         int centerX = (rect.Right - rect.Left) / 2 - 186;
         int centerY = (rect.Bottom - rect.Top) / 2 - 300;
-
         foreach (var direction in directions)
         {
             int dx = direction.dx;
             int dy = direction.dy;
-
             int clickX = centerX + (int)(dx * squareSize);
             int clickY = centerY + (int)(dy * squareSize);
-
             VirtualRightClick(targetWindow, clickX, clickY);
-            Thread.Sleep(1); // Small delay between clicks
-
+            Thread.Sleep(1);
             int currentTargetId = GetTargetId();
             if (currentTargetId != 0)
             {
-                Console.WriteLine($"Target acquired after clicking at ({clickX}, {clickY}). Target ID: {currentTargetId}");
-                //return; // Exit early if something is targeted
+                Console.WriteLine(
+                    $"Target acquired after clicking at ({clickX}, {clickY}). Target ID: {currentTargetId}"
+                );
             }
         }
         CorpseEatFood(targetWindow);
         CloseCorspe(targetWindow);
-        //Console.WriteLine("Finished clicking all 8 tiles, no target found.");
-
     }
-
     const int WM_MOUSEMOVE = 0x0200;
     const int WM_RBUTTONDOWN = 0x0204;
     const int WM_RBUTTONUP = 0x0205;
-    const uint VK_LCONTROL = 0xA2; // Left Control key
-    const uint VK_LMENU = 0xA4;    // Left Alt key
-    const uint KEYEVENTF_KEYUP = 0x0002; // Key up flag
-
+    const uint VK_LCONTROL = 0xA2;
+    const uint VK_LMENU = 0xA4;
+    const uint KEYEVENTF_KEYUP = 0x0002;
     [DllImport("user32.dll")]
     static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, uint dwExtraInfo);
-
     static void VirtualRightClick(IntPtr hWnd, int x, int y)
     {
         int lParam = (y << 16) | (x & 0xFFFF);
-
         PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
         Thread.Sleep(1);
-
         PostMessage(hWnd, WM_RBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
         Thread.Sleep(1);
-
         PostMessage(hWnd, WM_RBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
         Thread.Sleep(1);
     }
-
     static void VirtualLeftClick(IntPtr hWnd, int x, int y)
     {
         int lParam = (y << 16) | (x & 0xFFFF);
-
         PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
         Thread.Sleep(1);
-
         PostMessage(hWnd, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
         Thread.Sleep(1);
-
         PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
         Thread.Sleep(1);
     }
-
     static int GetTargetId()
     {
         lock (memoryLock)
@@ -1549,169 +1304,90 @@ class Program
             return targetId;
         }
     }
-
     static (int monsterX, int monsterY, int monsterZ) GetTargetMonsterCoordinates()
     {
         int targetId = 0;
-        int monsterX = 0, monsterY = 0, monsterZ = 0;
-
+        int monsterX = 0,
+            monsterY = 0,
+            monsterZ = 0;
         lock (memoryLock)
         {
-            // Get target ID
             targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
-
             if (targetId != 0)
             {
-                // Read monster instance pointer
                 IntPtr monsterInstancePtr = IntPtr.Zero;
                 byte[] buffer = new byte[4];
-
-                if (ReadProcessMemory(processHandle, IntPtr.Add(moduleBase, (int)targetIdOffset), buffer, buffer.Length, out _))
+                if (
+                    ReadProcessMemory(
+                        processHandle,
+                        IntPtr.Add(moduleBase, (int)targetIdOffset),
+                        buffer,
+                        buffer.Length,
+                        out _
+                    )
+                )
                 {
-                    // This is the pointer to the monster instance
                     monsterInstancePtr = (IntPtr)BitConverter.ToInt32(buffer, 0);
-
-                    // Now read X coordinate (offset 0x000C from monster instance)
-                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x000C), buffer, buffer.Length, out _))
+                    if (
+                        ReadProcessMemory(
+                            processHandle,
+                            IntPtr.Add(monsterInstancePtr, 0x000C),
+                            buffer,
+                            buffer.Length,
+                            out _
+                        )
+                    )
                     {
                         monsterX = BitConverter.ToInt32(buffer, 0);
                     }
-
-                    // Read Y coordinate (offset 0x0010 from monster instance)
-                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x0010), buffer, buffer.Length, out _))
+                    if (
+                        ReadProcessMemory(
+                            processHandle,
+                            IntPtr.Add(monsterInstancePtr, 0x0010),
+                            buffer,
+                            buffer.Length,
+                            out _
+                        )
+                    )
                     {
                         monsterY = BitConverter.ToInt32(buffer, 0);
                     }
-
-                    // Read Z coordinate (offset 0x0014 from monster instance)
-                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x0014), buffer, buffer.Length, out _))
+                    if (
+                        ReadProcessMemory(
+                            processHandle,
+                            IntPtr.Add(monsterInstancePtr, 0x0014),
+                            buffer,
+                            buffer.Length,
+                            out _
+                        )
+                    )
                     {
                         monsterZ = BitConverter.ToInt32(buffer, 0);
                     }
                 }
             }
         }
-
         return (monsterX, monsterY, monsterZ);
     }
-
-    static bool ChaseMonsterWithArrowKeys(int playerX, int playerY, int monsterX, int monsterY)
-    {
-        // Calculate direction to monster
-        int deltaX = monsterX - playerX;
-        int deltaY = monsterY - playerY;
-
-        // Max chase attempts
-        int maxAttempts = 10;
-        int attempts = 0;
-
-        // Chase until we're adjacent to the monster or reach max attempts
-        while ((Math.Abs(deltaX) > 1 || Math.Abs(deltaY) > 1) && attempts < maxAttempts)
-        {
-            // Determine which direction to move
-            if (Math.Abs(deltaX) > Math.Abs(deltaY))
-            {
-                // Move horizontally first
-                if (deltaX > 0)
-                {
-                    // Move right
-                    if (debug) Console.WriteLine("[DEBUG] Pressing RIGHT to chase monster");
-                    SendKeyPress(VK_RIGHT);
-                }
-                else
-                {
-                    // Move left
-                    if (debug) Console.WriteLine("[DEBUG] Pressing LEFT to chase monster");
-                    SendKeyPress(VK_LEFT);
-                }
-            }
-            else
-            {
-                // Move vertically first
-                if (deltaY > 0)
-                {
-                    // Move down
-                    if (debug) Console.WriteLine("[DEBUG] Pressing DOWN to chase monster");
-                    SendKeyPress(VK_DOWN);
-                }
-                else
-                {
-                    // Move up
-                    if (debug) Console.WriteLine("[DEBUG] Pressing UP to chase monster");
-                    SendKeyPress(VK_UP);
-                }
-            }
-
-            // Wait for movement to complete
-            Thread.Sleep(300);
-
-            // Check if target is still valid
-            int currentTargetId;
-            lock (memoryLock)
-            {
-                playerX = posX;
-                playerY = posY;
-                currentTargetId = targetId;
-            }
-
-            // If target is gone, stop chasing
-            if (currentTargetId == 0)
-            {
-                if (debug) Console.WriteLine("[DEBUG] Lost target while chasing");
-                return false;
-            }
-
-            // Get updated monster position
-            var (updatedMonsterX, updatedMonsterY, _) = GetTargetMonsterCoordinates();
-
-            // Update deltas
-            deltaX = updatedMonsterX - playerX;
-            deltaY = updatedMonsterY - playerY;
-
-            // Check if we're adjacent to monster
-            if (Math.Abs(deltaX) <= 1 && Math.Abs(deltaY) <= 1)
-            {
-                if (debug) Console.WriteLine("[DEBUG] Now adjacent to monster, combat can begin");
-                return true;
-            }
-
-            attempts++;
-        }
-
-        if (attempts >= maxAttempts)
-        {
-            if (debug) Console.WriteLine("[DEBUG] Failed to reach monster after max attempts");
-            return false;
-        }
-
-        return true;
-    }
-
     static string ReadStringFromMemory(IntPtr handle, IntPtr address, int maxLength = 128)
     {
         try
         {
             byte[] buffer = new byte[maxLength];
             int bytesRead;
-
             if (!ReadProcessMemory(handle, address, buffer, buffer.Length, out bytesRead))
             {
                 return string.Empty;
             }
-
-            // Find null terminator (end of string)
             int nullTerminatorPos = 0;
             while (nullTerminatorPos < buffer.Length && buffer[nullTerminatorPos] != 0)
             {
                 nullTerminatorPos++;
             }
-
-            // Convert bytes to string, stopping at null terminator
             if (nullTerminatorPos > 0)
             {
                 return Encoding.ASCII.GetString(buffer, 0, nullTerminatorPos);
             }
-
             return string.Empty;
         }
         catch (Exception ex)
@@ -1720,173 +1396,158 @@ class Program
             return string.Empty;
         }
     }
-    static List<string> blacklistedMonsterNames = new List<string>
-    {
-        // Add monster names you want to avoid here, e.g.:
-        "Rat",
-        "Rabbit",
-        "Snake"
-        // You can add more as needed
-    };
+    static List<string> blacklistedMonsterNames = new List<string> { "Rat", "Rabbit", "Snake" };
     static (int monsterX, int monsterY, int monsterZ, string monsterName) GetTargetMonsterInfo()
     {
         int targetId = 0;
-        int monsterX = 0, monsterY = 0, monsterZ = 0;
+        int monsterX = 0,
+            monsterY = 0,
+            monsterZ = 0;
         string monsterName = "";
-
         lock (memoryLock)
         {
-            // Get target ID
             targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
-
             if (targetId != 0)
             {
-                // Read monster instance pointer
                 IntPtr monsterInstancePtr = IntPtr.Zero;
                 byte[] buffer = new byte[4];
-
-                if (ReadProcessMemory(processHandle, IntPtr.Add(moduleBase, (int)targetIdOffset), buffer, buffer.Length, out _))
+                if (
+                    ReadProcessMemory(
+                        processHandle,
+                        IntPtr.Add(moduleBase, (int)targetIdOffset),
+                        buffer,
+                        buffer.Length,
+                        out _
+                    )
+                )
                 {
-                    // This is the pointer to the monster instance
                     monsterInstancePtr = (IntPtr)BitConverter.ToInt32(buffer, 0);
-
-                    // Now read X coordinate (offset 0x000C from monster instance)
-                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x000C), buffer, buffer.Length, out _))
+                    if (
+                        ReadProcessMemory(
+                            processHandle,
+                            IntPtr.Add(monsterInstancePtr, 0x000C),
+                            buffer,
+                            buffer.Length,
+                            out _
+                        )
+                    )
                     {
                         monsterX = BitConverter.ToInt32(buffer, 0);
                     }
-
-                    // Read Y coordinate (offset 0x0010 from monster instance)
-                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x0010), buffer, buffer.Length, out _))
+                    if (
+                        ReadProcessMemory(
+                            processHandle,
+                            IntPtr.Add(monsterInstancePtr, 0x0010),
+                            buffer,
+                            buffer.Length,
+                            out _
+                        )
+                    )
                     {
                         monsterY = BitConverter.ToInt32(buffer, 0);
                     }
-
-                    // Read Z coordinate (offset 0x0014 from monster instance)
-                    if (ReadProcessMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x0014), buffer, buffer.Length, out _))
+                    if (
+                        ReadProcessMemory(
+                            processHandle,
+                            IntPtr.Add(monsterInstancePtr, 0x0014),
+                            buffer,
+                            buffer.Length,
+                            out _
+                        )
+                    )
                     {
                         monsterZ = BitConverter.ToInt32(buffer, 0);
                     }
-
-                    // Read monster name (offset 0x0030 from monster instance)
-                    monsterName = ReadStringFromMemory(processHandle, IntPtr.Add(monsterInstancePtr, 0x0030));
+                    monsterName = ReadStringFromMemory(
+                        processHandle,
+                        IntPtr.Add(monsterInstancePtr, 0x0030)
+                    );
                 }
             }
         }
-
         return (monsterX, monsterY, monsterZ, monsterName);
     }
-
-    // Class-level variables to track ring state
     static int lastRingEquippedTargetId = 0;
     static bool isRingCurrentlyEquipped = false;
-
-    // Add this to your class-level declarations
-    static List<string> blacklistedRingMonsters = new List<string>
-{
-    "Poison Spider", // Initial example value
-    // Add more monster names you want to avoid using rings for
-};
-
-    // Improved ToggleRing function with monster name blacklisting
+    static List<string> blacklistedRingMonsters = new List<string> { "Poison Spider", };
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
         try
         {
-            // Get current target ID and info
             int currentTargetId;
             lock (memoryLock)
             {
                 currentTargetId = targetId;
             }
-
-            // For equipping: check if already equipped for this target
             if (equip && isRingCurrentlyEquipped && currentTargetId == lastRingEquippedTargetId)
             {
-                //if (debug) Console.WriteLine($"[DEBUG] Ring already equipped for target {currentTargetId}");
                 return;
             }
-
-            // If we're trying to equip and there is a target
             if (equip && currentTargetId != 0)
             {
-                // Get monster info including name
                 var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
-
-                // Check if monster is blacklisted by name
-                if (!string.IsNullOrEmpty(monsterName) && blacklistedRingMonsters.Contains(monsterName))
+                if (
+                    !string.IsNullOrEmpty(monsterName)
+                    && blacklistedRingMonsters.Contains(monsterName)
+                )
                 {
-                    if (debug) Console.WriteLine($"[DEBUG] Monster '{monsterName}' is blacklisted for ring usage");
-                    return; // Don't equip ring for blacklisted monsters
+                    if (debug)
+                        Console.WriteLine(
+                            $"[DEBUG] Monster '{monsterName}' is blacklisted for ring usage"
+                        );
+                    return;
                 }
-
-                // Get player position
-                int playerX, playerY, playerZ;
+                int playerX,
+                    playerY,
+                    playerZ;
                 lock (memoryLock)
                 {
                     playerX = posX;
                     playerY = posY;
                     playerZ = posZ;
                 }
-
-                // Calculate distance to target
                 double distance = Math.Sqrt(
-                    Math.Pow(monsterX - playerX, 2) +
-                    Math.Pow(monsterY - playerY, 2)
+                    Math.Pow(monsterX - playerX, 2) + Math.Pow(monsterY - playerY, 2)
                 );
-
-                // Only equip if target is within 2.5 sqm
                 if (distance > 2.5)
                 {
-                    //if (debug) Console.WriteLine($"[DEBUG] Target too far ({distance:F1} sqm), not equipping ring");
                     return;
                 }
-
-                //if (debug) Console.WriteLine($"[DEBUG] Target in range ({distance:F1} sqm), proceeding with ring equip");
             }
-
             int inventoryX = 940;
             int inventoryY = 65;
             int equipmentX = 1115;
             int equipmentY = 150;
-
-            // Determine source and destination based on equip parameter
             int sourceX = equip ? inventoryX : equipmentX;
             int sourceY = equip ? inventoryY : equipmentY;
             int destX = equip ? equipmentX : inventoryX;
             int destY = equip ? equipmentY : inventoryY;
-
-            if (debug) Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} ring");
-
-            // 1. Move mouse to source position
+            if (debug)
+                Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} ring");
             IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
             PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
             Thread.Sleep(1);
-
-            // 2. Press left mouse button down at source position
             PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
             Thread.Sleep(1);
-
-            // 3. Move mouse to destination with left button held
             IntPtr destLParam = MakeLParam(destX, destY);
             PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
             Thread.Sleep(1);
-
-            // 4. Release left mouse button at destination
             PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
             Thread.Sleep(1);
-
-            // Update state tracking
             if (equip)
             {
                 lastRingEquippedTargetId = currentTargetId;
                 isRingCurrentlyEquipped = true;
-                if (debug) Console.WriteLine($"[DEBUG] Successfully equipped ring for target {currentTargetId}");
+                if (debug)
+                    Console.WriteLine(
+                        $"[DEBUG] Successfully equipped ring for target {currentTargetId}"
+                    );
             }
             else
             {
                 isRingCurrentlyEquipped = false;
-                if (debug) Console.WriteLine($"[DEBUG] Successfully de-equipped ring");
+                if (debug)
+                    Console.WriteLine($"[DEBUG] Successfully de-equipped ring");
             }
         }
         catch (Exception ex)
