@@ -748,13 +748,25 @@ class Program
                 // Check if a fight just finished (previousTargetId was non-zero but currentTargetId is zero)
                 if (previousTargetId != 0 && currentTargetId == 0)
                 {
+
                     if (debug) Console.WriteLine("[DEBUG] Fight finished, de-equipping time ring");
                     ToggleTimeRing(targetWindow, false); // De-equip time ring
                     Thread.Sleep(100); // Small delay after de-equipping
 
                     if (debug) Console.WriteLine("[DEBUG] Fight finished, calling ClickAroundCharacter");
                     ClickAroundCharacter(targetWindow);
-                    Thread.Sleep(1); // Give some time for the click to register
+                    Thread.Sleep(100); // Give some time for the click to register
+
+                    lock (memoryLock)
+                    {
+                        currentTargetId = targetId;
+                    }
+                    //if (previousTargetId != 0 && currentTargetId == 0)
+                    //{
+                    //    if (debug) Console.WriteLine("[DEBUG] Fight finished, de-equipping time ring");
+                    //    ToggleTimeRing(targetWindow, false); // De-equip time ring
+                    //    Thread.Sleep(100); // Small delay after de-equipping
+                    //}
                 }
 
                 // Store current targetId for next iteration
@@ -1765,10 +1777,41 @@ class Program
         return (monsterX, monsterY, monsterZ, monsterName);
     }
 
+    // Modified ToggleTimeRing function that checks monster distance
     static void ToggleTimeRing(IntPtr hWnd, bool equip)
     {
         try
         {
+            // If we're trying to equip the ring, check monster distance first
+            if (equip)
+            {
+                // Get current player position
+                int playerX, playerY, playerZ;
+                lock (memoryLock)
+                {
+                    playerX = posX;
+                    playerY = posY;
+                    playerZ = posZ;
+                }
+
+                // Get monster position
+                var (monsterX, monsterY, monsterZ, _) = GetTargetMonsterInfo();
+
+                // Calculate Manhattan distance (sum of X and Y differences)
+                int distanceX = Math.Abs(monsterX - playerX);
+                int distanceY = Math.Abs(monsterY - playerY);
+                int totalDistance = distanceX + distanceY;
+
+                // Only proceed with equipping if monster is close enough (less than 3 sqm)
+                if (totalDistance > 3)
+                {
+                    if (debug) Console.WriteLine($"[DEBUG] Monster too far ({totalDistance} sqm), not equipping time ring");
+                    return;
+                }
+
+                if (debug) Console.WriteLine($"[DEBUG] Monster in range ({totalDistance} sqm), equipping time ring");
+            }
+
             int inventoryX = 940;
             int inventoryY = 65;
             int equipmentX = 1115;
