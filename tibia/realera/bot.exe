@@ -1275,7 +1275,7 @@ class Program
     static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
     static void ClickAroundCharacter(IntPtr hWnd)
     {
-        ClickSpecificLocationsWithMouseMovement(hWnd);
+        //ClickSpecificLocationsWithMouseMovement(hWnd);
         double squareSize = 57;
         (int dx, int dy)[] directions = new (int, int)[]
         {
