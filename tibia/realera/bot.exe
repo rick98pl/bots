@@ -351,7 +351,7 @@ class Program
 
                     if (hpPercent == 0)
                     {
-                        Thread.Sleep(200);
+                        Thread.Sleep(1);
                         continue;
                     }
 
@@ -557,7 +557,7 @@ class Program
     static void SendKeyPress(int key)
     {
         PostMessage(targetWindow, WM_KEYDOWN, (IntPtr)key, IntPtr.Zero);
-        Thread.Sleep(random.Next(10, 70));
+        Thread.Sleep(random.Next(10, 25));
         PostMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
     }
 
@@ -637,7 +637,7 @@ class Program
                 SendKeyPress(VK_LEFT);
             }
 
-            Thread.Sleep(500); // Wait for movement
+            Thread.Sleep(150); // Wait for movement
 
             // Then try Y
             if (diffY > 0)
@@ -669,7 +669,7 @@ class Program
                 SendKeyPress(VK_UP);
             }
 
-            Thread.Sleep(500); // Wait for movement
+            Thread.Sleep(150); // Wait for movement
 
             // Then try X
             if (diffX > 0)
@@ -872,7 +872,7 @@ class Program
                         MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypoint.X, nextWaypoint.Y);
 
                         // Wait for movement to complete
-                        Thread.Sleep(200);
+                        Thread.Sleep(150);
 
                         // Update current position
                         lock (memoryLock)
@@ -946,7 +946,7 @@ class Program
                     }
                 }
 
-                Thread.Sleep(100); // Slow down for debugging if needed
+                Thread.Sleep(1); // Slow down for debugging if needed
             }
             catch (Exception ex)
             {
@@ -1158,13 +1158,13 @@ class Program
 
             // Send click
             SendKeyPress(VK_ESCAPE); // Press ESC to cancel targeting
-            Thread.Sleep(25);
+            Thread.Sleep(1);
             PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)lParam);
-            Thread.Sleep(50);
+            Thread.Sleep(1);
             PostMessage(targetWindow, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
-            Thread.Sleep(30);
+            Thread.Sleep(1);
             PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
-            Thread.Sleep(20);
+            Thread.Sleep(1);
 
             // Return mouse to center as requested
             int centerLParam = (baseY << 16) | (baseX & 0xFFFF);
@@ -1373,12 +1373,12 @@ class Program
             // Move mouse to the location
             //Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
             //SetCursorPos(screenPoint.X, screenPoint.Y);
-            Thread.Sleep(10); // Pause so you can see the mouse movement
+            Thread.Sleep(1); // Pause so you can see the mouse movement
 
             // Right-click at the location
             //Console.WriteLine($"Right-clicking at ({x}, {y})");
             VirtualRightClick(hWnd, x, y);
-            Thread.Sleep(10); // Small delay between clicks
+            Thread.Sleep(1); // Small delay between clicks
 
             // Optional: Check for target after each click
             int currentTargetId = GetTargetId();
@@ -1411,20 +1411,20 @@ class Program
         // 1. Move mouse to source position
         IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
         SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
-        Thread.Sleep(100); // Wait for cursor to move
+        Thread.Sleep(1); // Wait for cursor to move
 
         // 2. Press left mouse button down at source position
         SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
-        Thread.Sleep(50);
+        Thread.Sleep(1);
 
         // 3. Move mouse to destination (character center) with left button held
         IntPtr centerLParam = MakeLParam(centerX, centerY);
         SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), centerLParam);
-        Thread.Sleep(100);
+        Thread.Sleep(1);
 
         // 4. Release left mouse button at destination
         SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, centerLParam);
-        Thread.Sleep(50);
+        Thread.Sleep(1);
 
         Console.WriteLine($"Completed drag from ({sourceX}, {sourceY}) to ({centerX}, {centerY})");
     }
@@ -1781,12 +1781,19 @@ class Program
     static int lastRingEquippedTargetId = 0;
     static bool isRingCurrentlyEquipped = false;
 
-    // Improved ToggleTimeRing function with distance checking
+    // Add this to your class-level declarations
+    static List<string> blacklistedRingMonsters = new List<string>
+{
+    "Poison Spider", // Initial example value
+    // Add more monster names you want to avoid using rings for
+};
+
+    // Improved ToggleRing function with monster name blacklisting
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
         try
         {
-            // Get current target ID
+            // Get current target ID and info
             int currentTargetId;
             lock (memoryLock)
             {
@@ -1800,10 +1807,20 @@ class Program
                 return;
             }
 
-            // For equipping: check target distance
+            // If we're trying to equip and there is a target
             if (equip && currentTargetId != 0)
             {
-                // Get player and target positions
+                // Get monster info including name
+                var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
+
+                // Check if monster is blacklisted by name
+                if (!string.IsNullOrEmpty(monsterName) && blacklistedRingMonsters.Contains(monsterName))
+                {
+                    if (debug) Console.WriteLine($"[DEBUG] Monster '{monsterName}' is blacklisted for ring usage");
+                    return; // Don't equip ring for blacklisted monsters
+                }
+
+                // Get player position
                 int playerX, playerY, playerZ;
                 lock (memoryLock)
                 {
@@ -1812,9 +1829,7 @@ class Program
                     playerZ = posZ;
                 }
 
-                var (monsterX, monsterY, monsterZ, _) = GetTargetMonsterInfo();
-
-                // Calculate Manhattan distance (sum of X and Y differences)
+                // Calculate distance to target
                 double distance = Math.Sqrt(
                     Math.Pow(monsterX - playerX, 2) +
                     Math.Pow(monsterY - playerY, 2)
@@ -1841,38 +1856,38 @@ class Program
             int destX = equip ? equipmentX : inventoryX;
             int destY = equip ? equipmentY : inventoryY;
 
-            //if (debug) Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} time ring");
+            if (debug) Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} ring");
 
             // 1. Move mouse to source position
             IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
             PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
-            Thread.Sleep(50);
+            Thread.Sleep(1);
 
             // 2. Press left mouse button down at source position
             PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
-            Thread.Sleep(50);
+            Thread.Sleep(1);
 
             // 3. Move mouse to destination with left button held
             IntPtr destLParam = MakeLParam(destX, destY);
             PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
-            Thread.Sleep(50);
+            Thread.Sleep(1);
 
             // 4. Release left mouse button at destination
             PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
-            Thread.Sleep(50);
+            Thread.Sleep(1);
 
             // Update state tracking
             if (equip)
             {
                 lastRingEquippedTargetId = currentTargetId;
                 isRingCurrentlyEquipped = true;
+                if (debug) Console.WriteLine($"[DEBUG] Successfully equipped ring for target {currentTargetId}");
             }
             else
             {
                 isRingCurrentlyEquipped = false;
+                if (debug) Console.WriteLine($"[DEBUG] Successfully de-equipped ring");
             }
-
-            //if (debug) Console.WriteLine($"[DEBUG] Successfully {(equip ? "equipped" : "de-equipped")} time ring");
         }
         catch (Exception ex)
         {
