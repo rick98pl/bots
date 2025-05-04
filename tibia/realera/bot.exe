@@ -1218,34 +1218,7 @@ class Program
             Sleep(1);
         }
     }
-    static void ClickSpecificLocationsWithMouseMovement(IntPtr hWnd)
-    {
-        (int x, int y)[] locations = new (int, int)[] { (1165, 250) };
-        GetClientRect(hWnd, out RECT rect);
-        if (rect.Right < 1237 || rect.Bottom < 319)
-        {
-            Console.WriteLine(
-                $"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates"
-            );
-        }
-        foreach (var location in locations)
-        {
-            int x = location.x;
-            int y = location.y;
-            POINT screenPoint = new POINT { X = x, Y = y };
-            ClientToScreen(hWnd, ref screenPoint);
-            Sleep(1);
-            VirtualRightClick(hWnd, x, y);
-            Sleep(1);
-            int currentTargetId = GetTargetId();
-            if (currentTargetId != 0)
-            {
-                Console.WriteLine(
-                    $"Target acquired after clicking at ({x}, {y}). Target ID: {currentTargetId}"
-                );
-            }
-        }
-    }
+    
     static void DragItemToCharacterCenter(IntPtr hWnd)
     {
         int sourceX = 1236;
@@ -1275,7 +1248,6 @@ class Program
     static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
     static void ClickAroundCharacter(IntPtr hWnd)
     {
-        //ClickSpecificLocationsWithMouseMovement(hWnd);
         double squareSize = 57;
         (int dx, int dy)[] directions = new (int, int)[]
         {
@@ -1308,7 +1280,7 @@ class Program
             }
         }
         CorpseEatFood(targetWindow);
-        CloseCorspe(targetWindow);
+        //CloseCorspe(targetWindow);
     }
     const int WM_MOUSEMOVE = 0x0200;
     const int WM_RBUTTONDOWN = 0x0204;
