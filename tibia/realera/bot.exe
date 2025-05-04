@@ -1781,7 +1781,7 @@ class Program
     static int lastRingEquippedTargetId = 0;
     static bool isRingCurrentlyEquipped = false;
 
-    // Simplified ToggleTimeRing function that tracks only the last equipped target
+    // Improved ToggleTimeRing function with distance checking
     static void ToggleTimeRing(IntPtr hWnd, bool equip)
     {
         try
@@ -1798,6 +1798,36 @@ class Program
             {
                 if (debug) Console.WriteLine($"[DEBUG] Ring already equipped for target {currentTargetId}");
                 return;
+            }
+
+            // For equipping: check target distance
+            if (equip && currentTargetId != 0)
+            {
+                // Get player and target positions
+                int playerX, playerY, playerZ;
+                lock (memoryLock)
+                {
+                    playerX = posX;
+                    playerY = posY;
+                    playerZ = posZ;
+                }
+
+                var (monsterX, monsterY, monsterZ, _) = GetTargetMonsterInfo();
+
+                // Calculate Manhattan distance (sum of X and Y differences)
+                double distance = Math.Sqrt(
+                    Math.Pow(monsterX - playerX, 2) +
+                    Math.Pow(monsterY - playerY, 2)
+                );
+
+                // Only equip if target is within 2.5 sqm
+                if (distance > 2.5)
+                {
+                    if (debug) Console.WriteLine($"[DEBUG] Target too far ({distance:F1} sqm), not equipping ring");
+                    return;
+                }
+
+                if (debug) Console.WriteLine($"[DEBUG] Target in range ({distance:F1} sqm), proceeding with ring equip");
             }
 
             int inventoryX = 940;
