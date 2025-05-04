@@ -686,6 +686,14 @@ class Program
         }
     }
 
+
+
+
+
+
+
+
+    private static int previousTargetId = 0;
     static void PlayCoordinates()
     {
         Console.WriteLine("Path playback starting...");
@@ -736,6 +744,17 @@ class Program
                     currentZ = posZ;
                     currentTargetId = targetId;
                 }
+
+                // Check if a fight just finished (previousTargetId was non-zero but currentTargetId is zero)
+                if (previousTargetId != 0 && currentTargetId == 0)
+                {
+                    if (debug) Console.WriteLine("[DEBUG] Fight finished, calling ClickAroundCharacter");
+                    ClickAroundCharacter(targetWindow);
+                    Thread.Sleep(1); // Give some time for the click to register
+                }
+
+                // Store current targetId for next iteration
+                previousTargetId = currentTargetId;
 
                 // If we have a target, check if it's within 5 sqm of our path
                 if (currentTargetId != 0)
