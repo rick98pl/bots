@@ -656,6 +656,7 @@ class Program
             }
         }
     }
+    static bool shouldClickAround = true;
     private static int previousTargetId = 0;
     static void PlayCoordinates()
     {
@@ -702,7 +703,11 @@ class Program
                     Sleep(1);
 
                     Console.WriteLine("[DEBUG] Fight finished, calling ClickAroundCharacter");
-                    ClickAroundCharacter(targetWindow);
+                    if (shouldClickAround)
+                    {
+                        ClickAroundCharacter(targetWindow);
+                        shouldClickAround = false;
+                    }
                     Sleep(1);
                     lock (memoryLock)
                     {
@@ -712,6 +717,7 @@ class Program
                 previousTargetId = currentTargetId;
                 if (currentTargetId != 0)
                 {
+                   
                     ToggleRing(targetWindow, true);
                     Sleep(1);
                     var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
@@ -766,6 +772,7 @@ class Program
                 {
 
                     Console.WriteLine($"[DEBUG] Found target: {currentTargetId}");
+                    shouldClickAround = true;
                     continue;
                 }
                 Console.WriteLine("[DEBUG] No target found, proceeding with movement");
