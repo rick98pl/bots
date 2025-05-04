@@ -792,8 +792,16 @@ class Program
                 }
 
                 // No target, try pressing F6 to find one
-                if (debug) Console.WriteLine("[DEBUG] No target, pressing F6 to search");
-                SendKeyPress(VK_F6);
+                lock (memoryLock)
+                {
+                    currentTargetId = targetId;
+                }
+                // If we got a target, continue to combat loop
+                if (currentTargetId == 0)
+                {
+                    if (debug) Console.WriteLine("[DEBUG] No target, pressing F6 to search");
+                    SendKeyPress(VK_F6);
+                }
 
                 // Wait for results of F6 (target search)
                 Thread.Sleep(100);
@@ -897,6 +905,7 @@ class Program
                     lock (memoryLock)
                     {
                         followStatus = follow;
+                        currentTargetId = targetId;
                     }
 
                     if (currentTargetId == 0)
@@ -1465,7 +1474,7 @@ class Program
             if (currentTargetId != 0)
             {
                 Console.WriteLine($"Target acquired after clicking at ({clickX}, {clickY}). Target ID: {currentTargetId}");
-                return; // Exit early if something is targeted
+                //return; // Exit early if something is targeted
             }
         }
         CorpseEatFood(targetWindow);
