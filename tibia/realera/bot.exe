@@ -967,34 +967,39 @@ class Program
         return closestIndex;
     }
     static Coordinate FindNextWaypoint(
-        ref List<Coordinate> waypoints,
-        int currentX,
-        int currentY,
-        int currentZ,
-        ref int currentIndex
-    )
+      ref List<Coordinate> waypoints,
+      int currentX,
+      int currentY,
+      int currentZ,
+      ref int currentIndex
+  )
     {
         Console.WriteLine("\n=== FIND NEXT WAYPOINT DEBUG ===");
         Console.WriteLine($"Current position: X={currentX}, Y={currentY}, Z={currentZ}");
         Console.WriteLine($"Current index: {currentIndex}");
         Console.WriteLine($"Total waypoints: {waypoints.Count}");
+
         if (waypoints.Count == 0)
         {
             Console.WriteLine("ERROR: Empty waypoints list");
             return new Coordinate { X = currentX, Y = currentY, Z = currentZ };
         }
+
         if (currentIndex < 0 || currentIndex >= waypoints.Count)
         {
             Console.WriteLine($"ERROR: Current index {currentIndex} out of bounds");
             currentIndex = Math.Max(0, Math.Min(waypoints.Count - 1, currentIndex));
             Console.WriteLine($"Corrected to index {currentIndex}");
         }
+
+        // Check if we're at the last waypoint
         if (currentIndex == waypoints.Count - 1)
         {
-            Console.WriteLine("At last waypoint, checking if we should reverse list...");
+            Console.WriteLine("At last waypoint, checking distance to first waypoint...");
             int distanceToFirst =
                 Math.Abs(waypoints[0].X - currentX) + Math.Abs(waypoints[0].Y - currentY);
             Console.WriteLine($"Distance to first waypoint: {distanceToFirst} steps");
+
             if (distanceToFirst > 12)
             {
                 Console.WriteLine("Distance > 12, REVERSING THE LIST NOW");
@@ -1002,32 +1007,48 @@ class Program
                 currentIndex = 0;
                 Console.WriteLine("List reversed, now at index 0");
             }
+            else
+            {
+                Console.WriteLine("Distance <= 12, RESETTING to beginning of list");
+                currentIndex = 0;
+                Console.WriteLine("Reset to index 0");
+            }
         }
+
         int maxSearchCount = 10;
         int maxAllowedX = 5;
         int maxAllowedY = 5;
         int bestIndex = -1;
         double maxDistance = 0;
         Console.WriteLine("Starting waypoint search...");
-        int startIndex,
-            endIndex;
-        startIndex = currentIndex + 1;
-        endIndex = Math.Min(waypoints.Count - 1, currentIndex + maxSearchCount);
-        Console.WriteLine($"Searching forward from index {startIndex} to {endIndex}");
+
+        int startIndex = currentIndex + 1;
+        // If we've wrapped around to the beginning
+        if (startIndex >= waypoints.Count)
+        {
+            startIndex = 0;
+        }
+
+        int endIndex = Math.Min(waypoints.Count - 1, startIndex + maxSearchCount - 1);
+        Console.WriteLine($"Searching from index {startIndex} to {endIndex}");
+
         for (int index = startIndex; index <= endIndex; index++)
         {
             if (index < 0 || index >= waypoints.Count)
                 continue;
+
             Coordinate waypoint = waypoints[index];
             int deltaX = Math.Abs(waypoint.X - currentX);
             int deltaY = Math.Abs(waypoint.Y - currentY);
             Console.WriteLine(
                 $"  Checking waypoint[{index}]: X={waypoint.X}, Y={waypoint.Y}, deltaX={deltaX}, deltaY={deltaY}"
             );
+
             if (deltaX <= maxAllowedX && deltaY <= maxAllowedY)
             {
                 double distance = Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
                 Console.WriteLine($"  Distance: {distance:F2} (within limits)");
+
                 if (distance > maxDistance)
                 {
                     maxDistance = distance;
@@ -1040,9 +1061,12 @@ class Program
                 Console.WriteLine($"  Skipped: Outside distance limits");
             }
         }
+
         if (bestIndex == -1)
         {
             Console.WriteLine("No valid waypoint found ahead. Choosing adjacent waypoint...");
+
+            // If we're at the last waypoint, we've already reset the index above
             if (currentIndex < waypoints.Count - 1)
             {
                 bestIndex = currentIndex + 1;
@@ -1050,12 +1074,11 @@ class Program
             }
             else
             {
-                bestIndex = currentIndex;
-                Console.WriteLine(
-                    "At last waypoint, no valid waypoint ahead. Staying at current position."
-                );
+                bestIndex = 0; // Reset to beginning 
+                Console.WriteLine("At last waypoint, resetting to index 0");
             }
         }
+
         bestIndex = Math.Max(0, Math.Min(waypoints.Count - 1, bestIndex));
         currentIndex = bestIndex;
         Coordinate result = waypoints[bestIndex];
@@ -1518,6 +1541,7 @@ class Program
     static List<string> blacklistedRingMonsters = new List<string> { "Poison Spider", };
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
+        return;
         try
         {
             int currentTargetId;
