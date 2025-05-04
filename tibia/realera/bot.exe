@@ -53,7 +53,7 @@ class Program
             KeyMap.ContainsKey(keyName) ? KeyMap[keyName] : -1;
     }
     const int DEFAULT_HP_THRESHOLD = 50;
-    const int DEFAULT_BEEP_HP_THRESHOLD = 40;
+    const int DEFAULT_BEEP_HP_THRESHOLD = 30;
     const int DEFAULT_MANA_THRESHOLD = -1;
     const string DEFAULT_HP_KEY_NAME = "F1";
     const string DEFAULT_MANA_KEY_NAME = "F2";
