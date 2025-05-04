@@ -757,7 +757,7 @@ class Program
                     Console.WriteLine("[DEBUG] No target, pressing F6 to search");
                     SendKeyPress(VK_F6);
                 }
-                Sleep(1);
+                Sleep(128);
                 lock (memoryLock)
                 {
                     currentTargetId = targetId;
