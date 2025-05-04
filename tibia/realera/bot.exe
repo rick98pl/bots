@@ -192,7 +192,7 @@ class Program
             while (memoryReadActive && !shouldRestartMemoryThread)
             {
                 // Display stats periodically
-               //DisplayStats();
+                //DisplayStats();
 
                 // Handle user input
                 if (Console.KeyAvailable)
@@ -687,77 +687,6 @@ class Program
                         continue;
                     }
 
-                    // Find closest waypoint to the monster
-                    int closestWaypointIndex = FindClosestWaypointIndex(waypoints, monsterX, monsterY, monsterZ);
-                    Coordinate closestWaypoint = waypoints[closestWaypointIndex];
-
-                    // Calculate distance from monster to closest waypoint
-                    int monsterDistanceToPath = Math.Abs(monsterX - closestWaypoint.X) +
-                                               Math.Abs(monsterY - closestWaypoint.Y);
-
-                    if (monsterDistanceToPath <= 5)
-                    {
-                        // Monster is close to our path, chase it with arrow keys
-                        if (debug) Console.WriteLine($"[DEBUG] Monster '{monsterName}' is within 5 sqm of path, chasing with arrow keys");
-
-                        bool chased = ChaseMonsterWithArrowKeys(currentX, currentY, monsterX, monsterY);
-
-                        if (chased)
-                        {
-                            // Wait for combat to resolve
-                            DateTime combatStartTime = DateTime.Now;
-                            bool combatTimeout = false;
-                            int lastSeenTargetId = currentTargetId;
-
-                            // Wait for combat to resolve (up to 30 seconds)
-                            while (currentTargetId != 0 && !combatTimeout)
-                            {
-                                // Check for timeout (30 seconds)
-                                if ((DateTime.Now - combatStartTime).TotalSeconds > 30)
-                                {
-                                    combatTimeout = true;
-                                    if (debug) Console.WriteLine($"[DEBUG] Combat timeout after 30 seconds, blacklisting target: {currentTargetId}");
-
-                                    // Blacklist this target
-                                    blacklistedTargets.Add(currentTargetId);
-
-                                    // Press ESC to cancel targeting
-                                    SendKeyPress(VK_ESCAPE);
-                                }
-
-                                Thread.Sleep(100);
-
-                                lock (memoryLock)
-                                {
-                                    currentTargetId = targetId;
-                                }
-
-                                // Check if target changed during combat (new creature)
-                                if (currentTargetId != 0 && currentTargetId != lastSeenTargetId)
-                                {
-                                    if (debug) Console.WriteLine($"[DEBUG] Target changed during combat from {lastSeenTargetId} to {currentTargetId}");
-                                    lastSeenTargetId = currentTargetId;
-                                    combatStartTime = DateTime.Now; // Reset timeout for new target
-                                }
-                            }
-
-                            // Combat has ended, loot the corpse
-                            if (!combatTimeout)
-                            {
-                                if (debug) Console.WriteLine("[DEBUG] Combat ended, searching for loot");
-                                ClickAroundCharacter(targetWindow);
-                                Thread.Sleep(1000); // Give time for loot to be picked up
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // Monster is too far from path, press ESC to cancel targeting
-                        if (debug) Console.WriteLine($"[DEBUG] Monster '{monsterName}' is too far from path ({monsterDistanceToPath} sqm), canceling target");
-                        SendKeyPress(VK_ESCAPE);
-                        Thread.Sleep(100);
-                    }
-
                     // After combat or canceling, update position and find closest waypoint to resume path
                     lock (memoryLock)
                     {
@@ -765,11 +694,6 @@ class Program
                         currentY = posY;
                         currentZ = posZ;
                     }
-
-                    // Find the closest waypoint to resume from
-                    currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                    if (debug) Console.WriteLine($"[DEBUG] Resuming from closest waypoint: index {currentCoordIndex}");
-
                     continue; // Go back to main loop to check for new targets or movement
                 }
 
@@ -798,37 +722,8 @@ class Program
                 // Wait a bit before moving (as requested)
                 Thread.Sleep(100);
 
-                // Check if we need to find the closest waypoint again (in case we're off track)
-                bool potentiallyOffTrack = false;
 
-                // Check if current position is far from the expected path
-                if (currentCoordIndex < waypoints.Count)
-                {
-                    var expectedWaypoint = waypoints[currentCoordIndex];
-                    int distanceToExpected = Math.Abs(expectedWaypoint.X - currentX) +
-                                            Math.Abs(expectedWaypoint.Y - currentY);
-
-                    // If we're more than 3 tiles away from where we should be, consider off track
-                    if (distanceToExpected > 3)
-                    {
-                        potentiallyOffTrack = true;
-                    }
-                }
-
-                // Re-find closest waypoint if potentially off track
-                if (potentiallyOffTrack)
-                {
-                    int newIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                    if (newIndex != currentCoordIndex)
-                    {
-                        if (debug) Console.WriteLine($"[DEBUG] Off track detected, adjusting to waypoint: {newIndex}");
-                        currentCoordIndex = newIndex;
-                    }
-                }
-
-                // Find best candidate for next waypoint (at least 5 sqms away if possible)
-                Coordinate nextWaypoint = FindNextWaypoint(waypoints, currentX, currentY, currentZ,
-                                                         currentCoordIndex, isReversed);
+                Coordinate nextWaypoint = FindNextWaypoint(ref waypoints, currentX, currentY, currentZ, ref currentCoordIndex);
                 currentTarget = nextWaypoint;
 
                 if (debug) Console.WriteLine($"[DEBUG] Moving to waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
@@ -838,144 +733,37 @@ class Program
                 int distanceY = Math.Abs(nextWaypoint.Y - currentY);
                 int totalDistance = distanceX + distanceY;
 
-                // Check if we need to reverse direction
-                if (totalDistance > 10 && !isReversed)
+               
+                if (debug) Console.WriteLine($"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
+                bool clickSuccess = ClickWaypoint(nextWaypoint);
+                Thread.Sleep(900);
+
+                if (clickSuccess)
                 {
-                    if (debug) Console.WriteLine("[DEBUG] Distance too far, reversing waypoint list");
-                    isReversed = true;
-                    waypoints.Reverse();
-
-                    // Find closest waypoint in reversed list
-                    currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-
-                    // Recalculate next waypoint
-                    nextWaypoint = FindNextWaypoint(waypoints, currentX, currentY, currentZ,
-                                                  currentCoordIndex, isReversed);
-                    currentTarget = nextWaypoint;
-
-                    // Recalculate distance
-                    distanceX = Math.Abs(nextWaypoint.X - currentX);
-                    distanceY = Math.Abs(nextWaypoint.Y - currentY);
-                    totalDistance = distanceX + distanceY;
-                }
-
-                // Check if waypoint is within reachable distance
-                if (totalDistance <= 10)
-                {
-                    if (debug) Console.WriteLine($"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
-                    bool clickSuccess = ClickWaypoint(nextWaypoint);
-                    Thread.Sleep(500);
-
-                    if (clickSuccess)
+                    // Check for follow status (if follow == 1 we're still moving)
+                    int followStatus;
+                    lock (memoryLock)
                     {
-                        // Check for follow status (if follow == 1 we're still moving)
-                        int followStatus;
+                        followStatus = follow;
+                    }
+
+                    if (currentTargetId == 0)
+                    {
+                        SendKeyPress(VK_F6);
+                        Thread.Sleep(1);
                         lock (memoryLock)
                         {
-                            followStatus = follow;
+                            currentTargetId = targetId;
                         }
 
-                        // Wait for movement to complete if follow is active
-                        DateTime moveStart = DateTime.Now;
-                        while (followStatus == 1 &&
-                               (DateTime.Now - moveStart).TotalSeconds < 5 && // Max 5 seconds wait
-                               threadFlags["playing"])
+                        if (currentTargetId != 0)
                         {
-                            Thread.Sleep(100);
-                            lock (memoryLock)
-                            {
-                                followStatus = follow;
-                                currentX = posX;
-                                currentY = posY;
-                                currentTargetId = targetId;
-                            }
-
-                            // Check for combat interrupt
-                            if (currentTargetId != 0)
-                            {
-                                if (debug) Console.WriteLine("[DEBUG] Target found while waiting for movement, switching to combat");
-                                break;
-                            }
-                        }
-
-                        // Press F6 after movement completes to check for targets
-                        if (currentTargetId == 0)
-                        {
-                            SendKeyPress(VK_F6);
-                            Thread.Sleep(200);
-                            lock (memoryLock)
-                            {
-                                currentTargetId = targetId;
-                            }
-
-                            if (currentTargetId != 0)
-                            {
-                                if (debug) Console.WriteLine("[DEBUG] Target found after movement, switching to combat");
-                                continue;
-                            }
+                            if (debug) Console.WriteLine("[DEBUG] Target found after movement, switching to combat");
+                            continue;
                         }
                     }
                 }
-                else
-                {
-                    if (debug) Console.WriteLine($"[DEBUG] Waypoint too far ({totalDistance} steps), cannot reach");
-                    // Skip this waypoint and try the next one
-                }
 
-                // Update position for next iteration
-                lock (memoryLock)
-                {
-                    currentX = posX;
-                    currentY = posY;
-                }
-
-                // Check if we reached the waypoint (or close enough)
-                int finalDistanceX = Math.Abs(nextWaypoint.X - currentX);
-                int finalDistanceY = Math.Abs(nextWaypoint.Y - currentY);
-                int finalTotalDistance = finalDistanceX + finalDistanceY;
-
-                // Consider waypoint reached if within 2 sqms (to account for obstacles)
-                if (finalTotalDistance <= 2)
-                {
-                    if (debug) Console.WriteLine("[DEBUG] Waypoint reached");
-
-                    // Update current index based on direction
-                    if (isReversed)
-                    {
-                        currentCoordIndex--;
-                        if (currentCoordIndex < 0)
-                        {
-                            // Reached the beginning, reverse again
-                            waypoints.Reverse();
-                            isReversed = false;
-                            currentCoordIndex = 1; // Start at second waypoint
-                        }
-                    }
-                    else
-                    {
-                        currentCoordIndex++;
-                        if (currentCoordIndex >= waypoints.Count)
-                        {
-                            // Reached the end, reverse
-                            waypoints.Reverse();
-                            isReversed = true;
-                            currentCoordIndex = 1; // Start at second waypoint
-                        }
-                    }
-                }
-                else
-                {
-                    // If we didn't reach the destination after movement, check if we're off track
-                    if (debug) Console.WriteLine($"[DEBUG] Could not reach waypoint, distance: {finalTotalDistance}");
-
-                    // Try to find closest waypoint for next iteration
-                    int newIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                    if (newIndex != currentCoordIndex)
-                    {
-                        if (debug) Console.WriteLine($"[DEBUG] Adjusting to closest waypoint: {newIndex}");
-                        currentCoordIndex = newIndex;
-                    }
-                }
 
                 Thread.Sleep(100); // Slow down for debugging if needed
             }
@@ -1018,85 +806,136 @@ class Program
         return closestIndex;
     }
 
-    // Helper function to find the best next waypoint
-    static Coordinate FindNextWaypoint(List<Coordinate> waypoints, int currentX, int currentY, int currentZ,
-                                  int currentIndex, bool isReversed)
+    static Coordinate FindNextWaypoint(ref List<Coordinate> waypoints, int currentX, int currentY, int currentZ, ref int currentIndex)
     {
-        // Try to find farthest waypoint where both |deltaX| and |deltaY| are max 5
-        int maxDistance = 5;
-        int maxSearchRange = 10; // Look at most 10 waypoints ahead
-        int targetIndex = currentIndex;
-        double bestDistance = 0;
+        Console.WriteLine("\n=== FIND NEXT WAYPOINT DEBUG ===");
+        Console.WriteLine($"Current position: X={currentX}, Y={currentY}, Z={currentZ}");
+        Console.WriteLine($"Current index: {currentIndex}");
+        Console.WriteLine($"Total waypoints: {waypoints.Count}");
 
-        if (!isReversed)
+        // Safety check
+        if (waypoints.Count == 0)
         {
-            // Forward search
-            for (int i = currentIndex; i < Math.Min(currentIndex + maxSearchRange, waypoints.Count); i++)
-            {
-                var waypoint = waypoints[i];
-                int deltaX = Math.Abs(waypoint.X - currentX);
-                int deltaY = Math.Abs(waypoint.Y - currentY);
-
-                // Check if both X and Y distances are within max limit
-                if (deltaX <= maxDistance && deltaY <= maxDistance)
-                {
-                    // Calculate Euclidean distance
-                    double distance = Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
-
-                    // Keep track of the farthest valid waypoint
-                    if (distance > bestDistance)
-                    {
-                        bestDistance = distance;
-                        targetIndex = i;
-                    }
-                }
-
-                // If we're at the end, use the last valid waypoint found
-                if (i == waypoints.Count - 1 && targetIndex != currentIndex)
-                {
-                    break;
-                }
-            }
+            Console.WriteLine("ERROR: Empty waypoints list");
+            return new Coordinate { X = currentX, Y = currentY, Z = currentZ };
         }
-        else
+
+        if (currentIndex < 0 || currentIndex >= waypoints.Count)
         {
-            // Backward search
-            for (int i = currentIndex; i >= Math.Max(currentIndex - maxSearchRange, 0); i--)
+            Console.WriteLine($"ERROR: Current index {currentIndex} out of bounds");
+            currentIndex = Math.Max(0, Math.Min(waypoints.Count - 1, currentIndex));
+            Console.WriteLine($"Corrected to index {currentIndex}");
+        }
+
+        // Check if we're at the last waypoint
+        if (currentIndex == waypoints.Count - 1)
+        {
+            Console.WriteLine("At last waypoint, checking if we should reverse list...");
+
+            // Calculate distance to the first waypoint
+            int distanceToFirst = Math.Abs(waypoints[0].X - currentX) + Math.Abs(waypoints[0].Y - currentY);
+
+            Console.WriteLine($"Distance to first waypoint: {distanceToFirst} steps");
+
+            // If distance to first waypoint is too large, reverse the list
+            if (distanceToFirst > 12)
             {
-                var waypoint = waypoints[i];
-                int deltaX = Math.Abs(waypoint.X - currentX);
-                int deltaY = Math.Abs(waypoint.Y - currentY);
+                Console.WriteLine("Distance > 12, REVERSING THE LIST NOW");
+                waypoints.Reverse();
 
-                // Check if both X and Y distances are within max limit
-                if (deltaX <= maxDistance && deltaY <= maxDistance)
-                {
-                    // Calculate Euclidean distance
-                    double distance = Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
+                // Update current index after reversing
+                currentIndex = 0;  // We were at the end, now we're at the beginning
 
-                    // Keep track of the farthest valid waypoint
-                    if (distance > bestDistance)
-                    {
-                        bestDistance = distance;
-                        targetIndex = i;
-                    }
-                }
-
-                // If we're at the beginning, use the last valid waypoint found
-                if (i == 0 && targetIndex != currentIndex)
-                {
-                    break;
-                }
+                Console.WriteLine("List reversed, now at index 0");
             }
         }
 
-        // If no valid waypoint found within the constraints, return current waypoint
-        if (targetIndex == currentIndex)
+        // Maximum search range and distance constraints
+        int maxSearchCount = 10;    // Look at maximum 10 waypoints
+        int maxAllowedX = 5;        // Maximum X distance
+        int maxAllowedY = 5;        // Maximum Y distance
+
+        // Variables to track the best waypoint
+        int bestIndex = -1;         // Best waypoint found so far (-1 means none)
+        double maxDistance = 0;     // Maximum distance found so far
+
+        Console.WriteLine("Starting waypoint search...");
+
+        // Determine search direction - always move forward
+        int startIndex, endIndex;
+
+        // Always search ahead (after current position)
+        startIndex = currentIndex + 1;
+        endIndex = Math.Min(waypoints.Count - 1, currentIndex + maxSearchCount);
+
+        Console.WriteLine($"Searching forward from index {startIndex} to {endIndex}");
+
+        // Search for the best waypoint
+        for (int index = startIndex; index <= endIndex; index++)
         {
-            // Use the endpoint if we didn't find a suitable waypoint
-            targetIndex = isReversed ? 0 : waypoints.Count - 1;
+            // Skip if index is out of bounds
+            if (index < 0 || index >= waypoints.Count)
+                continue;
+
+            Coordinate waypoint = waypoints[index];
+
+            // Calculate distance to this waypoint
+            int deltaX = Math.Abs(waypoint.X - currentX);
+            int deltaY = Math.Abs(waypoint.Y - currentY);
+
+            Console.WriteLine($"  Checking waypoint[{index}]: X={waypoint.X}, Y={waypoint.Y}, deltaX={deltaX}, deltaY={deltaY}");
+
+            // Check if the waypoint is within the maximum allowed distance
+            if (deltaX <= maxAllowedX && deltaY <= maxAllowedY)
+            {
+                // Calculate Euclidean distance
+                double distance = Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
+
+                Console.WriteLine($"  Distance: {distance:F2} (within limits)");
+
+                // Keep track of the farthest valid waypoint
+                if (distance > maxDistance)
+                {
+                    maxDistance = distance;
+                    bestIndex = index;
+                    Console.WriteLine($"  New best! Distance={distance:F2}, Index={bestIndex}");
+                }
+            }
+            else
+            {
+                Console.WriteLine($"  Skipped: Outside distance limits");
+            }
         }
 
-        return waypoints[targetIndex];
+        // If no valid waypoint found ahead, choose next index if possible
+        if (bestIndex == -1)
+        {
+            Console.WriteLine("No valid waypoint found ahead. Choosing adjacent waypoint...");
+
+            if (currentIndex < waypoints.Count - 1)
+            {
+                bestIndex = currentIndex + 1; // Move to next waypoint
+                Console.WriteLine($"Moving to next waypoint (index {bestIndex})");
+            }
+            else
+            {
+                // We're at the end, check if we should stay or reverse
+                bestIndex = currentIndex;
+                Console.WriteLine("At last waypoint, no valid waypoint ahead. Staying at current position.");
+            }
+        }
+
+        // Final safety check
+        bestIndex = Math.Max(0, Math.Min(waypoints.Count - 1, bestIndex));
+
+        // Update the current index
+        currentIndex = bestIndex;
+
+        Coordinate result = waypoints[bestIndex];
+        Console.WriteLine($"Final choice: waypoint[{bestIndex}]: X={result.X}, Y={result.Y}, Z={result.Z}");
+        Console.WriteLine("=== END FIND NEXT WAYPOINT DEBUG ===\n");
+
+        return result;
     }
 
 
@@ -1167,10 +1006,10 @@ class Program
     // Constants needed
     const byte VK_ESCAPE = 0x1B; // ESC key
 
-  
+
     const int VK_F6 = 0x75;
 
-    
+
     const int WM_LBUTTONDOWN = 0x0201;
     const int WM_LBUTTONUP = 0x0202;
 
@@ -1228,7 +1067,7 @@ class Program
 
     [DllImport("user32.dll")]
     static extern int GetSystemMetrics(int nIndex);
-    
+
 
     [DllImport("user32.dll")]
     static extern bool SetCursorPos(int X, int Y);
@@ -1439,7 +1278,7 @@ class Program
 
     static void ClickAroundCharacter(IntPtr hWnd)
     {
-       // DragItemToCharacterCenter(hWnd);
+        // DragItemToCharacterCenter(hWnd);
         ClickSpecificLocationsWithMouseMovement(hWnd);
         double squareSize = 57; // Size of one tile
 
@@ -1462,7 +1301,7 @@ class Program
         // Calculate the "character center" first (base point)
         int centerX = (rect.Right - rect.Left) / 2 - 186;
         int centerY = (rect.Bottom - rect.Top) / 2 - 300;
-       
+
         foreach (var direction in directions)
         {
             int dx = direction.dx;
