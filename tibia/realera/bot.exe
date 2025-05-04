@@ -1777,39 +1777,27 @@ class Program
         return (monsterX, monsterY, monsterZ, monsterName);
     }
 
-    // Modified ToggleTimeRing function that checks monster distance
+    // Class-level variables to track ring state
+    static int lastRingEquippedTargetId = 0;
+    static bool isRingCurrentlyEquipped = false;
+
+    // Simplified ToggleTimeRing function that tracks only the last equipped target
     static void ToggleTimeRing(IntPtr hWnd, bool equip)
     {
         try
         {
-            // If we're trying to equip the ring, check monster distance first
-            if (equip)
+            // Get current target ID
+            int currentTargetId;
+            lock (memoryLock)
             {
-                // Get current player position
-                int playerX, playerY, playerZ;
-                lock (memoryLock)
-                {
-                    playerX = posX;
-                    playerY = posY;
-                    playerZ = posZ;
-                }
+                currentTargetId = targetId;
+            }
 
-                // Get monster position
-                var (monsterX, monsterY, monsterZ, _) = GetTargetMonsterInfo();
-
-                // Calculate Manhattan distance (sum of X and Y differences)
-                int distanceX = Math.Abs(monsterX - playerX);
-                int distanceY = Math.Abs(monsterY - playerY);
-                int totalDistance = distanceX + distanceY;
-
-                // Only proceed with equipping if monster is close enough (less than 3 sqm)
-                if (totalDistance > 3)
-                {
-                    if (debug) Console.WriteLine($"[DEBUG] Monster too far ({totalDistance} sqm), not equipping time ring");
-                    return;
-                }
-
-                if (debug) Console.WriteLine($"[DEBUG] Monster in range ({totalDistance} sqm), equipping time ring");
+            // For equipping: check if already equipped for this target
+            if (equip && isRingCurrentlyEquipped && currentTargetId == lastRingEquippedTargetId)
+            {
+                if (debug) Console.WriteLine($"[DEBUG] Ring already equipped for target {currentTargetId}");
+                return;
             }
 
             int inventoryX = 940;
@@ -1828,20 +1816,31 @@ class Program
             // 1. Move mouse to source position
             IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
             PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
-            Thread.Sleep(50); // Small delay for mouse movement
+            Thread.Sleep(50);
 
             // 2. Press left mouse button down at source position
             PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
-            Thread.Sleep(50); // Small delay
+            Thread.Sleep(50);
 
             // 3. Move mouse to destination with left button held
             IntPtr destLParam = MakeLParam(destX, destY);
             PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
-            Thread.Sleep(50); // Small delay for mouse movement
+            Thread.Sleep(50);
 
             // 4. Release left mouse button at destination
             PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
-            Thread.Sleep(50); // Small delay
+            Thread.Sleep(50);
+
+            // Update state tracking
+            if (equip)
+            {
+                lastRingEquippedTargetId = currentTargetId;
+                isRingCurrentlyEquipped = true;
+            }
+            else
+            {
+                isRingCurrentlyEquipped = false;
+            }
 
             if (debug) Console.WriteLine($"[DEBUG] Successfully {(equip ? "equipped" : "de-equipped")} time ring");
         }
