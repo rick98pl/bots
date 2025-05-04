@@ -705,8 +705,9 @@ class Program
                     Console.WriteLine("[DEBUG] Fight finished, calling ClickAroundCharacter");
                     if (shouldClickAround)
                     {
-                        ClickAroundCharacter(targetWindow);
                         shouldClickAround = false;
+                        Console.WriteLine("[DEBUG] shouldClickAround set false");
+                        ClickAroundCharacter(targetWindow);
                     }
                     Sleep(1);
                     lock (memoryLock)
@@ -715,9 +716,13 @@ class Program
                     }
                 }
                 previousTargetId = currentTargetId;
+                lock (memoryLock)
+                {
+                    currentTargetId = targetId;
+                }
                 if (currentTargetId != 0)
                 {
-                   
+
                     ToggleRing(targetWindow, true);
                     Sleep(1);
                     var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
@@ -745,12 +750,24 @@ class Program
                         Sleep(1);
                         continue;
                     }
+                    Sleep(100);
                     lock (memoryLock)
                     {
-                        currentX = posX;
-                        currentY = posY;
-                        currentZ = posZ;
+                        currentTargetId = targetId;
                     }
+                    if (!string.IsNullOrEmpty(monsterName)){
+                        Console.WriteLine(
+                            $"Empty monsterName wtf?: {monsterName}"
+                        );
+                        Console.WriteLine("[DEBUG] shouldClickAround set true");
+                        shouldClickAround = true;
+                    }
+                        lock (memoryLock)
+                        {
+                            currentX = posX;
+                            currentY = posY;
+                            currentZ = posZ;
+                        }
                     continue;
                 }
                 lock (memoryLock)
@@ -762,8 +779,9 @@ class Program
 
                     Console.WriteLine("[DEBUG] No target, pressing F6 to search");
                     SendKeyPress(VK_F6);
+                    Sleep(256); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no mnoster
                 }
-                Sleep(128);
+                
                 lock (memoryLock)
                 {
                     currentTargetId = targetId;
@@ -772,7 +790,6 @@ class Program
                 {
 
                     Console.WriteLine($"[DEBUG] Found target: {currentTargetId}");
-                    shouldClickAround = true;
                     continue;
                 }
                 Console.WriteLine("[DEBUG] No target found, proceeding with movement");
@@ -874,7 +891,7 @@ class Program
                     if (currentTargetId == 0)
                     {
                         SendKeyPress(VK_F6);
-                        Sleep(1);
+                        Sleep(256); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no mnoster
                         lock (memoryLock)
                         {
                             currentTargetId = targetId;
@@ -1457,6 +1474,10 @@ class Program
                         processHandle,
                         IntPtr.Add(monsterInstancePtr, 0x0030)
                     );
+                    if(targetId == 0)
+                    {
+                        monsterName = "";
+                    }
                 }
             }
         }
