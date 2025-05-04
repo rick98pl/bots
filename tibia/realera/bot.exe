@@ -756,10 +756,6 @@ class Program
                         currentTargetId = targetId;
                     }
                     if (!string.IsNullOrEmpty(monsterName)){
-                        Console.WriteLine(
-                            $"Empty monsterName wtf?: {monsterName}"
-                        );
-                        Console.WriteLine("[DEBUG] shouldClickAround set true");
                         shouldClickAround = true;
                     }
                         lock (memoryLock)
