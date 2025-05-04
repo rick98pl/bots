@@ -1235,7 +1235,7 @@ class Program
             POINT screenPoint = new POINT { X = x, Y = y };
             ClientToScreen(hWnd, ref screenPoint);
             Sleep(1);
-            SetCursorPos(screenPoint.X, screenPoint.Y);
+            //SetCursorPos(screenPoint.X, screenPoint.Y);
             VirtualRightClick(hWnd, x, y);
             Sleep(1);
             int currentTargetId = GetTargetId();
