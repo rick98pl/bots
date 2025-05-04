@@ -1313,7 +1313,7 @@ class Program
 
             // Move mouse to the location
             //Console.WriteLine($"Moving mouse to ({x}, {y}) - Screen: ({screenPoint.X}, {screenPoint.Y})");
-            SetCursorPos(screenPoint.X, screenPoint.Y);
+            //SetCursorPos(screenPoint.X, screenPoint.Y);
             Thread.Sleep(1); // Pause so you can see the mouse movement
 
             // Right-click at the location
