@@ -610,6 +610,82 @@ class Program
 
 
 
+    // Add this helper method to determine directional movement
+    private static void MoveCharacterTowardsWaypoint(int currentX, int currentY, int waypointX, int waypointY)
+    {
+        // Calculate differences
+        int diffX = waypointX - currentX;
+        int diffY = waypointY - currentY;
+
+        // Decide which direction to try first (X or Y)
+        bool tryXFirst = Math.Abs(diffX) > Math.Abs(diffY);
+
+        if (tryXFirst)
+        {
+            // Try X movement first, then Y
+            if (diffX > 0)
+            {
+                // Move east
+                if (debug) Console.WriteLine("[DEBUG] Moving EAST with arrow key");
+                SendKeyPress(VK_RIGHT);
+            }
+            else if (diffX < 0)
+            {
+                // Move west
+                if (debug) Console.WriteLine("[DEBUG] Moving WEST with arrow key");
+                SendKeyPress(VK_LEFT);
+            }
+
+            Thread.Sleep(500); // Wait for movement
+
+            // Then try Y
+            if (diffY > 0)
+            {
+                // Move south
+                if (debug) Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
+                SendKeyPress(VK_DOWN);
+            }
+            else if (diffY < 0)
+            {
+                // Move north
+                if (debug) Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
+                SendKeyPress(VK_UP);
+            }
+        }
+        else
+        {
+            // Try Y movement first, then X
+            if (diffY > 0)
+            {
+                // Move south
+                if (debug) Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
+                SendKeyPress(VK_DOWN);
+            }
+            else if (diffY < 0)
+            {
+                // Move north
+                if (debug) Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
+                SendKeyPress(VK_UP);
+            }
+
+            Thread.Sleep(500); // Wait for movement
+
+            // Then try X
+            if (diffX > 0)
+            {
+                // Move east
+                if (debug) Console.WriteLine("[DEBUG] Moving EAST with arrow key");
+                SendKeyPress(VK_RIGHT);
+            }
+            else if (diffX < 0)
+            {
+                // Move west
+                if (debug) Console.WriteLine("[DEBUG] Moving WEST with arrow key");
+                SendKeyPress(VK_LEFT);
+            }
+        }
+    }
+
     static void PlayCoordinates()
     {
         Console.WriteLine("Path playback starting...");
@@ -664,7 +740,6 @@ class Program
                 // If we have a target, check if it's within 5 sqm of our path
                 if (currentTargetId != 0)
                 {
-
                     var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
 
                     if (debug) Console.WriteLine($"[DEBUG] Monster found: {monsterName} at X={monsterX}, Y={monsterY}, Z={monsterZ}");
@@ -722,7 +797,6 @@ class Program
                 // Wait a bit before moving (as requested)
                 Thread.Sleep(100);
 
-
                 Coordinate nextWaypoint = FindNextWaypoint(ref waypoints, currentX, currentY, currentZ, ref currentCoordIndex);
                 currentTarget = nextWaypoint;
 
@@ -733,7 +807,66 @@ class Program
                 int distanceY = Math.Abs(nextWaypoint.Y - currentY);
                 int totalDistance = distanceX + distanceY;
 
-               
+                // NEW CODE: Check if the waypoint is too far to click (> 5 tiles away in either direction)
+                if (distanceX > 5 || distanceY > 5)
+                {
+                    if (debug) Console.WriteLine($"[DEBUG] Waypoint too far to click: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
+                    if (debug) Console.WriteLine($"[DEBUG] Current position: X={currentX}, Y={currentY}, Z={currentZ}");
+                    if (debug) Console.WriteLine($"[DEBUG] Distance: X={distanceX}, Y={distanceY}");
+
+                    // Use arrow keys to move closer to the waypoint
+                    // Try up to 5 moves to get closer
+                    int maxMoves = 5;
+                    int movesMade = 0;
+
+                    while ((distanceX > 5 || distanceY > 5) && movesMade < maxMoves)
+                    {
+                        // Use arrow keys based on relative position
+                        MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypoint.X, nextWaypoint.Y);
+
+                        // Wait for movement to complete
+                        Thread.Sleep(800);
+
+                        // Update current position
+                        lock (memoryLock)
+                        {
+                            currentX = posX;
+                            currentY = posY;
+                            currentZ = posZ;
+                        }
+
+                        // Recalculate distance
+                        distanceX = Math.Abs(nextWaypoint.X - currentX);
+                        distanceY = Math.Abs(nextWaypoint.Y - currentY);
+
+                        if (debug) Console.WriteLine($"[DEBUG] After move #{movesMade + 1}, new position: X={currentX}, Y={currentY}");
+                        if (debug) Console.WriteLine($"[DEBUG] New distance: X={distanceX}, Y={distanceY}");
+
+                        movesMade++;
+
+                        // Check if we're close enough to click now
+                        if (distanceX <= 5 && distanceY <= 5)
+                        {
+                            if (debug) Console.WriteLine("[DEBUG] Now within clickable range");
+                            break;
+                        }
+
+                        // If we haven't made progress after two tries, try alternating direction
+                        if (movesMade % 2 == 0)
+                        {
+                            if (debug) Console.WriteLine("[DEBUG] Switching movement priority");
+                        }
+                    }
+
+                    // If we're still too far after all attempts, try finding a closer waypoint
+                    if (distanceX > 5 || distanceY > 5)
+                    {
+                        if (debug) Console.WriteLine("[DEBUG] Still too far after arrow movement, finding a new waypoint");
+                        currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+                        continue; // Go back to start of loop with new waypoint
+                    }
+                }
+
                 if (debug) Console.WriteLine($"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}");
                 bool clickSuccess = ClickWaypoint(nextWaypoint);
                 Thread.Sleep(900);
@@ -764,7 +897,6 @@ class Program
                     }
                 }
 
-
                 Thread.Sleep(100); // Slow down for debugging if needed
             }
             catch (Exception ex)
@@ -776,9 +908,6 @@ class Program
 
         Console.WriteLine("Path playback ended");
     }
-
-
-
 
 
 
