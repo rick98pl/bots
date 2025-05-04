@@ -138,7 +138,7 @@ class Program
                     if (processes.Length == 0)
                     {
                         Console.WriteLine($"Process '{processName}' not found.");
-                        Thread.Sleep(500);
+                        Sleep(500);
                         continue;
                     }
                     else if (processes.Length == 1)
@@ -192,7 +192,7 @@ class Program
                     var key = Console.ReadKey(true).Key;
                     HandleUserInput(key);
                 }
-                Thread.Sleep(250);
+                Sleep(250);
             }
             if (shouldRestartMemoryThread)
             {
@@ -221,7 +221,7 @@ class Program
         threadFlags["recording"] = false;
         threadFlags["playing"] = false;
         Console.WriteLine("Worker threads stopping...");
-        Thread.Sleep(1000);
+        Sleep(1000);
     }
     static List<Variable> variables = new List<Variable>
     {
@@ -323,7 +323,7 @@ class Program
                         RecordCoordinate(posX, posY, posZ);
                     }
                 }
-                Thread.Sleep(1);
+                Sleep(1);
             }
             catch (Exception ex)
             {
@@ -354,7 +354,7 @@ class Program
                     }
                     if (hpPercent == 0)
                     {
-                        Thread.Sleep(1);
+                        Sleep(1);
                         continue;
                     }
                     if (hpPercent <= DEFAULT_HP_THRESHOLD)
@@ -380,12 +380,12 @@ class Program
                         }
                     }
                 }
-                Thread.Sleep(100);
+                Sleep(100);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Auto-potion error: {ex.Message}");
-                Thread.Sleep(1000);
+                Sleep(1000);
             }
         }
         Console.WriteLine("Auto-potion thread exited");
@@ -493,7 +493,7 @@ class Program
                     else
                     {
                         Console.WriteLine("cords.json not found!");
-                        Thread.Sleep(1000);
+                        Sleep(1000);
                     }
                 }
                 else if (threadFlags["playing"])
@@ -551,7 +551,7 @@ class Program
     static void SendKeyPress(int key)
     {
         PostMessage(targetWindow, WM_KEYDOWN, (IntPtr)key, IntPtr.Zero);
-        Thread.Sleep(random.Next(10, 25));
+        Sleep(random.Next(10, 25));
         PostMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
     }
     static void FindRealeraWindow(Process process)
@@ -611,27 +611,23 @@ class Program
         {
             if (diffX > 0)
             {
-                if (debug)
-                    Console.WriteLine("[DEBUG] Moving EAST with arrow key");
+                Console.WriteLine("[DEBUG] Moving EAST with arrow key");
                 SendKeyPress(VK_RIGHT);
             }
             else if (diffX < 0)
             {
-                if (debug)
-                    Console.WriteLine("[DEBUG] Moving WEST with arrow key");
+                Console.WriteLine("[DEBUG] Moving WEST with arrow key");
                 SendKeyPress(VK_LEFT);
             }
-            Thread.Sleep(150);
+            Sleep(150);
             if (diffY > 0)
             {
-                if (debug)
-                    Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
+                Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
                 SendKeyPress(VK_DOWN);
             }
             else if (diffY < 0)
             {
-                if (debug)
-                    Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
+                Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
                 SendKeyPress(VK_UP);
             }
         }
@@ -639,27 +635,23 @@ class Program
         {
             if (diffY > 0)
             {
-                if (debug)
-                    Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
+                Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
                 SendKeyPress(VK_DOWN);
             }
             else if (diffY < 0)
             {
-                if (debug)
-                    Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
+                Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
                 SendKeyPress(VK_UP);
             }
-            Thread.Sleep(150);
+            Sleep(150);
             if (diffX > 0)
             {
-                if (debug)
-                    Console.WriteLine("[DEBUG] Moving EAST with arrow key");
+                Console.WriteLine("[DEBUG] Moving EAST with arrow key");
                 SendKeyPress(VK_RIGHT);
             }
             else if (diffX < 0)
             {
-                if (debug)
-                    Console.WriteLine("[DEBUG] Moving WEST with arrow key");
+                Console.WriteLine("[DEBUG] Moving WEST with arrow key");
                 SendKeyPress(VK_LEFT);
             }
         }
@@ -691,8 +683,7 @@ class Program
             currentZ = posZ;
         }
         currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-        if (debug)
-            Console.WriteLine($"[DEBUG] Starting at closest waypoint: index {currentCoordIndex}");
+        Console.WriteLine($"[DEBUG] Starting at closest waypoint: index {currentCoordIndex}");
         while (threadFlags["playing"])
         {
             try
@@ -708,11 +699,11 @@ class Program
                 if (previousTargetId != 0 && currentTargetId == 0)
                 {
                     ToggleRing(targetWindow, false);
-                    Thread.Sleep(1);
-                    if (debug)
-                        Console.WriteLine("[DEBUG] Fight finished, calling ClickAroundCharacter");
+                    Sleep(1);
+
+                    Console.WriteLine("[DEBUG] Fight finished, calling ClickAroundCharacter");
                     ClickAroundCharacter(targetWindow);
-                    Thread.Sleep(1);
+                    Sleep(1);
                     lock (memoryLock)
                     {
                         currentTargetId = targetId;
@@ -722,17 +713,17 @@ class Program
                 if (currentTargetId != 0)
                 {
                     ToggleRing(targetWindow, true);
-                    Thread.Sleep(1);
+                    Sleep(1);
                     var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
-                    Thread.Sleep(1);
+                    Sleep(1);
                     if (blacklistedTargets.Contains(currentTargetId))
                     {
-                        if (debug)
-                            Console.WriteLine(
-                                $"[DEBUG] Skipping blacklisted target ID: {currentTargetId}"
-                            );
+
+                        Console.WriteLine(
+                            $"[DEBUG] Skipping blacklisted target ID: {currentTargetId}"
+                        );
                         SendKeyPress(VK_ESCAPE);
-                        Thread.Sleep(1);
+                        Sleep(1);
                         continue;
                     }
                     if (
@@ -740,12 +731,12 @@ class Program
                         && blacklistedMonsterNames.Contains(monsterName)
                     )
                     {
-                        if (debug)
-                            Console.WriteLine(
-                                $"[DEBUG] Skipping blacklisted monster: {monsterName}"
-                            );
+
+                        Console.WriteLine(
+                            $"[DEBUG] Skipping blacklisted monster: {monsterName}"
+                        );
                         SendKeyPress(VK_ESCAPE);
-                        Thread.Sleep(1);
+                        Sleep(1);
                         continue;
                     }
                     lock (memoryLock)
@@ -762,24 +753,23 @@ class Program
                 }
                 if (currentTargetId == 0)
                 {
-                    if (debug)
-                        Console.WriteLine("[DEBUG] No target, pressing F6 to search");
+
+                    Console.WriteLine("[DEBUG] No target, pressing F6 to search");
                     SendKeyPress(VK_F6);
                 }
-                Thread.Sleep(1);
+                Sleep(1);
                 lock (memoryLock)
                 {
                     currentTargetId = targetId;
                 }
                 if (currentTargetId != 0)
                 {
-                    if (debug)
-                        Console.WriteLine($"[DEBUG] Found target: {currentTargetId}");
+
+                    Console.WriteLine($"[DEBUG] Found target: {currentTargetId}");
                     continue;
                 }
-                if (debug)
-                    Console.WriteLine("[DEBUG] No target found, proceeding with movement");
-                Thread.Sleep(1);
+                Console.WriteLine("[DEBUG] No target found, proceeding with movement");
+                Sleep(1);
                 Coordinate nextWaypoint = FindNextWaypoint(
                     ref waypoints,
                     currentX,
@@ -788,25 +778,24 @@ class Program
                     ref currentCoordIndex
                 );
                 currentTarget = nextWaypoint;
-                if (debug)
-                    Console.WriteLine(
-                        $"[DEBUG] Moving to waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
-                    );
+                Console.WriteLine(
+                    $"[DEBUG] Moving to waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                );
                 int distanceX = Math.Abs(nextWaypoint.X - currentX);
                 int distanceY = Math.Abs(nextWaypoint.Y - currentY);
                 int totalDistance = distanceX + distanceY;
                 if (distanceX > 5 || distanceY > 5)
                 {
-                    if (debug)
-                        Console.WriteLine(
-                            $"[DEBUG] Waypoint too far to click: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
-                        );
-                    if (debug)
-                        Console.WriteLine(
-                            $"[DEBUG] Current position: X={currentX}, Y={currentY}, Z={currentZ}"
-                        );
-                    if (debug)
-                        Console.WriteLine($"[DEBUG] Distance: X={distanceX}, Y={distanceY}");
+
+                    Console.WriteLine(
+                        $"[DEBUG] Waypoint too far to click: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                    );
+
+                    Console.WriteLine(
+                        $"[DEBUG] Current position: X={currentX}, Y={currentY}, Z={currentZ}"
+                    );
+
+                    Console.WriteLine($"[DEBUG] Distance: X={distanceX}, Y={distanceY}");
                     int maxMoves = 5;
                     int movesMade = 0;
                     while ((distanceX > 5 || distanceY > 5) && movesMade < maxMoves)
@@ -817,7 +806,7 @@ class Program
                             nextWaypoint.X,
                             nextWaypoint.Y
                         );
-                        Thread.Sleep(150);
+                        Sleep(150);
                         lock (memoryLock)
                         {
                             currentX = posX;
@@ -826,33 +815,33 @@ class Program
                         }
                         distanceX = Math.Abs(nextWaypoint.X - currentX);
                         distanceY = Math.Abs(nextWaypoint.Y - currentY);
-                        if (debug)
-                            Console.WriteLine(
-                                $"[DEBUG] After move #{movesMade + 1}, new position: X={currentX}, Y={currentY}"
-                            );
-                        if (debug)
-                            Console.WriteLine(
-                                $"[DEBUG] New distance: X={distanceX}, Y={distanceY}"
-                            );
+
+                        Console.WriteLine(
+                            $"[DEBUG] After move #{movesMade + 1}, new position: X={currentX}, Y={currentY}"
+                        );
+
+                        Console.WriteLine(
+                            $"[DEBUG] New distance: X={distanceX}, Y={distanceY}"
+                        );
                         movesMade++;
                         if (distanceX <= 5 && distanceY <= 5)
                         {
-                            if (debug)
-                                Console.WriteLine("[DEBUG] Now within clickable range");
+
+                            Console.WriteLine("[DEBUG] Now within clickable range");
                             break;
                         }
                         if (movesMade % 2 == 0)
                         {
-                            if (debug)
-                                Console.WriteLine("[DEBUG] Switching movement priority");
+
+                            Console.WriteLine("[DEBUG] Switching movement priority");
                         }
                     }
                     if (distanceX > 5 || distanceY > 5)
                     {
-                        if (debug)
-                            Console.WriteLine(
-                                "[DEBUG] Still too far after arrow movement, finding a new waypoint"
-                            );
+
+                        Console.WriteLine(
+                            "[DEBUG] Still too far after arrow movement, finding a new waypoint"
+                        );
                         currentCoordIndex = FindClosestWaypointIndex(
                             waypoints,
                             currentX,
@@ -862,12 +851,11 @@ class Program
                         continue;
                     }
                 }
-                if (debug)
-                    Console.WriteLine(
-                        $"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
-                    );
+                Console.WriteLine(
+                    $"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                );
                 bool clickSuccess = ClickWaypoint(nextWaypoint);
-                Thread.Sleep(900);
+                Sleep(900);
                 if (clickSuccess)
                 {
                     int followStatus;
@@ -879,27 +867,27 @@ class Program
                     if (currentTargetId == 0)
                     {
                         SendKeyPress(VK_F6);
-                        Thread.Sleep(1);
+                        Sleep(1);
                         lock (memoryLock)
                         {
                             currentTargetId = targetId;
                         }
                         if (currentTargetId != 0)
                         {
-                            if (debug)
-                                Console.WriteLine(
-                                    "[DEBUG] Target found after movement, switching to combat"
-                                );
+
+                            Console.WriteLine(
+                                "[DEBUG] Target found after movement, switching to combat"
+                            );
                             continue;
                         }
                     }
                 }
-                Thread.Sleep(1);
+                Sleep(1);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error in path playback: {ex.Message}");
-                Thread.Sleep(1);
+                Sleep(1);
             }
         }
         Console.WriteLine("Path playback ended");
@@ -1050,13 +1038,13 @@ class Program
             }
             int lParam = (targetY << 16) | (targetX & 0xFFFF);
             SendKeyPress(VK_ESCAPE);
-            Thread.Sleep(1);
+            Sleep(1);
             PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)lParam);
-            Thread.Sleep(1);
+            Sleep(1);
             PostMessage(targetWindow, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
-            Thread.Sleep(1);
+            Sleep(1);
             PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
-            Thread.Sleep(1);
+            Sleep(1);
             int centerLParam = (baseY << 16) | (baseX & 0xFFFF);
             PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)centerLParam);
             Console.WriteLine(
@@ -1141,9 +1129,9 @@ class Program
             int y = location.y;
             POINT screenPoint = new POINT { X = x, Y = y };
             ClientToScreen(hWnd, ref screenPoint);
-            Thread.Sleep(1);
+            Sleep(1);
             VirtualLeftClick(hWnd, x, y);
-            Thread.Sleep(1);
+            Sleep(1);
         }
     }
     static void CorpseEatFood(IntPtr hWnd)
@@ -1172,9 +1160,9 @@ class Program
             int y = location.y;
             POINT screenPoint = new POINT { X = x, Y = y };
             ClientToScreen(hWnd, ref screenPoint);
-            Thread.Sleep(1);
+            Sleep(1);
             VirtualRightClick(hWnd, x, y);
-            Thread.Sleep(1);
+            Sleep(1);
         }
     }
     static void ClickSpecificLocationsWithMouseMovement(IntPtr hWnd)
@@ -1193,9 +1181,9 @@ class Program
             int y = location.y;
             POINT screenPoint = new POINT { X = x, Y = y };
             ClientToScreen(hWnd, ref screenPoint);
-            Thread.Sleep(1);
+            Sleep(1);
             VirtualRightClick(hWnd, x, y);
-            Thread.Sleep(1);
+            Sleep(1);
             int currentTargetId = GetTargetId();
             if (currentTargetId != 0)
             {
@@ -1215,14 +1203,14 @@ class Program
         Console.WriteLine($"Moving to source position ({sourceX}, {sourceY})");
         IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
         SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
-        Thread.Sleep(1);
+        Sleep(1);
         SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
-        Thread.Sleep(1);
+        Sleep(1);
         IntPtr centerLParam = MakeLParam(centerX, centerY);
         SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), centerLParam);
-        Thread.Sleep(1);
+        Sleep(1);
         SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, centerLParam);
-        Thread.Sleep(1);
+        Sleep(1);
         Console.WriteLine($"Completed drag from ({sourceX}, {sourceY}) to ({centerX}, {centerY})");
     }
     const int MK_LBUTTON = 0x0001;
@@ -1257,7 +1245,7 @@ class Program
             int clickX = centerX + (int)(dx * squareSize);
             int clickY = centerY + (int)(dy * squareSize);
             VirtualRightClick(targetWindow, clickX, clickY);
-            Thread.Sleep(1);
+            Sleep(1);
             int currentTargetId = GetTargetId();
             if (currentTargetId != 0)
             {
@@ -1281,21 +1269,21 @@ class Program
     {
         int lParam = (y << 16) | (x & 0xFFFF);
         PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
-        Thread.Sleep(1);
+        Sleep(1);
         PostMessage(hWnd, WM_RBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
-        Thread.Sleep(1);
+        Sleep(1);
         PostMessage(hWnd, WM_RBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
-        Thread.Sleep(1);
+        Sleep(1);
     }
     static void VirtualLeftClick(IntPtr hWnd, int x, int y)
     {
         int lParam = (y << 16) | (x & 0xFFFF);
         PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
-        Thread.Sleep(1);
+        Sleep(1);
         PostMessage(hWnd, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
-        Thread.Sleep(1);
+        Sleep(1);
         PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
-        Thread.Sleep(1);
+        Sleep(1);
     }
     static int GetTargetId()
     {
@@ -1491,10 +1479,10 @@ class Program
                     && blacklistedRingMonsters.Contains(monsterName)
                 )
                 {
-                    if (debug)
-                        Console.WriteLine(
-                            $"[DEBUG] Monster '{monsterName}' is blacklisted for ring usage"
-                        );
+
+                    Console.WriteLine(
+                        $"[DEBUG] Monster '{monsterName}' is blacklisted for ring usage"
+                    );
                     return;
                 }
                 int playerX,
@@ -1522,37 +1510,39 @@ class Program
             int sourceY = equip ? inventoryY : equipmentY;
             int destX = equip ? equipmentX : inventoryX;
             int destY = equip ? equipmentY : inventoryY;
-            if (debug)
-                Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} ring");
+            Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} ring");
             IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
             PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
-            Thread.Sleep(1);
+            Sleep(1);
             PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
-            Thread.Sleep(1);
+            Sleep(1);
             IntPtr destLParam = MakeLParam(destX, destY);
             PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
-            Thread.Sleep(1);
+            Sleep(1);
             PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
-            Thread.Sleep(1);
+            Sleep(1);
             if (equip)
             {
                 lastRingEquippedTargetId = currentTargetId;
                 isRingCurrentlyEquipped = true;
-                if (debug)
-                    Console.WriteLine(
-                        $"[DEBUG] Successfully equipped ring for target {currentTargetId}"
-                    );
+                Console.WriteLine(
+                    $"[DEBUG] Successfully equipped ring for target {currentTargetId}"
+                );
             }
             else
             {
                 isRingCurrentlyEquipped = false;
-                if (debug)
-                    Console.WriteLine($"[DEBUG] Successfully de-equipped ring");
+                Console.WriteLine($"[DEBUG] Successfully de-equipped ring");
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[DEBUG] Error toggling ring: {ex.Message}");
         }
+    }
+
+    static void Sleep(int miliseconds)
+    {
+        Thread.Sleep(miliseconds);
     }
 }
