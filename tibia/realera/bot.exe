@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 class Program
 {
     [DllImport("kernel32.dll")]
@@ -51,7 +52,8 @@ class Program
         public static int GetKeyCode(string keyName) =>
             KeyMap.ContainsKey(keyName) ? KeyMap[keyName] : -1;
     }
-    const int DEFAULT_HP_THRESHOLD = 75;
+    const int DEFAULT_HP_THRESHOLD = 50;
+    const int DEFAULT_BEEP_HP_THRESHOLD = 40;
     const int DEFAULT_MANA_THRESHOLD = -1;
     const string DEFAULT_HP_KEY_NAME = "F1";
     const string DEFAULT_MANA_KEY_NAME = "F2";
@@ -77,7 +79,7 @@ class Program
         follow = 0;
     static bool memoryReadActive = false;
     static bool programRunning = true;
-    static bool autoPotionActive = false;
+    static bool autoPotionActive = true;
     static bool isRecording = false;
     static bool isPlaying = false;
     static bool shouldRestartMemoryThread = false;
@@ -120,11 +122,17 @@ class Program
         Console.WriteLine($"Default Mana Key: {DEFAULT_MANA_KEY_NAME}");
         threadFlags["recording"] = false;
         threadFlags["playing"] = false;
-        threadFlags["autopot"] = false;
+        threadFlags["autopot"] = true;
+
+        // Initialize the sound system
+        InitializeSounds();
+
         if (!File.Exists(cordsFilePath))
         {
             SaveCoordinates();
         }
+
+        // Rest of the Main method unchanged
         string processName = "RealeraDX";
         while (programRunning)
         {
@@ -220,6 +228,7 @@ class Program
         memoryReadActive = false;
         threadFlags["recording"] = false;
         threadFlags["playing"] = false;
+        StopPositionAlertSound(); // Stop any playing alert sounds
         Console.WriteLine("Worker threads stopping...");
         Sleep(1000);
     }
@@ -323,6 +332,13 @@ class Program
                         RecordCoordinate(posX, posY, posZ);
                     }
                 }
+
+                // Check position distance if we have loaded coordinates
+                if (loadedCoords != null && loadedCoords.cords.Count > 0 && threadFlags["playing"])
+                {
+                    CheckPositionDistance(loadedCoords.cords);
+                }
+
                 Sleep(1);
             }
             catch (Exception ex)
@@ -334,6 +350,7 @@ class Program
         }
         Console.WriteLine("Memory reading thread exited");
     }
+
     static void AutoPotionThread()
     {
         Console.WriteLine("Auto-potion thread started");
@@ -357,6 +374,12 @@ class Program
                         Sleep(1);
                         continue;
                     }
+
+                    if (hpPercent <= DEFAULT_BEEP_HP_THRESHOLD)
+                    {
+                        StartPositionAlertSound();
+                    }
+
                     if (hpPercent <= DEFAULT_HP_THRESHOLD)
                     {
                         if ((now - lastHpActionTime).TotalMilliseconds >= thresholdms)
@@ -367,6 +390,10 @@ class Program
                             SendKeyPress(DEFAULT_HP_KEY);
                             lastHpActionTime = now.AddMilliseconds(random.Next(0, 100));
                         }
+                    }
+                    else
+                    {
+                        //StopPositionAlertSound();
                     }
                     if (manaPercent <= DEFAULT_MANA_THRESHOLD)
                     {
@@ -508,12 +535,18 @@ class Program
                     $"Auto-potions {(threadFlags["autopot"] ? "enabled" : "disabled")}"
                 );
                 break;
+            case ConsoleKey.S: // Add a key to manually stop position alert sound
+                StopPositionAlertSound();
+                Console.WriteLine("Position alert sound stopped manually.");
+                break;
             case ConsoleKey.Q:
                 programRunning = false;
                 memoryReadActive = false;
                 threadFlags["recording"] = false;
                 threadFlags["playing"] = false;
                 threadFlags["autopot"] = false;
+                // Make sure to stop any playing sounds
+                StopPositionAlertSound();
                 break;
         }
     }
@@ -1569,4 +1602,262 @@ class Program
     {
         Thread.Sleep(miliseconds);
     }
+
+    static CancellationTokenSource positionAlertCts = null;
+    static readonly object soundLock = new object();
+    static DateTime lastPositionAlertTime = DateTime.MinValue;
+    static readonly int POSITION_ALERT_COOLDOWN_SEC = 60; // One minute cooldown for position alerts
+    static readonly int MAX_DISTANCE_SQMS = 50; // Maximum allowed distance in sqms
+
+    // Add these Win32 API declarations for playing sounds
+    [DllImport("kernel32.dll")]
+    static extern bool Beep(int frequency, int duration);
+
+    // Alternative sound method if Beep doesn't work well enough
+    [DllImport("winmm.dll", SetLastError = true, CallingConvention = CallingConvention.Winapi)]
+    static extern bool PlaySound(string pszSound, IntPtr hmod, uint fdwSound);
+
+    // Sound flags for PlaySound API
+    const uint SND_FILENAME = 0x00020000;
+    const uint SND_ASYNC = 0x0001;
+    const uint SND_NODEFAULT = 0x0002;
+
+    // Sound frequencies and durations
+    const int CLICK_COMPLETED_FREQ = 800;
+    const int CLICK_COMPLETED_DURATION = 200;
+    const int POSITION_ALERT_FREQ = 1200;
+    const int POSITION_ALERT_DURATION = 500;
+
+    // Add this method to the Program class to check if sound files exist
+    static void InitializeSounds()
+    {
+        try
+        {
+            // Create sound for click around completion
+            string clickCompletedSoundPath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "click_completed.wav"
+            );
+
+            // Create sound for position alert
+            string positionAlertSoundPath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "position_alert.wav"
+            );
+
+            // Check if sound files exist
+            if (!File.Exists(clickCompletedSoundPath))
+            {
+                Console.WriteLine("Warning: click_completed.wav not found. Using system beep instead.");
+            }
+            else
+            {
+                Console.WriteLine("Found click_completed.wav");
+            }
+
+            if (!File.Exists(positionAlertSoundPath))
+            {
+                Console.WriteLine("Warning: position_alert.wav not found. Using system beep instead.");
+            }
+            else
+            {
+                Console.WriteLine("Found position_alert.wav");
+            }
+
+            Console.WriteLine("Sound system initialized successfully.");
+
+            // Test beep to verify sound capability
+            //Beep(800, 200);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error initializing sounds: {ex.Message}");
+        }
+    }
+
+    // Add this method to play the click completed sound
+    static void PlayClickCompletedSound()
+    {
+        try
+        {
+            string clickCompletedSoundPath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "click_completed.wav"
+            );
+
+            if (File.Exists(clickCompletedSoundPath))
+            {
+                // Play WAV file if it exists
+                bool success = PlaySound(clickCompletedSoundPath, IntPtr.Zero, SND_FILENAME | SND_ASYNC);
+                if (success)
+                {
+                    Console.WriteLine("[SOUND] Click around completed sound played from file.");
+                    return;
+                }
+            }
+
+            // Fall back to Beep if file doesn't exist or PlaySound failed
+            Beep(CLICK_COMPLETED_FREQ, CLICK_COMPLETED_DURATION);
+            Console.WriteLine("[SOUND] Click around completed beep played.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error playing click completed sound: {ex.Message}");
+            try
+            {
+                // Last resort fallback
+                Console.Beep(CLICK_COMPLETED_FREQ, CLICK_COMPLETED_DURATION);
+            }
+            catch
+            {
+                Console.WriteLine("All sound methods failed!");
+            }
+        }
+    }
+
+    // Add this method to start playing the position alert sound repeatedly
+    static void StartPositionAlertSound(int maxDurationSeconds = 60)
+    {
+        lock (soundLock)
+        {
+            // Check if we're already playing or if we're in cooldown period
+            if (positionAlertCts != null ||
+                (DateTime.Now - lastPositionAlertTime).TotalSeconds < POSITION_ALERT_COOLDOWN_SEC)
+            {
+                return;
+            }
+
+            Console.WriteLine($"[SOUND] Starting position alert sound (max {maxDurationSeconds} seconds).");
+            lastPositionAlertTime = DateTime.Now;
+
+            // Create a new cancellation token source
+            positionAlertCts = new CancellationTokenSource();
+            var token = positionAlertCts.Token;
+
+            // Get the path to position alert sound file
+            string positionAlertSoundPath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "position_alert.wav"
+            );
+            bool useWavFile = File.Exists(positionAlertSoundPath);
+
+            // Start a task to play the sound repeatedly
+            Task.Run(() =>
+            {
+                try
+                {
+                    DateTime startTime = DateTime.Now;
+                    while (!token.IsCancellationRequested &&
+                           (DateTime.Now - startTime).TotalSeconds < maxDurationSeconds)
+                    {
+                        try
+                        {
+                            if (useWavFile)
+                            {
+                                // Try to play the WAV file
+                                bool success = PlaySound(positionAlertSoundPath, IntPtr.Zero, SND_FILENAME | SND_ASYNC);
+                                if (!success)
+                                {
+                                    // Fall back to Beep if PlaySound failed
+                                    Beep(POSITION_ALERT_FREQ, POSITION_ALERT_DURATION);
+                                }
+                            }
+                            else
+                            {
+                                // Use Beep if no WAV file
+                                Beep(POSITION_ALERT_FREQ, POSITION_ALERT_DURATION);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error playing position alert sound: {ex.Message}");
+                            try
+                            {
+                                // Last resort fallback
+                                Console.Beep(POSITION_ALERT_FREQ, POSITION_ALERT_DURATION);
+                            }
+                            catch
+                            {
+                                Console.WriteLine("All sound methods failed!");
+                            }
+                        }
+
+                        // Wait before playing again
+                        Thread.Sleep(1500);
+                    }
+
+                    Console.WriteLine("[SOUND] Position alert sound stopped.");
+                }
+                catch (TaskCanceledException)
+                {
+                    Console.WriteLine("[SOUND] Position alert sound cancelled.");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error in position alert sound loop: {ex.Message}");
+                }
+                finally
+                {
+                    lock (soundLock)
+                    {
+                        positionAlertCts = null;
+                    }
+                }
+            }, token);
+        }
+    }
+
+    // Add this method to stop the position alert sound
+    static void StopPositionAlertSound()
+    {
+        lock (soundLock)
+        {
+            if (positionAlertCts != null)
+            {
+                positionAlertCts.Cancel();
+                positionAlertCts = null;
+                Console.WriteLine("[SOUND] Position alert sound cancelled.");
+            }
+        }
+    }
+
+    // Add this method to check if position is too far from any waypoint
+    static void CheckPositionDistance(List<Coordinate> waypoints)
+    {
+        if (waypoints == null || waypoints.Count == 0)
+        {
+            return;
+        }
+
+        int currentX, currentY, currentZ;
+        lock (memoryLock)
+        {
+            currentX = posX;
+            currentY = posY;
+            currentZ = posZ;
+        }
+
+        // Find the closest waypoint
+        int minDistance = int.MaxValue;
+        foreach (var waypoint in waypoints)
+        {
+            int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+            if (distance < minDistance)
+            {
+                minDistance = distance;
+            }
+        }
+
+        // If the closest waypoint is too far, start playing the alert
+        if (minDistance > MAX_DISTANCE_SQMS)
+        {
+            Console.WriteLine($"[WARNING] Position too far from any waypoint! Distance: {minDistance} sqm");
+            StartPositionAlertSound();
+        }
+        else
+        {
+            //StopPositionAlertSound();
+        }
+    }
+
 }
