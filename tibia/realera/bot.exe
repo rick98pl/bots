@@ -743,7 +743,7 @@ class Program
                     var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
 
                     if (debug) Console.WriteLine($"[DEBUG] Monster found: {monsterName} at X={monsterX}, Y={monsterY}, Z={monsterZ}");
-
+                    Thread.Sleep(1000);
                     // If target is blacklisted by ID, press ESC to cancel target and continue
                     if (blacklistedTargets.Contains(currentTargetId))
                     {
