@@ -749,13 +749,13 @@ class Program
                 if (previousTargetId != 0 && currentTargetId == 0)
                 {
 
-                    if (debug) Console.WriteLine("[DEBUG] Fight finished, de-equipping time ring");
-                    ToggleTimeRing(targetWindow, false); // De-equip time ring
-                    Thread.Sleep(100); // Small delay after de-equipping
+                    //if (debug) Console.WriteLine("[DEBUG] Fight finished, de-equipping time ring");
+                    ToggleRing(targetWindow, false); // De-equip time ring
+                    Thread.Sleep(1); // Small delay after de-equipping
 
                     if (debug) Console.WriteLine("[DEBUG] Fight finished, calling ClickAroundCharacter");
                     ClickAroundCharacter(targetWindow);
-                    Thread.Sleep(100); // Give some time for the click to register
+                    Thread.Sleep(1); // Give some time for the click to register
 
                     lock (memoryLock)
                     {
@@ -775,20 +775,20 @@ class Program
                 // If we have a target, check if it's within 5 sqm of our path
                 if (currentTargetId != 0)
                 {
-                    if(debug) Console.WriteLine("[DEBUG] Target found, equipping time ring");
-                    ToggleTimeRing(targetWindow, true); // Equip time ring
-                    Thread.Sleep(100); // Small delay after equipping
+                    //if(debug) Console.WriteLine("[DEBUG] Target found, equipping time ring");
+                    ToggleRing(targetWindow, true); // Equip time ring
+                    Thread.Sleep(1); // Small delay after equipping
 
                     var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
 
-                    if (debug) Console.WriteLine($"[DEBUG] Monster found: {monsterName} at X={monsterX}, Y={monsterY}, Z={monsterZ}");
-                    Thread.Sleep(1000);
+                    //if (debug) Console.WriteLine($"[DEBUG] Monster found: {monsterName} at X={monsterX}, Y={monsterY}, Z={monsterZ}");
+                    Thread.Sleep(1);
                     // If target is blacklisted by ID, press ESC to cancel target and continue
                     if (blacklistedTargets.Contains(currentTargetId))
                     {
                         if (debug) Console.WriteLine($"[DEBUG] Skipping blacklisted target ID: {currentTargetId}");
                         SendKeyPress(VK_ESCAPE); // Press ESC to cancel targeting
-                        Thread.Sleep(100);
+                        Thread.Sleep(1);
                         continue;
                     }
 
@@ -797,7 +797,7 @@ class Program
                     {
                         if (debug) Console.WriteLine($"[DEBUG] Skipping blacklisted monster: {monsterName}");
                         SendKeyPress(VK_ESCAPE); // Press ESC to cancel targeting
-                        Thread.Sleep(100);
+                        Thread.Sleep(1);
                         continue;
                     }
 
@@ -824,7 +824,7 @@ class Program
                 }
 
                 // Wait for results of F6 (target search)
-                Thread.Sleep(100);
+                Thread.Sleep(1);
 
                 lock (memoryLock)
                 {
@@ -842,7 +842,7 @@ class Program
                 if (debug) Console.WriteLine("[DEBUG] No target found, proceeding with movement");
 
                 // Wait a bit before moving (as requested)
-                Thread.Sleep(100);
+                Thread.Sleep(1);
 
                 Coordinate nextWaypoint = FindNextWaypoint(ref waypoints, currentX, currentY, currentZ, ref currentCoordIndex);
                 currentTarget = nextWaypoint;
@@ -872,7 +872,7 @@ class Program
                         MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypoint.X, nextWaypoint.Y);
 
                         // Wait for movement to complete
-                        Thread.Sleep(800);
+                        Thread.Sleep(200);
 
                         // Update current position
                         lock (memoryLock)
@@ -951,7 +951,7 @@ class Program
             catch (Exception ex)
             {
                 Console.WriteLine($"Error in path playback: {ex.Message}");
-                Thread.Sleep(1000);
+                Thread.Sleep(1);
             }
         }
 
@@ -1782,7 +1782,7 @@ class Program
     static bool isRingCurrentlyEquipped = false;
 
     // Improved ToggleTimeRing function with distance checking
-    static void ToggleTimeRing(IntPtr hWnd, bool equip)
+    static void ToggleRing(IntPtr hWnd, bool equip)
     {
         try
         {
@@ -1796,7 +1796,7 @@ class Program
             // For equipping: check if already equipped for this target
             if (equip && isRingCurrentlyEquipped && currentTargetId == lastRingEquippedTargetId)
             {
-                if (debug) Console.WriteLine($"[DEBUG] Ring already equipped for target {currentTargetId}");
+                //if (debug) Console.WriteLine($"[DEBUG] Ring already equipped for target {currentTargetId}");
                 return;
             }
 
@@ -1823,11 +1823,11 @@ class Program
                 // Only equip if target is within 2.5 sqm
                 if (distance > 2.5)
                 {
-                    if (debug) Console.WriteLine($"[DEBUG] Target too far ({distance:F1} sqm), not equipping ring");
+                    //if (debug) Console.WriteLine($"[DEBUG] Target too far ({distance:F1} sqm), not equipping ring");
                     return;
                 }
 
-                if (debug) Console.WriteLine($"[DEBUG] Target in range ({distance:F1} sqm), proceeding with ring equip");
+                //if (debug) Console.WriteLine($"[DEBUG] Target in range ({distance:F1} sqm), proceeding with ring equip");
             }
 
             int inventoryX = 940;
@@ -1841,7 +1841,7 @@ class Program
             int destX = equip ? equipmentX : inventoryX;
             int destY = equip ? equipmentY : inventoryY;
 
-            if (debug) Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} time ring");
+            //if (debug) Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} time ring");
 
             // 1. Move mouse to source position
             IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
@@ -1872,11 +1872,11 @@ class Program
                 isRingCurrentlyEquipped = false;
             }
 
-            if (debug) Console.WriteLine($"[DEBUG] Successfully {(equip ? "equipped" : "de-equipped")} time ring");
+            //if (debug) Console.WriteLine($"[DEBUG] Successfully {(equip ? "equipped" : "de-equipped")} time ring");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[DEBUG] Error toggling time ring: {ex.Message}");
+            Console.WriteLine($"[DEBUG] Error toggling ring: {ex.Message}");
         }
     }
 }
