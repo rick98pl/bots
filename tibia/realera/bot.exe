@@ -54,7 +54,7 @@ class Program
     }
     const int DEFAULT_HP_THRESHOLD = 50;
     const int DEFAULT_BEEP_HP_THRESHOLD = 30;
-    const int DEFAULT_MANA_THRESHOLD = -1;
+    const int DEFAULT_MANA_THRESHOLD = 70;
     const string DEFAULT_HP_KEY_NAME = "F1";
     const string DEFAULT_MANA_KEY_NAME = "F2";
     static int DEFAULT_HP_KEY => Keys.GetKeyCode(DEFAULT_HP_KEY_NAME);
@@ -265,6 +265,8 @@ class Program
     };
     static void MemoryReadingThread()
     {
+        DateTime lastDebugOutputTime = DateTime.MinValue;  // Declare as DateTime type
+        const double DEBUG_COOLDOWN_SECONDS = 1.5;
         Console.WriteLine("Memory reading thread started");
         while (memoryReadActive)
         {
@@ -330,6 +332,24 @@ class Program
                     if (threadFlags["recording"])
                     {
                         RecordCoordinate(posX, posY, posZ);
+                    }
+                }
+
+                lock (memoryLock)
+                {
+                    // Update the chase tracker with current position and target information
+                    chaseTracker.Update(posX, posY, posZ, targetId);
+
+                    // Debug output for monitoring chase status with cooldown
+                    if (debug && targetId != 0)
+                    {
+                        // Check if enough time has passed since the last debug output
+                        DateTime now = DateTime.Now;
+                        if ((now - lastDebugOutputTime).TotalSeconds >= DEBUG_COOLDOWN_SECONDS)
+                        {
+                            Console.WriteLine($"[DEBUG] In chase: targetId={targetId}, position=({posX},{posY},{posZ})");
+                            lastDebugOutputTime = now;
+                        }
                     }
                 }
 
@@ -581,12 +601,41 @@ class Program
             return BitConverter.ToInt32(buffer, 0);
         return 0;
     }
+    // Variables to track F6 key state
+    private static DateTime lastF6Press = DateTime.MinValue;
+    private static bool canPressF6 = true;
+    private static readonly TimeSpan F6Cooldown = TimeSpan.FromSeconds(1.5);
+
     static void SendKeyPress(int key)
     {
+        if (key == 0x75) // F6 key
+        {
+            DateTime currentTime = DateTime.Now;
+
+            if (!canPressF6 || (currentTime - lastF6Press) < F6Cooldown)
+            {
+                Console.WriteLine("F6 key blocked - cooldown active");
+                return;
+            }
+
+            Console.WriteLine("F6 key pressed - starting cooldown");
+            lastF6Press = currentTime;
+            canPressF6 = false;
+
+            System.Threading.Timer cooldownTimer = null;
+            cooldownTimer = new System.Threading.Timer((state) =>
+            {
+                canPressF6 = true;
+                Console.WriteLine("F6 key cooldown finished");
+                cooldownTimer?.Dispose();
+            }, null, F6Cooldown, TimeSpan.Zero);
+        }
+
         PostMessage(targetWindow, WM_KEYDOWN, (IntPtr)key, IntPtr.Zero);
         Sleep(random.Next(10, 25));
         PostMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
     }
+
     static void FindRealeraWindow(Process process)
     {
         EnumWindows(
@@ -631,17 +680,21 @@ class Program
         }
     }
     private static void MoveCharacterTowardsWaypoint(
-        int currentX,
-        int currentY,
-        int waypointX,
-        int waypointY
-    )
+    int currentX,
+    int currentY,
+    int waypointX,
+    int waypointY
+)
     {
         int diffX = waypointX - currentX;
         int diffY = waypointY - currentY;
-        bool tryXFirst = Math.Abs(diffX) > Math.Abs(diffY);
-        if (tryXFirst)
+
+        // Determine which direction to move first
+        bool moveXFirst = Math.Abs(diffX) >= Math.Abs(diffY);
+
+        if (moveXFirst)
         {
+            // Move in X direction first if it's farther
             if (diffX > 0)
             {
                 Console.WriteLine("[DEBUG] Moving EAST with arrow key");
@@ -651,21 +704,11 @@ class Program
             {
                 Console.WriteLine("[DEBUG] Moving WEST with arrow key");
                 SendKeyPress(VK_LEFT);
-            }
-            Sleep(150);
-            if (diffY > 0)
-            {
-                Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
-                SendKeyPress(VK_DOWN);
-            }
-            else if (diffY < 0)
-            {
-                Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
-                SendKeyPress(VK_UP);
             }
         }
         else
         {
+            // Move in Y direction first if it's farther
             if (diffY > 0)
             {
                 Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
@@ -676,23 +719,22 @@ class Program
                 Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
                 SendKeyPress(VK_UP);
             }
-            Sleep(150);
-            if (diffX > 0)
-            {
-                Console.WriteLine("[DEBUG] Moving EAST with arrow key");
-                SendKeyPress(VK_RIGHT);
-            }
-            else if (diffX < 0)
-            {
-                Console.WriteLine("[DEBUG] Moving WEST with arrow key");
-                SendKeyPress(VK_LEFT);
-            }
         }
+
+        // Only make one move per call to ensure step-by-step movement
+        // The function will be called again on the next loop iteration
     }
+
     static bool shouldClickAround = true;
     private static int previousTargetId = 0;
+    static ChasePathTracker chaseTracker = new ChasePathTracker();
+    static Coordinate previousChasePosition = null;
+    static bool isReturningFromChase = false;
+
+
     static void PlayCoordinates()
     {
+        //Thread.Sleep(1500);
         Console.WriteLine("Path playback starting...");
         string json = File.ReadAllText(cordsFilePath);
         loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
@@ -732,6 +774,23 @@ class Program
                 }
                 if (previousTargetId != 0 && currentTargetId == 0)
                 {
+                    lock (memoryLock)
+                    {
+                        // Force update the chase tracker with latest position after killing the monster
+                        chaseTracker.Update(posX, posY, posZ, targetId);
+                    }
+                    if (chaseTracker.ShouldReturnToStart())
+                    {
+                        Console.WriteLine("[DEBUG] Need to return to chase start position");
+
+                        // We don't need to do anything else here - the FindNextWaypoint method
+                        // will handle getting the return position and navigating there
+                    }
+                    else
+                    {
+                        Console.WriteLine("[DEBUG] No need to return to chase start position");
+                    }
+
                     ToggleRing(targetWindow, false);
                     Sleep(1);
 
@@ -760,6 +819,13 @@ class Program
                     Sleep(1);
                     var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
                     Sleep(1);
+
+                    if (previousTargetId == 0 && currentTargetId != 0)
+                    {
+                        previousChasePosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
+                        Console.WriteLine($"[DEBUG] Chase began at position: X={currentX}, Y={currentY}, Z={currentZ}");
+                    }
+
                     if (blacklistedTargets.Contains(currentTargetId))
                     {
 
@@ -788,15 +854,16 @@ class Program
                     {
                         currentTargetId = targetId;
                     }
-                    if (!string.IsNullOrEmpty(monsterName)){
+                    if (!string.IsNullOrEmpty(monsterName))
+                    {
                         shouldClickAround = true;
                     }
-                        lock (memoryLock)
-                        {
-                            currentX = posX;
-                            currentY = posY;
-                            currentZ = posZ;
-                        }
+                    lock (memoryLock)
+                    {
+                        currentX = posX;
+                        currentY = posY;
+                        currentZ = posZ;
+                    }
                     continue;
                 }
                 lock (memoryLock)
@@ -810,7 +877,7 @@ class Program
                     SendKeyPress(VK_F6);
                     Sleep(256); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no mnoster
                 }
-                
+
                 lock (memoryLock)
                 {
                     currentTargetId = targetId;
@@ -837,78 +904,105 @@ class Program
                 int distanceX = Math.Abs(nextWaypoint.X - currentX);
                 int distanceY = Math.Abs(nextWaypoint.Y - currentY);
                 int totalDistance = distanceX + distanceY;
-                if (distanceX > 5 || distanceY > 5)
+                //if (distanceX > 5 || distanceY > 5)
+                //{
+
+                //    Console.WriteLine(
+                //        $"[DEBUG] Waypoint too far to click: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                //    );
+
+                //    Console.WriteLine(
+                //        $"[DEBUG] Current position: X={currentX}, Y={currentY}, Z={currentZ}"
+                //    );
+
+                //    Console.WriteLine($"[DEBUG] Distance: X={distanceX}, Y={distanceY}");
+                //    int maxMoves = 5;
+                //    int movesMade = 0;
+                //    while ((distanceX > 5 || distanceY > 5) && movesMade < maxMoves)
+                //    {
+                //        MoveCharacterTowardsWaypoint(
+                //            currentX,
+                //            currentY,
+                //            nextWaypoint.X,
+                //            nextWaypoint.Y
+                //        );
+                //        Sleep(150);
+                //        lock (memoryLock)
+                //        {
+                //            currentX = posX;
+                //            currentY = posY;
+                //            currentZ = posZ;
+                //        }
+                //        distanceX = Math.Abs(nextWaypoint.X - currentX);
+                //        distanceY = Math.Abs(nextWaypoint.Y - currentY);
+
+                //        Console.WriteLine(
+                //            $"[DEBUG] After move #{movesMade + 1}, new position: X={currentX}, Y={currentY}"
+                //        );
+
+                //        Console.WriteLine(
+                //            $"[DEBUG] New distance: X={distanceX}, Y={distanceY}"
+                //        );
+                //        movesMade++;
+                //        if (distanceX <= 5 && distanceY <= 5)
+                //        {
+
+                //            Console.WriteLine("[DEBUG] Now within clickable range");
+                //            break;
+                //        }
+                //        if (movesMade % 2 == 0)
+                //        {
+
+                //            Console.WriteLine("[DEBUG] Switching movement priority");
+                //        }
+                //    }
+                //    if (distanceX > 5 || distanceY > 5)
+                //    {
+
+                //        Console.WriteLine(
+                //            "[DEBUG] Still too far after arrow movement, finding a new waypoint"
+                //        );
+                //        currentCoordIndex = FindClosestWaypointIndex(
+                //            waypoints,
+                //            currentX,
+                //            currentY,
+                //            currentZ
+                //        );
+                //        continue;
+                //    }
+                //}
+                // Check condition before continuing with chase return movement
+                if (isReturningFromChase)
                 {
+                    // First check if we're already close to a waypoint
+                    int closestIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+                    Coordinate closestWaypoint = waypoints[closestIndex];
+                    int distanceToWaypointX = Math.Abs(closestWaypoint.X - currentX);
+                    int distanceToWaypointY = Math.Abs(closestWaypoint.Y - currentY);
 
-                    Console.WriteLine(
-                        $"[DEBUG] Waypoint too far to click: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
-                    );
-
-                    Console.WriteLine(
-                        $"[DEBUG] Current position: X={currentX}, Y={currentY}, Z={currentZ}"
-                    );
-
-                    Console.WriteLine($"[DEBUG] Distance: X={distanceX}, Y={distanceY}");
-                    int maxMoves = 5;
-                    int movesMade = 0;
-                    while ((distanceX > 5 || distanceY > 5) && movesMade < maxMoves)
+                    // If we're now close to a waypoint, stop returning from chase
+                    if (distanceToWaypointX < 5 && distanceToWaypointY < 5)
                     {
-                        MoveCharacterTowardsWaypoint(
-                            currentX,
-                            currentY,
-                            nextWaypoint.X,
-                            nextWaypoint.Y
-                        );
-                        Sleep(150);
-                        lock (memoryLock)
-                        {
-                            currentX = posX;
-                            currentY = posY;
-                            currentZ = posZ;
-                        }
-                        distanceX = Math.Abs(nextWaypoint.X - currentX);
-                        distanceY = Math.Abs(nextWaypoint.Y - currentY);
+                        Console.WriteLine($"[DEBUG] While returning from chase, found close waypoint (dx={distanceToWaypointX}, dy={distanceToWaypointY}), stopping return");
+                        chaseTracker.CompleteReturn();
+                        isReturningFromChase = false;
 
-                        Console.WriteLine(
-                            $"[DEBUG] After move #{movesMade + 1}, new position: X={currentX}, Y={currentY}"
-                        );
-
-                        Console.WriteLine(
-                            $"[DEBUG] New distance: X={distanceX}, Y={distanceY}"
-                        );
-                        movesMade++;
-                        if (distanceX <= 5 && distanceY <= 5)
-                        {
-
-                            Console.WriteLine("[DEBUG] Now within clickable range");
-                            break;
-                        }
-                        if (movesMade % 2 == 0)
-                        {
-
-                            Console.WriteLine("[DEBUG] Switching movement priority");
-                        }
-                    }
-                    if (distanceX > 5 || distanceY > 5)
-                    {
-
-                        Console.WriteLine(
-                            "[DEBUG] Still too far after arrow movement, finding a new waypoint"
-                        );
-                        currentCoordIndex = FindClosestWaypointIndex(
-                            waypoints,
-                            currentX,
-                            currentY,
-                            currentZ
-                        );
+                        // Skip the movement code below and continue with the next loop iteration
+                        // to allow normal waypoint selection on the next cycle
                         continue;
                     }
+
+                    Console.WriteLine("[DEBUG] Using arrow keys to return from chase");
+                    // Move step by step with arrow keys instead of clicking
+                    MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypoint.X, nextWaypoint.Y);
+                    Sleep(250); // Give the game time to process the movement
+                    continue;   // Skip the normal waypoint clicking
                 }
                 Console.WriteLine(
                     $"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
                 );
                 bool clickSuccess = ClickWaypoint(nextWaypoint);
-                Sleep(900);
+                Sleep(2500);
                 if (clickSuccess)
                 {
                     int followStatus;
@@ -966,15 +1060,72 @@ class Program
         }
         return closestIndex;
     }
+
+    // Add these variables at the top of the class with other settings
+    static bool waypointRandomizationEnabled = true; // Flag to enable/disable waypoint randomization
+    static int randomizationRange = 1; // Maximum squares to randomize in each direction
+
+    // Then return the result (which might be randomized)
+
     static Coordinate FindNextWaypoint(
-      ref List<Coordinate> waypoints,
-      int currentX,
-      int currentY,
-      int currentZ,
-      ref int currentIndex
-  )
+    ref List<Coordinate> waypoints,
+    int currentX,
+    int currentY,
+    int currentZ,
+    ref int currentIndex
+)
     {
         Console.WriteLine("\n=== FIND NEXT WAYPOINT DEBUG ===");
+
+        // First, check if we should return from chase
+        Coordinate returnPosition = chaseTracker.GetReturnPosition();
+        if (chaseTracker.ShouldReturnToStart())
+        {
+            // Check if we're already close to the nearest waypoint
+            int closestIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+            Coordinate closestWaypoint = waypoints[closestIndex];
+            int distanceToWaypointX = Math.Abs(closestWaypoint.X - currentX);
+            int distanceToWaypointY = Math.Abs(closestWaypoint.Y - currentY);
+
+            // If we're already close to a waypoint, reset chase state and continue normal pathing
+            if (distanceToWaypointX < 5 && distanceToWaypointY < 5)
+            {
+                Console.WriteLine($"[DEBUG] Already close to waypoint (dx={distanceToWaypointX}, dy={distanceToWaypointY}), resetting chase state");
+                chaseTracker.CompleteReturn();
+                isReturningFromChase = false;
+
+                // Continue with normal waypoint selection below
+            }
+            else if (returnPosition != null)
+            {
+                Console.WriteLine($"[DEBUG] Returning to chase start position: X={returnPosition.X}, Y={returnPosition.Y}, Z={returnPosition.Z}");
+
+                // Check if we're already close to the return position
+                int distanceX = Math.Abs(returnPosition.X - currentX);
+                int distanceY = Math.Abs(returnPosition.Y - currentY);
+
+                if (distanceX <= 1 && distanceY <= 1)
+                {
+                    Console.WriteLine("[DEBUG] Reached chase start position, resuming normal pathing");
+                    chaseTracker.CompleteReturn();
+                    isReturningFromChase = false;
+                }
+                else
+                {
+                    // We're still returning to start position
+                    isReturningFromChase = true;
+                    return returnPosition;
+                }
+            }
+            else
+            {
+                // Something went wrong, reset the chase state
+                Console.WriteLine("[DEBUG] Chase return position is null, resetting chase state");
+                chaseTracker.CompleteReturn();
+                isReturningFromChase = false;
+            }
+        }
+
         Console.WriteLine($"Current position: X={currentX}, Y={currentY}, Z={currentZ}");
         Console.WriteLine($"Current index: {currentIndex}");
         Console.WriteLine($"Total waypoints: {waypoints.Count}");
@@ -1082,16 +1233,68 @@ class Program
         bestIndex = Math.Max(0, Math.Min(waypoints.Count - 1, bestIndex));
         currentIndex = bestIndex;
         Coordinate result = waypoints[bestIndex];
+
+        // Apply randomization to the waypoint if enabled
+        if (waypointRandomizationEnabled)
+        {
+            Coordinate originalResult = result;
+
+            // Add random variation between -randomizationRange and +randomizationRange
+            int randomX = result.X + random.Next(-randomizationRange, randomizationRange + 1);
+            int randomY = result.Y + random.Next(-randomizationRange, randomizationRange + 1);
+
+            int deltaX = Math.Abs(randomX - currentX);
+            int deltaY = Math.Abs(randomY - currentY);
+
+            if (deltaX <= 5 && deltaY <= 5)
+            {
+                result = new Coordinate
+                {
+                    X = randomX,
+                    Y = randomY,
+                    Z = result.Z // Keep the same Z coordinate (level)
+                };
+
+                Console.WriteLine($"  RANDOMIZED WAYPOINT: Original({originalResult.X},{originalResult.Y}) → Random({result.X},{result.Y})");
+            }
+            else
+            {
+                Console.WriteLine($"  RANDOMIZATION REJECTED: Random({randomX},{randomY}) exceeds 5-unit limit from current position({currentX},{currentY})");
+                // Keep the original result
+            }
+
+            result = new Coordinate
+            {
+                X = randomX,
+                Y = randomY,
+                Z = result.Z // Keep the same Z coordinate (level)
+            };
+
+            
+
+            Console.WriteLine($"  RANDOMIZED WAYPOINT: Original({originalResult.X},{originalResult.Y}) → Random({result.X},{result.Y})");
+        }
+
         Console.WriteLine(
             $"Final choice: waypoint[{bestIndex}]: X={result.X}, Y={result.Y}, Z={result.Z}"
         );
         Console.WriteLine("=== END FIND NEXT WAYPOINT DEBUG ===\n");
         return result;
     }
+
     static bool ClickWaypoint(Coordinate target)
     {
         try
         {
+            bool isChaseReturnPoint = chaseTracker.ShouldReturnToStart() &&
+                                 target.X == chaseTracker.GetReturnPosition().X &&
+                                 target.Y == chaseTracker.GetReturnPosition().Y;
+
+            if (isChaseReturnPoint)
+            {
+                Console.WriteLine("[DEBUG] Clicking waypoint that is a chase return position");
+            }
+
             int pixelSize = 58;
             int currentX,
                 currentY;
@@ -1527,7 +1730,7 @@ class Program
                         processHandle,
                         IntPtr.Add(monsterInstancePtr, 0x0030)
                     );
-                    if(targetId == 0)
+                    if (targetId == 0)
                     {
                         monsterName = "";
                     }
@@ -1885,4 +2088,264 @@ class Program
         }
     }
 
+    class ChasePathTracker
+    {
+        private bool isChasing = false;
+        private Coordinate chaseStartPosition = null;
+        private List<Coordinate> chasePath = new List<Coordinate>();
+        private int lastTargetId = 0;
+        private bool needToReturnToStart = false;
+        private object chaseLock = new object();
+        private static List<Coordinate> waypoints = null; // Store reference to waypoints
+
+        // Fields for delayed display
+        private Dictionary<string, DateTime> messageTypeTimes = new Dictionary<string, DateTime>();
+        private const double DISPLAY_COOLDOWN_SECONDS = 1.5;
+
+        // Message categories
+        private const string MSG_CHASE_START = "CHASE_START";
+        private const string MSG_TARGET_CHANGE = "TARGET_CHANGE";
+        private const string MSG_DISTANCE_EXCEED = "DISTANCE_EXCEED";
+        private const string MSG_DISTANCE_OK = "DISTANCE_OK";
+        private const string MSG_WAYPOINT_INFO = "WAYPOINT_INFO";
+        private const string MSG_NO_WAYPOINTS = "NO_WAYPOINTS";
+
+        public void Update(int currentX, int currentY, int currentZ, int targetId)
+        {
+            lock (chaseLock)
+            {
+                // Start of chase detection (was not chasing, now is chasing)
+                if (!isChasing && targetId != 0)
+                {
+                    StartChase(currentX, currentY, currentZ, targetId);
+                }
+                // During chase, record path
+                else if (isChasing && targetId != 0)
+                {
+                    // Record position if we moved
+                    RecordPosition(currentX, currentY, currentZ);
+
+                    // Handle if target monster changed during chase
+                    if (targetId != lastTargetId)
+                    {
+                        string message = $"[DEBUG] Target changed during chase from {lastTargetId} to {targetId}";
+                        DisplayWithCooldown(MSG_TARGET_CHANGE, message);
+                        lastTargetId = targetId;
+                    }
+                }
+                // End of chase detection (was chasing, now killed monster)
+                else if (isChasing && targetId == 0 && lastTargetId != 0)
+                {
+                    // Get the waypoints from loadedCoords if available
+                    if (Program.loadedCoords != null && Program.loadedCoords.cords.Count > 0)
+                    {
+                        waypoints = Program.loadedCoords.cords;
+                        EndChase(currentX, currentY, currentZ, waypoints);
+                    }
+                    else
+                    {
+                        // Fallback if waypoints not available
+                        EndChaseSimple(currentX, currentY, currentZ);
+                    }
+                }
+            }
+        }
+
+        private void StartChase(int x, int y, int z, int targetId)
+        {
+            string message = $"[DEBUG] Starting chase of monster ID: {targetId}";
+            DisplayWithCooldown(MSG_CHASE_START, message);
+
+            isChasing = true;
+            lastTargetId = targetId;
+            chaseStartPosition = new Coordinate { X = x, Y = y, Z = z };
+            chasePath.Clear();
+            // Add starting position to path
+            chasePath.Add(new Coordinate { X = x, Y = y, Z = z });
+        }
+
+        private void RecordPosition(int x, int y, int z)
+        {
+            // Only add to path if position changed
+            if (chasePath.Count == 0 ||
+                chasePath[chasePath.Count - 1].X != x ||
+                chasePath[chasePath.Count - 1].Y != y ||
+                chasePath[chasePath.Count - 1].Z != z)
+            {
+                chasePath.Add(new Coordinate { X = x, Y = y, Z = z });
+
+                // Optional: Limit path length to prevent memory issues
+                const int MAX_PATH_LENGTH = 1000;
+                if (chasePath.Count > MAX_PATH_LENGTH)
+                {
+                    chasePath.RemoveAt(0);
+                }
+            }
+        }
+
+        // Original simple method as fallback
+        private void EndChaseSimple(int currentX, int currentY, int currentZ)
+        {
+            // Check if we're far from the start position
+            int distanceX = Math.Abs(currentX - chaseStartPosition.X);
+            int distanceY = Math.Abs(currentY - chaseStartPosition.Y);
+
+            if (distanceX > 5 || distanceY > 5)
+            {
+                string message = $"[DEBUG] Distance threshold exceeded (X:{distanceX}, Y:{distanceY}), need to return to start position";
+                DisplayWithCooldown(MSG_DISTANCE_EXCEED, message);
+                needToReturnToStart = true;
+            }
+            else
+            {
+                string message = $"[DEBUG] Distance within threshold (X:{distanceX}, Y:{distanceY}), no need to return";
+                DisplayWithCooldown(MSG_DISTANCE_OK, message);
+                // Reset chase state without returning
+                ResetChaseState();
+            }
+        }
+
+        // New method that checks against closest waypoint
+        private void EndChase(int currentX, int currentY, int currentZ, List<Coordinate> waypoints)
+        {
+            // Find the closest waypoint to current position
+            int closestIndex = -1;
+            int minDistance = int.MaxValue;
+
+            for (int i = 0; i < waypoints.Count; i++)
+            {
+                var waypoint = waypoints[i];
+                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+                if (distance < minDistance)
+                {
+                    minDistance = distance;
+                    closestIndex = i;
+                }
+            }
+
+            // If closest waypoint is far away, need to return to chase start position
+            int distanceX = 0;
+            int distanceY = 0;
+
+            if (closestIndex >= 0)
+            {
+                distanceX = Math.Abs(currentX - waypoints[closestIndex].X);
+                distanceY = Math.Abs(currentY - waypoints[closestIndex].Y);
+
+                // Check if already close to a waypoint
+                if (distanceX < 5 && distanceY < 5)
+                {
+                    string message = $"[DEBUG] Already close to waypoint (dx={distanceX}, dy={distanceY}), no need to return";
+                    DisplayWithCooldown(MSG_DISTANCE_OK, message);
+                    // Reset chase state without returning
+                    ResetChaseState();
+                    return;
+                }
+
+                // Otherwise, check against thresholds
+                if (distanceX > 5 || distanceY > 5)
+                {
+                    string message1 = $"[DEBUG] Distance to closest waypoint exceeded threshold (X:{distanceX}, Y:{distanceY}), need to return to start position";
+                    DisplayWithCooldown(MSG_DISTANCE_EXCEED, message1);
+
+                    string message2 = $"[DEBUG] Current position: ({currentX},{currentY}), Closest waypoint: ({waypoints[closestIndex].X},{waypoints[closestIndex].Y})";
+                    DisplayWithCooldown(MSG_WAYPOINT_INFO, message2);
+
+                    needToReturnToStart = true;
+                }
+                else
+                {
+                    string message = $"[DEBUG] Distance to closest waypoint within threshold (X:{distanceX}, Y:{distanceY}), no need to return";
+                    DisplayWithCooldown(MSG_DISTANCE_OK, message);
+                    // Reset chase state without returning
+                    ResetChaseState();
+                }
+            }
+            else
+            {
+                // No waypoints available, use original logic with chase start position
+                distanceX = Math.Abs(currentX - chaseStartPosition.X);
+                distanceY = Math.Abs(currentY - chaseStartPosition.Y);
+
+                if (distanceX > 5 || distanceY > 5)
+                {
+                    string message = $"[DEBUG] No waypoints found, distance to chase start exceeded threshold (X:{distanceX}, Y:{distanceY}), need to return to start position";
+                    DisplayWithCooldown(MSG_NO_WAYPOINTS, message);
+                    needToReturnToStart = true;
+                }
+                else
+                {
+                    string message = $"[DEBUG] No waypoints found, distance within threshold (X:{distanceX}, Y:{distanceY}), no need to return";
+                    DisplayWithCooldown(MSG_NO_WAYPOINTS, message);
+                    ResetChaseState();
+                }
+            }
+        }
+
+        public bool ShouldReturnToStart()
+        {
+            lock (chaseLock)
+            {
+                return needToReturnToStart;
+            }
+        }
+
+        public Coordinate GetReturnPosition()
+        {
+            lock (chaseLock)
+            {
+                return chaseStartPosition;
+            }
+        }
+
+        public void CompleteReturn()
+        {
+            lock (chaseLock)
+            {
+                ResetChaseState();
+            }
+        }
+
+        private void ResetChaseState()
+        {
+            isChasing = false;
+            needToReturnToStart = false;
+            lastTargetId = 0;
+            // Keep chaseStartPosition and chasePath for debugging if needed
+        }
+
+        public List<Coordinate> GetChasePath()
+        {
+            lock (chaseLock)
+            {
+                return new List<Coordinate>(chasePath);
+            }
+        }
+
+        // Improved DisplayWithCooldown that uses message categories instead of actual messages
+        private void DisplayWithCooldown(string messageType, string message)
+        {
+            DateTime now = DateTime.Now;
+
+            // Check if this message type is on cooldown
+            if (!messageTypeTimes.ContainsKey(messageType) ||
+                (now - messageTypeTimes[messageType]).TotalSeconds >= DISPLAY_COOLDOWN_SECONDS)
+            {
+                // Display the message
+                Console.WriteLine(message);
+
+                // Update the last display time for this message type
+                messageTypeTimes[messageType] = now;
+            }
+        }
+
+        // Public method to display a message with a specific category
+        public void DisplayMessage(string messageType, string message)
+        {
+            lock (chaseLock)
+            {
+                DisplayWithCooldown(messageType, message);
+            }
+        }
+    }
 }
