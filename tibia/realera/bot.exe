@@ -2436,8 +2436,8 @@ class Program
     static int lastPositionY = 0;
     static bool isPlayerStuck = false;
     static readonly TimeSpan TARGET_BLACKLIST_DURATION = TimeSpan.FromSeconds(30);
-    static readonly int MAX_MONSTER_DISTANCE = 3; // Maximum allowed distance in sqm
-    static readonly int STUCK_DETECTION_TIME_MS = 1000; // Time to consider player stuck
+    static readonly int MAX_MONSTER_DISTANCE = 2; // Maximum allowed distance in sqm
+    static readonly int STUCK_DETECTION_TIME_MS = 2300; // Time to consider player stuck
 
     // Add this method to check if a target ID is blacklisted
     static bool IsTargetBlacklisted(int targetId)
