@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System;
 class Program
 {
     [DllImport("kernel32.dll")]
@@ -926,7 +927,7 @@ class Program
                             nextWaypoint.X,
                             nextWaypoint.Y
                         );
-                        Sleep(150);
+                        Sleep(250);
                         lock (memoryLock)
                         {
                             currentX = posX;
@@ -1002,26 +1003,86 @@ class Program
                     $"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
                 );
                 bool clickSuccess = ClickWaypoint(nextWaypoint);
-                Sleep(2500);
+                //Sleep(2500);
+                Console.WriteLine(
+                    $"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                );
+
+                // Remove the Sleep(2500) and replace with this destination-checking code
                 if (clickSuccess)
                 {
-                    int followStatus;
+                    const int wp_DISTANCE_THRESHOLD = 1; // 2 sqm threshold
+                    const int wp_MAX_WAIT_TIME_MS = 4000; // 10 seconds max wait time
+
+                    DateTime wp_startTime = DateTime.Now;
+                    bool wp_reachedDestination = false;
+
+                    Console.WriteLine("[DEBUG] Waiting for character to reach destination...");
+
+                    while (DateTime.Now.Subtract(wp_startTime).TotalMilliseconds < wp_MAX_WAIT_TIME_MS)
+                    {
+                        // Check if in combat
+                        int wp_followStatus;
+                        int wp_currentTargetId;
+                        int wp_currentX, wp_currentY, wp_currentZ;
+                        lock (memoryLock)
+                        {
+                            wp_followStatus = follow;
+                            wp_currentTargetId = targetId;
+                            wp_currentX = posX;
+                            wp_currentY = posY;
+                            wp_currentZ = posZ;
+                        }
+
+                        if (wp_currentTargetId != 0)
+                        {
+                            //Console.WriteLine("[DEBUG] Combat detected while moving, stopping wait");
+                            break; // Break the wait loop if combat starts
+                        }
+
+                        // Calculate current distance to target
+                        int wp_currentDiffX = Math.Abs(nextWaypoint.X - wp_currentX);
+                        int wp_currentDiffY = Math.Abs(nextWaypoint.Y - wp_currentY);
+                        int wp_totalDistance = wp_currentDiffX + wp_currentDiffY;
+
+                        // Occasionally print distance (to avoid log spam)
+                        if (DateTime.Now.Millisecond < 100)
+                        {
+                            //Console.WriteLine($"[DEBUG] Current distance to target: {wp_totalDistance} sqm");
+                        }
+
+                        // Check if we've reached the destination
+                        if (wp_totalDistance <= wp_DISTANCE_THRESHOLD)
+                        {
+                            wp_reachedDestination = true;
+                            //Console.WriteLine($"[DEBUG] Reached destination (distance: {wp_totalDistance} sqm)");
+                            break;
+                        }
+
+                        // No Sleep here - just check as fast as possible
+                    }
+
+                    if (!wp_reachedDestination)
+                    {
+                        //Console.WriteLine("[DEBUG] Timed out waiting for destination");
+                    }
+
                     lock (memoryLock)
                     {
-                        followStatus = follow;
+
                         currentTargetId = targetId;
                     }
                     if (currentTargetId == 0)
                     {
                         SendKeyPress(VK_F6);
-                        Sleep(1); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no mnoster
+                        // Keep the crucial Sleep(1) as you mentioned
+                        Sleep(1); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no monster
                         lock (memoryLock)
                         {
                             currentTargetId = targetId;
                         }
                         if (currentTargetId != 0)
                         {
-
                             Console.WriteLine(
                                 "[DEBUG] Target found after movement, switching to combat"
                             );
@@ -1029,7 +1090,6 @@ class Program
                         }
                     }
                 }
-                Sleep(1);
             }
             catch (Exception ex)
             {
