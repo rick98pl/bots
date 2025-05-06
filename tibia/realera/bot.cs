@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System;
+using System.Buffers.Text;
 class Program
 {
     [DllImport("kernel32.dll")]
@@ -117,6 +118,7 @@ class Program
     static Coordinate currentTarget = null;
     static bool debug = true;
     static int debugTime = 2;
+
     static void Main()
     {
         Console.WriteLine($"Default HP Key: {DEFAULT_HP_KEY_NAME}");
@@ -193,6 +195,13 @@ class Program
             FindRealeraWindow(selectedProcess);
             processHandle = OpenProcess(PROCESS_WM_READ, false, selectedProcess.Id);
             moduleBase = selectedProcess.MainModule.BaseAddress;
+
+            GetClientRect(targetWindow, out RECT windowRect);
+            int windowHeight = windowRect.Bottom - windowRect.Top;
+            Console.WriteLine($"[DEBUG] Detected window height: {windowHeight}px");
+            smallWindow = windowHeight < 1200;
+            Console.WriteLine($"[DEBUG] Using {(smallWindow ? "small window (1080p)" : "large window (1440p)")} settings");
+
             StartWorkerThreads();
             while (memoryReadActive && !shouldRestartMemoryThread)
             {
@@ -605,7 +614,7 @@ class Program
     // Variables to track F6 key state
     private static DateTime lastF6Press = DateTime.MinValue;
     private static bool canPressF6 = true;
-    private static readonly TimeSpan F6Cooldown = TimeSpan.FromSeconds(1.5);
+    private static readonly TimeSpan F6Cooldown = TimeSpan.FromSeconds(0.6);
 
     static void SendKeyPress(int key)
     {
@@ -745,6 +754,7 @@ class Program
     static void PlayCoordinates()
     {
         //Thread.Sleep(1500);
+        UpdateUIPositions();
         Console.WriteLine("Path playback starting...");
         string json = File.ReadAllText(cordsFilePath);
         loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
@@ -1166,7 +1176,7 @@ class Program
     }
 
     // Add these variables at the top of the class with other settings
-    static bool waypointRandomizationEnabled = false; // Flag to enable/disable waypoint randomization
+    static bool waypointRandomizationEnabled = true; // Flag to enable/disable waypoint randomization
     static int randomizationRange = 1; // Maximum squares to randomize in each direction
 
     // Then return the result (which might be randomized)
@@ -1385,6 +1395,75 @@ class Program
         Console.WriteLine("=== END FIND NEXT WAYPOINT DEBUG ===\n");
         return result;
     }
+    static bool smallWindow = true;
+    static bool previousSmallWindowValue = true; // Track the previous state
+
+    static int pixelSize = smallWindow ? 38 : 58;
+    static int baseYOffset = smallWindow ? 260 : 300;
+    static int inventoryX = smallWindow ? 620 : 940;
+    static int inventoryY = 65;
+    static int equipmentX = smallWindow ? 800 : 1115;
+    static int equipmentY = 150;
+    static int secondSlotBpX = smallWindow ? 850 : 1165;
+    static int secondSLotBpY = 250;
+    static (int, int)[] normalCoordinates = new (int, int)[]
+    {
+        (1126, 325),
+        (1165, 325),
+        (1203, 325),
+        (1236, 325),
+        (1126, 340),
+        (1165, 340),
+        (1203, 340),
+        (1236, 340)
+    };
+
+    static (int, int)[] smallCoordinates = new (int, int)[]
+    {
+        (800, 340),  
+        (800+pixelSize, 340),
+        (800+2*pixelSize, 340),
+        (800+3*pixelSize, 340),
+        (800, 380),
+        (800+pixelSize, 380),
+        (800+2*pixelSize, 380),
+        (800+3*pixelSize, 380)
+    };
+    static (int, int)[] GetCorspeFoodCoordinates()
+    {
+        return smallWindow ? smallCoordinates : normalCoordinates;
+    }
+
+    static void UpdateUIPositions()
+    {
+        GetClientRect(targetWindow, out RECT windowRect);
+        int windowHeight = windowRect.Bottom - windowRect.Top;
+        Console.WriteLine($"[DEBUG] Detected window height: {windowHeight}px");
+        smallWindow = windowHeight < 1200;
+        Console.WriteLine($"[DEBUG] Using {(smallWindow ? "small window (1080p)" : "large window (1440p)")} settings");
+
+        bool valueChanged = (previousSmallWindowValue != smallWindow);
+        previousSmallWindowValue = smallWindow;
+
+        pixelSize = smallWindow ? 38 : 58;
+        baseYOffset = smallWindow ? 260 : 300;
+        inventoryX = smallWindow ? 620 : 940;
+        inventoryY = 65;
+        equipmentX = smallWindow ? 800 : 1115;
+        equipmentY = 150;
+        secondSlotBpX = smallWindow ? 850 : 1165;
+        secondSLotBpY = 250;
+
+        {
+            Console.WriteLine($"[DEBUG] Window size changed to: {(smallWindow ? "small (1080p)" : "large (1440p)")}");
+            Console.WriteLine($"[DEBUG] UI positions updated:");
+            Console.WriteLine($"  - Pixel size: {pixelSize}");
+            Console.WriteLine($"  - Base Y Offset: {baseYOffset}");
+            Console.WriteLine($"  - Inventory position: ({inventoryX},{inventoryY})");
+            Console.WriteLine($"  - Equipment position: ({equipmentX},{equipmentY})");
+            Console.WriteLine($"  - Second slot position: ({secondSlotBpX},{secondSLotBpY})");
+        }
+    }
 
     static bool ClickWaypoint(Coordinate target)
     {
@@ -1399,7 +1478,7 @@ class Program
                 Console.WriteLine("[DEBUG] Clicking waypoint that is a chase return position");
             }
 
-            int pixelSize = 58;
+            
             int currentX,
                 currentY;
             lock (memoryLock)
@@ -1409,7 +1488,12 @@ class Program
             }
             GetClientRect(targetWindow, out RECT rect);
             int baseX = (rect.Right - rect.Left) / 2 - 186;
-            int baseY = (rect.Bottom - rect.Top) / 2 - 300;
+            int baseY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
+
+            //POINT screenPoint = new POINT { X = baseX, Y = baseY };
+            //ClientToScreen(targetWindow, ref screenPoint);
+           // SetCursorPos(screenPoint.X, screenPoint.Y);
+
             int diffX = target.X - currentX;
             int diffY = target.Y - currentY;
             int targetX = baseX + (diffX * pixelSize);
@@ -1519,17 +1603,7 @@ class Program
     }
     static void CorpseEatFood(IntPtr hWnd)
     {
-        (int x, int y)[] locations = new (int, int)[]
-        {
-            (1126, 325),
-            (1165, 325),
-            (1203, 325),
-            (1236, 325),
-            (1126, 340),
-            (1165, 340),
-            (1203, 340),
-            (1236, 340)
-        };
+        (int x, int y)[] locations = GetCorspeFoodCoordinates();
         GetClientRect(hWnd, out RECT rect);
         if (rect.Right < 1237 || rect.Bottom < 319)
         {
@@ -1550,7 +1624,8 @@ class Program
     }
     static void ClickSecondSlotInBackpack(IntPtr hWnd)
     {
-        (int x, int y)[] locations = new (int, int)[] { (1165, 250) };
+        (int x, int y)[] locations = new (int, int)[] { (secondSlotBpX, secondSLotBpY) };
+
         GetClientRect(hWnd, out RECT rect);
         if (rect.Right < 1237 || rect.Bottom < 319)
         {
@@ -1604,10 +1679,21 @@ class Program
     }
     [DllImport("user32.dll")]
     static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    static void ShuffleArray((int dx, int dy)[] array, Random random)
+    {
+        int n = array.Length;
+        for (int i = n - 1; i > 0; i--)
+        {
+            // Pick a random index from 0 to i
+            int j = random.Next(0, i + 1);
+
+            // Swap array[i] with array[j]
+            (array[i], array[j]) = (array[j], array[i]);
+        }
+    }
     static void ClickAroundCharacter(IntPtr hWnd)
     {
         ClickSecondSlotInBackpack(hWnd);
-        double squareSize = 57;
         (int dx, int dy)[] directions = new (int, int)[]
         {
             (0, -1),
@@ -1619,26 +1705,30 @@ class Program
             (-1, 0),
             (-1, -1)
         };
+
+        Random random = new Random();
+        ShuffleArray(directions, random);
+
         GetClientRect(hWnd, out RECT rect);
         int centerX = (rect.Right - rect.Left) / 2 - 186;
-        int centerY = (rect.Bottom - rect.Top) / 2 - 300;
-        int currentTargetId = GetTargetId();
+        int centerY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
         foreach (var direction in directions)
         {
             int dx = direction.dx;
             int dy = direction.dy;
-            int clickX = centerX + (int)(dx * squareSize);
-            int clickY = centerY + (int)(dy * squareSize);
+            int clickX = centerX + (int)(dx * pixelSize);
+            int clickY = centerY + (int)(dy * pixelSize);
             VirtualRightClick(targetWindow, clickX, clickY);
-            //if (currentTargetId != 0)
-            //{
-            //    Console.WriteLine(
-            //        $"Target acquired after clicking at ({clickX}, {clickY}). Target ID: {currentTargetId}"
-            //    );
-            //}
+            int currentTargetId = GetTargetId();
+            if (currentTargetId != 0)
+            {
+                Console.WriteLine(
+                    $"Target acquired after clicking at ({clickX}, {clickY}). Target ID: {currentTargetId}"
+                );
+            }
         }
-        CorpseEatFood(targetWindow);
-        CloseCorspe(targetWindow);
+        //CorpseEatFood(targetWindow);
+        //CloseCorspe(targetWindow);
     }
     const int WM_MOUSEMOVE = 0x0200;
     const int WM_RBUTTONDOWN = 0x0204;
@@ -1844,7 +1934,7 @@ class Program
     static List<string> blacklistedRingMonsters = new List<string> { "Poison Spider", };
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
-        return;
+       // return;
         try
         {
             int currentTargetId;
@@ -1887,10 +1977,7 @@ class Program
                     return;
                 }
             }
-            int inventoryX = 940;
-            int inventoryY = 65;
-            int equipmentX = 1115;
-            int equipmentY = 150;
+
             int sourceX = equip ? inventoryX : equipmentX;
             int sourceY = equip ? inventoryY : equipmentY;
             int destX = equip ? equipmentX : inventoryX;
