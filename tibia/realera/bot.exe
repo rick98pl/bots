@@ -738,6 +738,8 @@ class Program
     static ChasePathTracker chaseTracker = new ChasePathTracker();
     static Coordinate previousChasePosition = null;
     static bool isReturningFromChase = false;
+    static private HashSet<int> clickedAroundTargets = new HashSet<int>();
+    static private int lastTrackedTargetId = 0;
 
 
     static void PlayCoordinates()
@@ -802,12 +804,15 @@ class Program
                     ToggleRing(targetWindow, false);
                     Sleep(1);
 
-                    Console.WriteLine("[DEBUG] Fight finished, calling ClickAroundCharacter");
-                    if (shouldClickAround)
+                    if (!clickedAroundTargets.Contains(previousTargetId) && previousTargetId != 0)
                     {
-                        shouldClickAround = false;
-                        Console.WriteLine("[DEBUG] shouldClickAround set false");
+                        Console.WriteLine($"[DEBUG] Fight finished, calling ClickAroundCharacter for target ID: {previousTargetId}");
+                        clickedAroundTargets.Add(previousTargetId); // Track that we've clicked for this target
                         ClickAroundCharacter(targetWindow);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[DEBUG] Already clicked around for target ID: {previousTargetId}, skipping");
                     }
                     Sleep(1);
                     lock (memoryLock)
@@ -821,27 +826,35 @@ class Program
                     currentTargetId = targetId;
                 }
 
-                if (currentTargetId != 0 && IsTargetBlacklisted(currentTargetId))
-                {
-                    Console.WriteLine($"[DEBUG] Skipping blacklisted target ID: {currentTargetId}");
-                    InstantSendKeyPress(VK_F6);
-                    Sleep(1);
-                    continue;
-                }
+                //if (currentTargetId != 0 && IsTargetBlacklisted(currentTargetId))
+                //{
+                //    Console.WriteLine($"[DEBUG] Skipping blacklisted target ID: {currentTargetId}");
+                //    InstantSendKeyPress(VK_F6);
+                //    Sleep(1);
+                //    continue;
+                //}
 
-                if (currentTargetId != 0)
-                {
-                    bool wasBlacklisted = CheckMonsterDistanceAndBlacklist();
-                    if (wasBlacklisted)
-                    {
-                        // Target was blacklisted, move on to next loop iteration
-                        continue;
-                    }
-                }
+                //if (currentTargetId != 0)
+                //{
+                //    bool wasBlacklisted = CheckMonsterDistanceAndBlacklist();
+                //    if (wasBlacklisted)
+                //    {
+                //        // Target was blacklisted, move on to next loop iteration
+                //        continue;
+                //    }
+                //}
 
-                if (DateTime.Now.Second % 5 == 0)
+                //if (DateTime.Now.Second % 5 == 0)
+                //{
+                //    CleanBlacklistedTargets();
+                //}
+
+                if (currentTargetId != 0 && currentTargetId != lastTrackedTargetId)
                 {
-                    CleanBlacklistedTargets();
+                    // A new target appeared, clear the tracking
+                    Console.WriteLine($"[DEBUG] New target ID detected: {currentTargetId}, resetting click tracking");
+                    clickedAroundTargets.Clear();
+                    lastTrackedTargetId = currentTargetId;
                 }
 
                 if (currentTargetId != 0)
@@ -1153,7 +1166,7 @@ class Program
     }
 
     // Add these variables at the top of the class with other settings
-    static bool waypointRandomizationEnabled = true; // Flag to enable/disable waypoint randomization
+    static bool waypointRandomizationEnabled = false; // Flag to enable/disable waypoint randomization
     static int randomizationRange = 1; // Maximum squares to randomize in each direction
 
     // Then return the result (which might be randomized)
@@ -1408,15 +1421,15 @@ class Program
             }
             int lParam = (targetY << 16) | (targetX & 0xFFFF);
             SendKeyPress(VK_ESCAPE);
-            Sleep(1);
+            Sleep(64);
             PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)lParam);
-            Sleep(1);
+            Sleep(64);
             PostMessage(targetWindow, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
-            Sleep(1);
+            Sleep(64);
             PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
-            Sleep(1);
+            Sleep(64);
             int centerLParam = (baseY << 16) | (baseX & 0xFFFF);
-            PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)centerLParam);
+            //PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)centerLParam);
             Console.WriteLine(
                 $"[DEBUG] Clicked: X={diffX}, Y={diffY} (Screen: {targetX}, {targetY}, Pixel Size: {pixelSize})"
             );
