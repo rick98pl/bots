@@ -637,6 +637,13 @@ class Program
         PostMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
     }
 
+    static void InstantSendKeyPress(int key)
+    {
+        PostMessage(targetWindow, WM_KEYDOWN, (IntPtr)key, IntPtr.Zero);
+        Sleep(random.Next(10, 25));
+        PostMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
+    }
+
     static void FindRealeraWindow(Process process)
     {
         EnumWindows(
@@ -817,7 +824,7 @@ class Program
                 if (currentTargetId != 0 && IsTargetBlacklisted(currentTargetId))
                 {
                     Console.WriteLine($"[DEBUG] Skipping blacklisted target ID: {currentTargetId}");
-                    SendKeyPress(VK_F6);
+                    InstantSendKeyPress(VK_F6);
                     Sleep(1);
                     continue;
                 }
@@ -2533,7 +2540,7 @@ class Program
                 blacklistedTargetTimers[currentTargetId] = DateTime.Now.Add(TARGET_BLACKLIST_DURATION);
 
                 // Cancel the current target
-                SendKeyPress(VK_ESCAPE);
+                InstantSendKeyPress(VK_F6);
 
                 // Reset the stuck timer
                 lastPositionTime = DateTime.MinValue;
