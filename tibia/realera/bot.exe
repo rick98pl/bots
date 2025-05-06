@@ -813,6 +813,30 @@ class Program
                 {
                     currentTargetId = targetId;
                 }
+
+                if (currentTargetId != 0 && IsTargetBlacklisted(currentTargetId))
+                {
+                    Console.WriteLine($"[DEBUG] Skipping blacklisted target ID: {currentTargetId}");
+                    SendKeyPress(VK_ESCAPE);
+                    Sleep(1);
+                    continue;
+                }
+
+                if (currentTargetId != 0)
+                {
+                    bool wasBlacklisted = CheckMonsterDistanceAndBlacklist();
+                    if (wasBlacklisted)
+                    {
+                        // Target was blacklisted, move on to next loop iteration
+                        continue;
+                    }
+                }
+
+                if (DateTime.Now.Second % 5 == 0)
+                {
+                    CleanBlacklistedTargets();
+                }
+
                 if (currentTargetId != 0)
                 {
 
@@ -2401,6 +2425,141 @@ class Program
             lock (chaseLock)
             {
                 DisplayWithCooldown(messageType, message);
+            }
+        }
+    }
+
+    // Add these variables to the Program class
+    static Dictionary<int, DateTime> blacklistedTargetTimers = new Dictionary<int, DateTime>();
+    static DateTime lastPositionTime = DateTime.MinValue;
+    static int lastPositionX = 0;
+    static int lastPositionY = 0;
+    static bool isPlayerStuck = false;
+    static readonly TimeSpan TARGET_BLACKLIST_DURATION = TimeSpan.FromSeconds(30);
+    static readonly int MAX_MONSTER_DISTANCE = 3; // Maximum allowed distance in sqm
+    static readonly int STUCK_DETECTION_TIME_MS = 1000; // Time to consider player stuck
+
+    // Add this method to check if a target ID is blacklisted
+    static bool IsTargetBlacklisted(int targetId)
+    {
+        // If target ID is not in dictionary or time has expired, it's not blacklisted
+        if (!blacklistedTargetTimers.ContainsKey(targetId))
+            return false;
+
+        if (DateTime.Now > blacklistedTargetTimers[targetId])
+        {
+            // Remove expired blacklisted target
+            blacklistedTargetTimers.Remove(targetId);
+            return false;
+        }
+
+        return true;
+    }
+
+    // Add this method to clean expired blacklisted targets
+    static void CleanBlacklistedTargets()
+    {
+        var now = DateTime.Now;
+        var expiredTargets = blacklistedTargetTimers
+            .Where(kvp => now > kvp.Value)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var targetId in expiredTargets)
+        {
+            blacklistedTargetTimers.Remove(targetId);
+        }
+
+        if (expiredTargets.Count > 0)
+        {
+            Console.WriteLine($"[DEBUG] Removed {expiredTargets.Count} expired blacklisted targets");
+        }
+    }
+
+    // Add this method to check for stuck player
+    static void UpdatePlayerMovementStatus(int currentX, int currentY)
+    {
+        // If this is the first check or player has moved
+        if (lastPositionTime == DateTime.MinValue ||
+            lastPositionX != currentX ||
+            lastPositionY != currentY)
+        {
+            lastPositionTime = DateTime.Now;
+            lastPositionX = currentX;
+            lastPositionY = currentY;
+            isPlayerStuck = false;
+        }
+        else
+        {
+            // Player hasn't moved, check if stuck based on time
+            TimeSpan stuckTime = DateTime.Now - lastPositionTime;
+            isPlayerStuck = stuckTime.TotalMilliseconds >= STUCK_DETECTION_TIME_MS;
+        }
+    }
+
+    // Add this method to check monster distance and blacklist if needed
+    static bool CheckMonsterDistanceAndBlacklist()
+    {
+        int currentX, currentY, currentZ, currentTargetId;
+        bool hasBlacklisted = false;
+
+        lock (memoryLock)
+        {
+            currentX = posX;
+            currentY = posY;
+            currentZ = posZ;
+            currentTargetId = targetId;
+        }
+
+        // Update movement status to detect if player is stuck
+        UpdatePlayerMovementStatus(currentX, currentY);
+
+        // Only check if we have a target and player appears stuck
+        if (currentTargetId != 0 && isPlayerStuck)
+        {
+            var (monsterX, monsterY, monsterZ) = GetTargetMonsterCoordinates();
+
+            // Calculate distance to monster
+            int distanceX = Math.Abs(monsterX - currentX);
+            int distanceY = Math.Abs(monsterY - currentY);
+            int totalDistance = distanceX + distanceY;
+
+            // If monster is too far away and we're not moving
+            if (totalDistance > MAX_MONSTER_DISTANCE)
+            {
+                Console.WriteLine($"[DEBUG] Target monster (ID: {currentTargetId}) is too far away ({totalDistance} sqm) and player is stuck. Blacklisting for {TARGET_BLACKLIST_DURATION.TotalSeconds} seconds.");
+
+                // Blacklist this target ID
+                blacklistedTargetTimers[currentTargetId] = DateTime.Now.Add(TARGET_BLACKLIST_DURATION);
+
+                // Cancel the current target
+                SendKeyPress(VK_ESCAPE);
+
+                // Reset the stuck timer
+                lastPositionTime = DateTime.MinValue;
+
+                hasBlacklisted = true;
+            }
+        }
+
+        return hasBlacklisted;
+    }
+
+    static void DisplayBlacklistedTargets()
+    {
+        if (blacklistedTargetTimers.Count == 0)
+            return;
+
+        var now = DateTime.Now;
+        Console.WriteLine("\nBlacklisted Targets:");
+        Console.WriteLine(new string('-', 40));
+
+        foreach (var kvp in blacklistedTargetTimers)
+        {
+            TimeSpan remainingTime = kvp.Value - now;
+            if (remainingTime.TotalSeconds > 0)
+            {
+                Console.WriteLine($"  Target ID: {kvp.Key}, Time remaining: {remainingTime.TotalSeconds:F1} seconds");
             }
         }
     }
