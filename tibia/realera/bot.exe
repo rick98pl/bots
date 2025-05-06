@@ -849,7 +849,7 @@ class Program
                         Sleep(1);
                         continue;
                     }
-                    Sleep(100);
+                    Sleep(1);
                     lock (memoryLock)
                     {
                         currentTargetId = targetId;
@@ -875,7 +875,7 @@ class Program
 
                     Console.WriteLine("[DEBUG] No target, pressing F6 to search");
                     SendKeyPress(VK_F6);
-                    Sleep(256); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no mnoster
+                    Sleep(1); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no mnoster
                 }
 
                 lock (memoryLock)
@@ -995,7 +995,7 @@ class Program
                     Console.WriteLine("[DEBUG] Using arrow keys to return from chase");
                     // Move step by step with arrow keys instead of clicking
                     MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypoint.X, nextWaypoint.Y);
-                    Sleep(250); // Give the game time to process the movement
+                    Sleep(100); // Give the game time to process the movement
                     continue;   // Skip the normal waypoint clicking
                 }
                 Console.WriteLine(
@@ -1014,7 +1014,7 @@ class Program
                     if (currentTargetId == 0)
                     {
                         SendKeyPress(VK_F6);
-                        Sleep(256); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no mnoster
+                        Sleep(1); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no mnoster
                         lock (memoryLock)
                         {
                             currentTargetId = targetId;
