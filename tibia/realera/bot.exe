@@ -904,74 +904,74 @@ class Program
                 int distanceX = Math.Abs(nextWaypoint.X - currentX);
                 int distanceY = Math.Abs(nextWaypoint.Y - currentY);
                 int totalDistance = distanceX + distanceY;
-                //if (distanceX > 5 || distanceY > 5)
-                //{
+                if (distanceX > 5 || distanceY > 5)
+                {
 
-                //    Console.WriteLine(
-                //        $"[DEBUG] Waypoint too far to click: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
-                //    );
+                    Console.WriteLine(
+                        $"[DEBUG] Waypoint too far to click: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                    );
 
-                //    Console.WriteLine(
-                //        $"[DEBUG] Current position: X={currentX}, Y={currentY}, Z={currentZ}"
-                //    );
+                    Console.WriteLine(
+                        $"[DEBUG] Current position: X={currentX}, Y={currentY}, Z={currentZ}"
+                    );
 
-                //    Console.WriteLine($"[DEBUG] Distance: X={distanceX}, Y={distanceY}");
-                //    int maxMoves = 5;
-                //    int movesMade = 0;
-                //    while ((distanceX > 5 || distanceY > 5) && movesMade < maxMoves)
-                //    {
-                //        MoveCharacterTowardsWaypoint(
-                //            currentX,
-                //            currentY,
-                //            nextWaypoint.X,
-                //            nextWaypoint.Y
-                //        );
-                //        Sleep(150);
-                //        lock (memoryLock)
-                //        {
-                //            currentX = posX;
-                //            currentY = posY;
-                //            currentZ = posZ;
-                //        }
-                //        distanceX = Math.Abs(nextWaypoint.X - currentX);
-                //        distanceY = Math.Abs(nextWaypoint.Y - currentY);
+                    Console.WriteLine($"[DEBUG] Distance: X={distanceX}, Y={distanceY}");
+                    int maxMoves = 5;
+                    int movesMade = 0;
+                    while ((distanceX > 5 || distanceY > 5) && movesMade < maxMoves)
+                    {
+                        MoveCharacterTowardsWaypoint(
+                            currentX,
+                            currentY,
+                            nextWaypoint.X,
+                            nextWaypoint.Y
+                        );
+                        Sleep(150);
+                        lock (memoryLock)
+                        {
+                            currentX = posX;
+                            currentY = posY;
+                            currentZ = posZ;
+                        }
+                        distanceX = Math.Abs(nextWaypoint.X - currentX);
+                        distanceY = Math.Abs(nextWaypoint.Y - currentY);
 
-                //        Console.WriteLine(
-                //            $"[DEBUG] After move #{movesMade + 1}, new position: X={currentX}, Y={currentY}"
-                //        );
+                        Console.WriteLine(
+                            $"[DEBUG] After move #{movesMade + 1}, new position: X={currentX}, Y={currentY}"
+                        );
 
-                //        Console.WriteLine(
-                //            $"[DEBUG] New distance: X={distanceX}, Y={distanceY}"
-                //        );
-                //        movesMade++;
-                //        if (distanceX <= 5 && distanceY <= 5)
-                //        {
+                        Console.WriteLine(
+                            $"[DEBUG] New distance: X={distanceX}, Y={distanceY}"
+                        );
+                        movesMade++;
+                        if (distanceX <= 5 && distanceY <= 5)
+                        {
 
-                //            Console.WriteLine("[DEBUG] Now within clickable range");
-                //            break;
-                //        }
-                //        if (movesMade % 2 == 0)
-                //        {
+                            Console.WriteLine("[DEBUG] Now within clickable range");
+                            break;
+                        }
+                        if (movesMade % 2 == 0)
+                        {
 
-                //            Console.WriteLine("[DEBUG] Switching movement priority");
-                //        }
-                //    }
-                //    if (distanceX > 5 || distanceY > 5)
-                //    {
+                            Console.WriteLine("[DEBUG] Switching movement priority");
+                        }
+                    }
+                    if (distanceX > 5 || distanceY > 5)
+                    {
 
-                //        Console.WriteLine(
-                //            "[DEBUG] Still too far after arrow movement, finding a new waypoint"
-                //        );
-                //        currentCoordIndex = FindClosestWaypointIndex(
-                //            waypoints,
-                //            currentX,
-                //            currentY,
-                //            currentZ
-                //        );
-                //        continue;
-                //    }
-                //}
-                // Check condition before continuing with chase return movement
+                        Console.WriteLine(
+                            "[DEBUG] Still too far after arrow movement, finding a new waypoint"
+                        );
+                        currentCoordIndex = FindClosestWaypointIndex(
+                            waypoints,
+                            currentX,
+                            currentY,
+                            currentZ
+                        );
+                        continue;
+                    }
+                }
+
                 if (isReturningFromChase)
                 {
                     // First check if we're already close to a waypoint
