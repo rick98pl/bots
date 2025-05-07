@@ -38,7 +38,9 @@ class Program
     [DllImport("user32.dll")]
     static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
     delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    const int PROCESS_WM_READ = 0x0010;
+    const int PROCESS_VM_READ = 0x0010;
+    const int PROCESS_VM_WRITE = 0x0020;
+    const int PROCESS_VM_OPERATION = 0x0008;
     const uint WM_KEYDOWN = 0x0100;
     const uint WM_KEYUP = 0x0101;
     const int VK_LEFT = 0x25;
@@ -90,7 +92,11 @@ class Program
         posY = 0,
         posZ = 0,
         targetId = 0,
-        follow = 0;
+        follow = 0,
+        currentOutfit = 0;
+
+
+
     static bool memoryReadActive = false;
     static bool programRunning = true;
     static bool autoPotionActive = true;
@@ -206,7 +212,8 @@ class Program
                 }
             }
             FindRealeraWindow(selectedProcess);
-            processHandle = OpenProcess(PROCESS_WM_READ, false, selectedProcess.Id);
+            const int PROCESS_ALL_ACCESS = 0x001F0FFF;
+            processHandle = OpenProcess(PROCESS_ALL_ACCESS, false, selectedProcess.Id);
             moduleBase = selectedProcess.MainModule.BaseAddress;
 
             GetClientRect(targetWindow, out RECT windowRect);
@@ -233,6 +240,163 @@ class Program
             }
         }
     }
+
+    // Add these variables at the top with other static variables
+    static bool maintainOutfitActive = true;
+    static int desiredOutfit = 75; // Starting value of 127
+    static Thread outfitThread = null;
+    static readonly object outfitLock = new object();
+
+    // This function maintains the desired outfit, setting it initially and keeping it if game changes it
+    static void MaintainOutfitThread()
+    {
+        Console.WriteLine($"[OUTFIT] Maintenance thread started. Maintaining outfit {desiredOutfit}");
+
+        try
+        {
+            // Set the initial outfit when thread starts to exactly 127
+            int currentOutfitValue;
+            lock (memoryLock)
+            {
+                currentOutfitValue = currentOutfit;
+            }
+
+            if (currentOutfitValue != desiredOutfit)
+            {
+                Console.WriteLine($"[OUTFIT] Initial setting from {currentOutfitValue} to {desiredOutfit}");
+
+                // Find the outfit variable address
+                IntPtr outfitAddress = IntPtr.Zero;
+                foreach (var variable in variables)
+                {
+                    if (variable.Name.Contains("currentOutfit"))
+                    {
+                        // Convert base address to IntPtr explicitly
+                        IntPtr baseAddress = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
+                        byte[] buffer = new byte[4]; // Size for pointer
+
+                        if (!ReadProcessMemory(processHandle, baseAddress, buffer, buffer.Length, out _))
+                        {
+                            Console.WriteLine("[DEBUG] Failed to read outfit base address");
+                            return;
+                        }
+
+                        outfitAddress = (IntPtr)BitConverter.ToInt32(buffer, 0);
+                        outfitAddress = IntPtr.Add(outfitAddress, variable.Offsets[0]);
+                        break;
+                    }
+                }
+
+                if (outfitAddress == IntPtr.Zero)
+                {
+                    Console.WriteLine("[DEBUG] Could not find outfit address");
+                    return;
+                }
+
+                // Prepare the exact value buffer for 127
+                byte[] exactOutfitBuffer = BitConverter.GetBytes(desiredOutfit);
+
+                // Write the value to memory
+                int bytesWritten;
+                if (!WriteProcessMemory(processHandle, outfitAddress, exactOutfitBuffer, exactOutfitBuffer.Length, out bytesWritten))
+                {
+                    int errorCode = Marshal.GetLastWin32Error();
+                    Console.WriteLine($"[DEBUG] Failed to write initial outfit value. Error code: {errorCode}");
+                    return;
+                }
+
+                // Update the local variable
+                currentOutfit = desiredOutfit;
+                Console.WriteLine($"[OUTFIT] Successfully set initial outfit to {desiredOutfit}");
+
+                Sleep(250); // Delay to allow change to register
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[OUTFIT] Error during initial outfit setting: {ex.Message}");
+        }
+
+        // Main maintenance loop
+        while (memoryReadActive && maintainOutfitActive)
+        {
+            try
+            {
+                int currentOutfitValue;
+                lock (memoryLock)
+                {
+                    currentOutfitValue = currentOutfit;
+                }
+
+                // Check if outfit has changed from desired value
+                lock (outfitLock)
+                {
+                    if (currentOutfitValue != desiredOutfit)
+                    {
+                        Console.WriteLine($"[OUTFIT] Detected outfit change from {desiredOutfit} to {currentOutfitValue}. Resetting...");
+
+                        // Find the outfit variable address
+                        IntPtr outfitAddress = IntPtr.Zero;
+                        foreach (var variable in variables)
+                        {
+                            if (variable.Name.Contains("currentOutfit"))
+                            {
+                                // Convert base address to IntPtr explicitly
+                                IntPtr baseAddress = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
+                                byte[] buffer = new byte[4]; // Size for pointer
+
+                                if (!ReadProcessMemory(processHandle, baseAddress, buffer, buffer.Length, out _))
+                                {
+                                    Console.WriteLine("[DEBUG] Failed to read outfit base address");
+                                    break;
+                                }
+
+                                outfitAddress = (IntPtr)BitConverter.ToInt32(buffer, 0);
+                                outfitAddress = IntPtr.Add(outfitAddress, variable.Offsets[0]);
+                                break;
+                            }
+                        }
+
+                        if (outfitAddress == IntPtr.Zero)
+                        {
+                            Console.WriteLine("[DEBUG] Could not find outfit address");
+                            Sleep(1000);
+                            continue;
+                        }
+
+                        // Prepare the exact value buffer
+                        byte[] exactOutfitBuffer = BitConverter.GetBytes(desiredOutfit);
+
+                        // Write the value to memory
+                        int bytesWritten;
+                        if (!WriteProcessMemory(processHandle, outfitAddress, exactOutfitBuffer, exactOutfitBuffer.Length, out bytesWritten))
+                        {
+                            int errorCode = Marshal.GetLastWin32Error();
+                            Console.WriteLine($"[DEBUG] Failed to write outfit value. Error code: {errorCode}");
+                            Sleep(1000);
+                            continue;
+                        }
+
+                        // Update the local variable
+                        currentOutfit = desiredOutfit;
+                        Console.WriteLine($"[OUTFIT] Successfully reset outfit to {desiredOutfit}");
+
+                        Sleep(50); // Small delay after changing outfit
+                    }
+                }
+
+                Sleep(100); // Check every 100ms
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[OUTFIT] Error in outfit maintenance: {ex.Message}");
+                Sleep(1000); // Longer delay after an error
+            }
+        }
+
+        Console.WriteLine("[OUTFIT] Maintenance thread stopped");
+    }
+
     static void StartWorkerThreads()
     {
         memoryReadActive = true;
@@ -240,15 +404,22 @@ class Program
         memoryThread.IsBackground = true;
         memoryThread.Name = "MemoryReader";
         memoryThread.Start();
+
         Thread autoPotionThread = new Thread(AutoPotionThread);
         autoPotionThread.IsBackground = true;
         autoPotionThread.Name = "AutoPotion";
         autoPotionThread.Start();
 
+        // Add outfit maintenance thread
+        Thread outfitThread = new Thread(MaintainOutfitThread);
+        outfitThread.IsBackground = true;
+        outfitThread.Name = "OutfitMaintenance";
+        outfitThread.Start();
+
         // Start SPAWNWATCHER if enabled
         if (threadFlags["spawnwatch"])
         {
-            SPAWNWATCHER.Start(targetWindow, pixelSize);
+            //SPAWNWATCHER.Start(targetWindow, pixelSize);
         }
 
         Console.WriteLine("Worker threads started successfully");
@@ -292,11 +463,18 @@ class Program
             BaseAddress = (IntPtr)0x009432D0,
             Offsets = new List<int> { 1192 },
             Type = "Double"
+        },
+        new Variable
+        {
+            Name = "currentOutfit",
+            BaseAddress = (IntPtr)0x009432D0,
+            Offsets = new List<int> { 88 },
+            Type = "Int32"
         }
     };
     static void MemoryReadingThread()
     {
-        DateTime lastDebugOutputTime = DateTime.MinValue;  // Declare as DateTime type
+        DateTime lastDebugOutputTime = DateTime.MinValue;
         const double DEBUG_COOLDOWN_SECONDS = 1.5;
         Console.WriteLine("Memory reading thread started");
         while (memoryReadActive)
@@ -312,47 +490,60 @@ class Program
                 {
                     try
                     {
+                        // Convert base address to IntPtr explicitly (if it's not already)
                         IntPtr address = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
                         byte[] buffer;
+
                         if (variable.Offsets.Count > 0)
                         {
-                            buffer = new byte[4];
-                            if (
-                                !ReadProcessMemory(
-                                    processHandle,
-                                    address,
-                                    buffer,
-                                    buffer.Length,
-                                    out _
-                                )
-                            )
+                            buffer = new byte[4]; // Size for pointer
+                            if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _))
                                 continue;
+
                             address = (IntPtr)BitConverter.ToInt32(buffer, 0);
                             address = IntPtr.Add(address, variable.Offsets[0]);
                         }
-                        buffer = variable.Type == "Double" ? new byte[8] : new byte[4];
-                        if (
-                            !ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _)
-                        )
+
+                        // Set buffer size based on type
+                        buffer = new byte[8];
+
+                        if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _))
                             continue;
-                        double value =
-                            variable.Type == "Double"
-                                ? BitConverter.ToDouble(buffer, 0)
-                                : BitConverter.ToInt32(buffer, 0);
-                        lock (memoryLock)
+
+                        // Special debug for currentOutfit
+                        if (variable.Name.Contains("currentOutfit"))
                         {
-                            if (variable.Name.Contains("HP") && !variable.Name.Contains("Max"))
-                                curHP = value;
-                            if (variable.Name.Contains("Mana") && !variable.Name.Contains("Max"))
-                                curMana = value;
-                            if (variable.Name.Contains("Max HP"))
-                                maxHP = value;
-                            if (variable.Name.Contains("Max Mana"))
-                                maxMana = value;
+                            int rawValue = BitConverter.ToInt32(buffer, 0);
+                            currentOutfit = rawValue;
+                        }
+                        else if (variable.Type == "Double")
+                        {
+                           
+                            double value = BitConverter.ToDouble(buffer, 0);
+                            lock (memoryLock)
+                            {
+                                if (variable.Name.Contains("HP") && !variable.Name.Contains("Max"))
+                                    curHP = value;
+                                if (variable.Name.Contains("Mana") && !variable.Name.Contains("Max"))
+                                    curMana = value;
+                                if (variable.Name.Contains("Max HP"))
+                                    maxHP = value;
+                                if (variable.Name.Contains("Max Mana"))
+                                    maxMana = value;
+                            }
+                        }
+                        else if (variable.Type == "Int32" && !variable.Name.Contains("currentOutfit"))
+                        {
+                            int value = BitConverter.ToInt32(buffer, 0);
+                            // Handle other Int32 values if needed
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[DEBUG] Error reading variable {variable.Name}: {ex.Message}");
+                    }
                 }
+                
                 lock (memoryLock)
                 {
                     posX = ReadInt32(processHandle, moduleBase, xAddressOffset);
@@ -401,6 +592,116 @@ class Program
         }
         Console.WriteLine("Memory reading thread exited");
     }
+
+    static void ChangeOutfit(int change)
+    {
+        try
+        {
+            // Get the current outfit before modification
+            int currentOutfitVar;
+            lock (memoryLock)
+            {
+                currentOutfitVar = currentOutfit;
+            }
+            int previousOutfit = currentOutfitVar;
+
+            // Calculate the new outfit value (add the change which could be +1 or -1)
+            int newOutfit = previousOutfit + change;
+
+            // Ensure the new outfit value is within valid range (assuming 0-99999 range for outfits)
+            const int MIN_OUTFIT = 0;
+            const int MAX_OUTFIT = 99999;
+
+            Console.WriteLine($"[DEBUG] CurrenntOutfit: {previousOutfit}");
+            Console.WriteLine($"[DEBUG] Changing to: {newOutfit}");
+
+            if (newOutfit < MIN_OUTFIT)
+                newOutfit = MIN_OUTFIT;
+            if (newOutfit > MAX_OUTFIT)
+                newOutfit = MAX_OUTFIT;
+
+            // Skip operation if no change
+            if (newOutfit == previousOutfit)
+            {
+                Console.WriteLine($"[DEBUG] Outfit already at {(change > 0 ? "maximum" : "minimum")} value: {previousOutfit}");
+                return;
+            }
+
+            // Write to memory to change the outfit
+            IntPtr outfitAddress = IntPtr.Zero;
+
+            // Find the outfit variable from the variables list
+            foreach (var variable in variables)
+            {
+                if (variable.Name.Contains("currentOutfit"))
+                {
+                    // Convert base address to IntPtr explicitly
+                    IntPtr baseAddress = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
+                    byte[] buffer = new byte[4]; // Size for pointer
+
+                    if (!ReadProcessMemory(processHandle, baseAddress, buffer, buffer.Length, out _))
+                    {
+                        Console.WriteLine("[DEBUG] Failed to read outfit base address");
+                        return;
+                    }
+
+                    outfitAddress = (IntPtr)BitConverter.ToInt32(buffer, 0);
+                    outfitAddress = IntPtr.Add(outfitAddress, variable.Offsets[0]);
+                    break;
+                }
+            }
+
+            if (outfitAddress == IntPtr.Zero)
+            {
+                Console.WriteLine("[DEBUG] Could not find outfit address");
+                return;
+            }
+
+            // Prepare the new value buffer
+            byte[] newOutfitBuffer = BitConverter.GetBytes(newOutfit);
+
+            // Write the new value to memory
+            int bytesWritten;
+            if (!WriteProcessMemory(processHandle, outfitAddress, newOutfitBuffer, newOutfitBuffer.Length, out bytesWritten))
+            {
+                int errorCode = Marshal.GetLastWin32Error();
+                Console.WriteLine($"[DEBUG] Failed to write new outfit value. Error code: {errorCode}");
+                return;
+            }
+
+            // Update the local variable to maintain consistency
+            currentOutfit = newOutfit;
+
+            // **** NEW ADDITION: Update the desired outfit for maintenance when manually changed ****
+            lock (outfitLock)
+            {
+                desiredOutfit = newOutfit;
+                Console.WriteLine($"[OUTFIT] Updated desired outfit to: {desiredOutfit}");
+            }
+
+            Console.WriteLine($"[DEBUG] Changed outfit from {previousOutfit} to {newOutfit}");
+
+            // Refresh the UI to show the new outfit value
+            DisplayStats();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DEBUG] Error changing outfit: {ex.Message}");
+        }
+    }
+
+    // Add method to explicitly set the desired outfit value
+    
+
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool WriteProcessMemory(
+    IntPtr hProcess,
+    IntPtr lpBaseAddress,
+    byte[] lpBuffer,
+    int nSize,
+    out int lpNumberOfBytesWritten
+);
 
     static void AutoPotionThread()
     {
@@ -498,6 +799,8 @@ class Program
         Console.WriteLine("{0,-20} {1,15:F0}", "follow", follow);
         Console.WriteLine(new string('-', 40));
         Console.WriteLine($"Position: X={currentX}, Y={currentY}, Z={currentZ}");
+        Console.WriteLine($"Outfit: {currentOutfit}\n");
+        Console.WriteLine("\n");
         if (threadFlags["recording"])
         {
             Console.WriteLine("🔴 Recording coordinates...");
@@ -605,6 +908,22 @@ class Program
                 bool isActive = SPAWNWATCHER.Toggle(targetWindow, pixelSize);
                 threadFlags["spawnwatch"] = isActive;
                 Console.WriteLine($"Spawn watcher {(isActive ? "enabled" : "disabled")}");
+                break;
+            case ConsoleKey.F:
+                // Decrease outfit by 1
+                ChangeOutfit(-1);
+                break;
+            case ConsoleKey.G:
+                // Increase outfit by 1
+                ChangeOutfit(1);
+                break;
+            case ConsoleKey.H:
+                // Decrease outfit by 1
+                ChangeOutfit(-10);
+                break;
+            case ConsoleKey.J:
+                // Increase outfit by 1
+                ChangeOutfit(10);
                 break;
         }
     }
@@ -1397,11 +1716,11 @@ class Program
                     Z = result.Z // Keep the same Z coordinate (level)
                 };
 
-                Console.WriteLine($"  RANDOMIZED WAYPOINT: Original({originalResult.X},{originalResult.Y}) → Random({result.X},{result.Y})");
+                //Console.WriteLine($"  RANDOMIZED WAYPOINT: Original({originalResult.X},{originalResult.Y}) → Random({result.X},{result.Y})");
             }
             else
             {
-                Console.WriteLine($"  RANDOMIZATION REJECTED: Random({randomX},{randomY}) exceeds 5-unit limit from current position({currentX},{currentY})");
+                //Console.WriteLine($"  RANDOMIZATION REJECTED: Random({randomX},{randomY}) exceeds 5-unit limit from current position({currentX},{currentY})");
                 // Keep the original result
             }
 
@@ -1891,7 +2210,9 @@ class Program
     static List<string> blacklistedMonsterNames = new List<string> { "Rat", "Rabbit", "Snake" };
     static List<string> whitelistedMonsterNames = new List<string> {
         "Tarantula",
-        "Poison Spider"
+        "Poison Spider",
+        "Frost Giant",
+        "Frost Giantess"
     };
 
 //    static List<string> whitelistedMonsterNames = new List<string> {
@@ -2078,10 +2399,10 @@ class Program
                 double distance = Math.Sqrt(
                     Math.Pow(monsterX - playerX, 2) + Math.Pow(monsterY - playerY, 2)
                 );
-                if (distance > 2.5)
-                {
-                    return;
-                }
+                //if (distance > 7.5)
+                //{
+                //    return;
+                //}
             }
 
             int sourceX = equip ? inventoryX : equipmentX;
@@ -2091,12 +2412,12 @@ class Program
             Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} ring");
             IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
             PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
-            Sleep(1);
+            Sleep(25);
             PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
-            Sleep(1);
+            Sleep(25);
             IntPtr destLParam = MakeLParam(destX, destY);
             PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
-            Sleep(1);
+            Sleep(25);
             PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
             Sleep(1);
             if (equip)
@@ -2782,7 +3103,7 @@ class Program
         private static bool watcherActive = false;
         private static Thread watcherThread = null;
         private static object watcherLock = new object();
-        private static double matchThreshold = 0.79; // Adjust this based on testing
+        private static double matchThreshold = 0.84; // Adjust this based on testing
         private static bool verboseDebug = false;
         private static long scanCount = 0;
         private static long totalScanTime = 0;
@@ -3299,7 +3620,7 @@ class Program
                                             }
                                             else
                                             {
-                                                Console.WriteLine($"[SPAWN] REJECTED {template.Name}: Good shape ({maxVal:F3}) but poor color ({colorSimilarityPercent:F1}%)");
+                                                //Console.WriteLine($"[SPAWN] REJECTED {template.Name}: Good shape ({maxVal:F3}) but poor color ({colorSimilarityPercent:F1}%)");
                                             }
                                         }
 
@@ -3402,10 +3723,10 @@ class Program
             bool isSimilar = differencePercent <= allowedDifferencePercent;
 
             // Optionally log
-            Console.WriteLine($"Color Distance: {colorDistance:F2}");
-            Console.WriteLine($"Difference Percent: {differencePercent:F2}%");
-            Console.WriteLine($"Similarity Percent: {similarityPercent:F2}%");
-            Console.WriteLine($"Allowed Difference: {allowedDifferencePercent}%, Is Similar: {isSimilar}");
+            //Console.WriteLine($"Color Distance: {colorDistance:F2}");
+            //Console.WriteLine($"Difference Percent: {differencePercent:F2}%");
+            //Console.WriteLine($"Similarity Percent: {similarityPercent:F2}%");
+            //Console.WriteLine($"Allowed Difference: {allowedDifferencePercent}%, Is Similar: {isSimilar}");
 
             return (isSimilar, similarityPercent);
         }
