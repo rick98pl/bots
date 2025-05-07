@@ -3376,23 +3376,40 @@ class Program
             }
         }
 
-        private static (bool, double) IsColorSimilar(Mat template, Mat matchedRegion, double colorThreshold = 30.0)
+        private static (bool, double) IsColorSimilar(Mat template, Mat matchedRegion, double allowedDifferencePercent = 20.0)
         {
+            // Calculate the mean color of each image
             MCvScalar templateMean = CvInvoke.Mean(template);
             MCvScalar matchedMean = CvInvoke.Mean(matchedRegion);
 
+            // Calculate the Euclidean color distance between the two mean colors
             double colorDistance = Math.Sqrt(
                 Math.Pow(templateMean.V0 - matchedMean.V0, 2) +
                 Math.Pow(templateMean.V1 - matchedMean.V1, 2) +
                 Math.Pow(templateMean.V2 - matchedMean.V2, 2)
             );
 
-            double maxPossibleDistance = Math.Sqrt(3 * Math.Pow(255, 2)); // 441.67
-            double similarityPercent = 100.0 * (1.0 - (colorDistance / maxPossibleDistance));
+            // Maximum possible distance between two colors (black and white)
+            double maxPossibleDistance = Math.Sqrt(3 * Math.Pow(255, 2)); // ≈ 441.67
 
-            bool isSimilar = colorDistance <= colorThreshold;
+            // Calculate how much the colors differ in percentage
+            double differencePercent = 100.0 * (colorDistance / maxPossibleDistance);
+
+            // Calculate similarity in percentage
+            double similarityPercent = 100.0 - differencePercent;
+
+            // Check if the difference is within the allowed percent
+            bool isSimilar = differencePercent <= allowedDifferencePercent;
+
+            // Optionally log
+            Console.WriteLine($"Color Distance: {colorDistance:F2}");
+            Console.WriteLine($"Difference Percent: {differencePercent:F2}%");
+            Console.WriteLine($"Similarity Percent: {similarityPercent:F2}%");
+            Console.WriteLine($"Allowed Difference: {allowedDifferencePercent}%, Is Similar: {isSimilar}");
+
             return (isSimilar, similarityPercent);
         }
+
 
 
 
