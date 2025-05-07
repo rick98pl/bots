@@ -93,7 +93,8 @@ class Program
         posZ = 0,
         targetId = 0,
         follow = 0,
-        currentOutfit = 0;
+        currentOutfit = 0,
+        invisibilityCode = 0;
 
 
 
@@ -470,6 +471,13 @@ class Program
             BaseAddress = (IntPtr)0x009432D0,
             Offsets = new List<int> { 88 },
             Type = "Int32"
+        },
+        new Variable
+        {
+            Name = "invisibilityCode",
+            BaseAddress = (IntPtr)0x009432D0,
+            Offsets = new List<int> { 84 },
+            Type = "Int32"
         }
     };
     static void MemoryReadingThread()
@@ -516,6 +524,11 @@ class Program
                             int rawValue = BitConverter.ToInt32(buffer, 0);
                             currentOutfit = rawValue;
                         }
+                        if (variable.Name.Contains("invisibilityCode"))
+                        {
+                            int rawValue = BitConverter.ToInt32(buffer, 0);
+                            invisibilityCode = rawValue;
+                        }
                         else if (variable.Type == "Double")
                         {
                            
@@ -531,12 +544,7 @@ class Program
                                 if (variable.Name.Contains("Max Mana"))
                                     maxMana = value;
                             }
-                        }
-                        else if (variable.Type == "Int32" && !variable.Name.Contains("currentOutfit"))
-                        {
-                            int value = BitConverter.ToInt32(buffer, 0);
-                            // Handle other Int32 values if needed
-                        }
+                        }                       
                     }
                     catch (Exception ex)
                     {
@@ -800,6 +808,7 @@ class Program
         Console.WriteLine(new string('-', 40));
         Console.WriteLine($"Position: X={currentX}, Y={currentY}, Z={currentZ}");
         Console.WriteLine($"Outfit: {currentOutfit}\n");
+        Console.WriteLine($"InvisibilityCode: {invisibilityCode}\n");
         Console.WriteLine("\n");
         if (threadFlags["recording"])
         {
@@ -2361,55 +2370,46 @@ class Program
     static List<string> blacklistedRingMonsters = new List<string> { "Poison Spider", };
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
-       // return;
         try
         {
             int currentTargetId;
+            int invisiblityCodeVar;
             lock (memoryLock)
             {
                 currentTargetId = targetId;
+                invisiblityCodeVar = invisibilityCode;
             }
-            if (equip && isRingCurrentlyEquipped && currentTargetId == lastRingEquippedTargetId)
+
+            // Check invisibilityCode to determine current ring state
+            // invisibilityCode = 2 means the ring is already equipped
+            bool isRingEquipped = invisiblityCodeVar == 2;
+
+            // If we want to equip and it's already equipped, or want to de-equip and it's not equipped, do nothing
+            if ((equip && isRingEquipped) || (!equip && !isRingEquipped))
             {
                 return;
             }
+
+            // Check blacklisted monsters if trying to equip
             if (equip && currentTargetId != 0)
             {
                 var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
-                if (
-                    !string.IsNullOrEmpty(monsterName)
-                    && blacklistedRingMonsters.Contains(monsterName)
-                )
+                if (!string.IsNullOrEmpty(monsterName) && blacklistedRingMonsters.Contains(monsterName))
                 {
-
-                    Console.WriteLine(
-                        $"[DEBUG] Monster '{monsterName}' is blacklisted for ring usage"
-                    );
+                    Console.WriteLine($"[DEBUG] Monster '{monsterName}' is blacklisted for ring usage");
                     return;
                 }
-                int playerX,
-                    playerY,
-                    playerZ;
-                lock (memoryLock)
-                {
-                    playerX = posX;
-                    playerY = posY;
-                    playerZ = posZ;
-                }
-                double distance = Math.Sqrt(
-                    Math.Pow(monsterX - playerX, 2) + Math.Pow(monsterY - playerY, 2)
-                );
-                //if (distance > 7.5)
-                //{
-                //    return;
-                //}
             }
 
+            // Set source and destination coordinates based on whether we're equipping or de-equipping
             int sourceX = equip ? inventoryX : equipmentX;
             int sourceY = equip ? inventoryY : equipmentY;
             int destX = equip ? equipmentX : inventoryX;
             int destY = equip ? equipmentY : inventoryY;
+
             Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} ring");
+
+            // Perform the drag-and-drop operation
             IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
             PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
             Sleep(25);
@@ -2420,17 +2420,14 @@ class Program
             Sleep(25);
             PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
             Sleep(1);
+
+            // Log the result of the operation
             if (equip)
             {
-                lastRingEquippedTargetId = currentTargetId;
-                isRingCurrentlyEquipped = true;
-                Console.WriteLine(
-                    $"[DEBUG] Successfully equipped ring for target {currentTargetId}"
-                );
+                Console.WriteLine($"[DEBUG] Successfully equipped ring for target {currentTargetId}");
             }
             else
             {
-                isRingCurrentlyEquipped = false;
                 Console.WriteLine($"[DEBUG] Successfully de-equipped ring");
             }
         }
