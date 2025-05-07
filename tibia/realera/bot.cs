@@ -2793,49 +2793,24 @@ class Program
         private static int scanWidth = 0;
         private static int scanHeight = 0;
 
-        // Win32 API imports
-        [DllImport("user32.dll")]
-        static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+        // Color detection settings
+        private static bool colorDetectionEnabled = true;
+        private static DateTime lastColorAlarmTime = DateTime.MinValue;
+        private static readonly TimeSpan colorAlarmCooldown = TimeSpan.FromSeconds(60); // 60 second cooldown between color alarms
 
-        [DllImport("gdi32.dll")]
-        static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight,
-            IntPtr hdcSrc, int nXSrc, int nYSrc, uint dwRop);
-
-        [DllImport("user32.dll")]
-        static extern IntPtr GetDC(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-
-        [DllImport("gdi32.dll")]
-        static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-
-        [DllImport("gdi32.dll")]
-        static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
-
-        [DllImport("gdi32.dll")]
-        static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
-
-        [DllImport("gdi32.dll")]
-        static extern bool DeleteObject(IntPtr hObject);
-
-        [DllImport("gdi32.dll")]
-        static extern bool DeleteDC(IntPtr hdc);
-
-        [DllImport("kernel32.dll")]
-        static extern bool Beep(int frequency, int duration);
-
-        const uint SRCCOPY = 0x00CC0020;
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct RECT
-        {
-            public int Left, Top, Right, Bottom;
-        }
-
-        // Class to store template information
+        // Last detected match timestamp to implement cooldown
         private static DateTime lastMatchTime = DateTime.MinValue;
         private static readonly TimeSpan matchCooldown = TimeSpan.FromSeconds(30); // 30 second cooldown between matches
+
+        // Color definitions (HSV ranges)
+        private static MCvScalar redLowerBound1 = new MCvScalar(0, 100, 100, 0);
+        private static MCvScalar redUpperBound1 = new MCvScalar(10, 255, 255, 0);
+        private static MCvScalar redLowerBound2 = new MCvScalar(160, 100, 100, 0);
+        private static MCvScalar redUpperBound2 = new MCvScalar(180, 255, 255, 0);
+        private static MCvScalar yellowLowerBound = new MCvScalar(20, 100, 100, 0);
+        private static MCvScalar yellowUpperBound = new MCvScalar(40, 255, 255, 0);
+        private static MCvScalar blueLowerBound = new MCvScalar(100, 100, 100, 0);
+        private static MCvScalar blueUpperBound = new MCvScalar(130, 255, 255, 0);
 
         // Class to store template information
         private class TemplateInfo
@@ -2845,7 +2820,7 @@ class Program
             public string Name => Path.GetFileNameWithoutExtension(FilePath);
             public int Width => Template?.Width ?? 0;
             public int Height => Template?.Height ?? 0;
-            public int Priority { get; set; } = 0; // NEW: Default priority is 0
+            public int Priority { get; set; } = 0; // Default priority is 0
         }
 
         private static List<TemplateInfo> templates = new List<TemplateInfo>();
@@ -2887,7 +2862,7 @@ class Program
                     Console.WriteLine("[SPAWN] Place PNG or JPG template images in this directory to detect them");
                 }
 
-                // Calculate scan area
+                // Calculate scan area for template matching
                 GetClientRect(gameWindow, out RECT rect);
                 scanCenterX = (rect.Right - rect.Left) / 2 - 186;
                 scanCenterY = (rect.Bottom - rect.Top) / 2 - 260; // Assuming baseYOffset is 260
@@ -2895,6 +2870,7 @@ class Program
                 scanHeight = pixelSize * 10;
 
                 Console.WriteLine($"[SPAWN] Scan area set to: Center({scanCenterX},{scanCenterY}), Size({scanWidth}x{scanHeight})");
+                Console.WriteLine($"[SPAWN] Color detection: {(colorDetectionEnabled ? "Enabled" : "Disabled")}");
 
                 LoadTemplates();
 
@@ -2908,7 +2884,7 @@ class Program
                     Console.WriteLine($"[SPAWN] Loaded {templates.Count} template(s) to watch for:");
                     foreach (var template in templates)
                     {
-                        Console.WriteLine($"[SPAWN] - {template.Name} ({template.Width}x{template.Height})");
+                        Console.WriteLine($"[SPAWN] - {template.Name} ({template.Width}x{template.Height}, Priority: {template.Priority})");
                     }
                 }
 
@@ -3010,7 +2986,7 @@ class Program
                     Console.WriteLine($"[SPAWN] Reloaded {templates.Count} template(s) to watch for:");
                     foreach (var template in templates)
                     {
-                        Console.WriteLine($"[SPAWN] - {template.Name} ({template.Width}x{template.Height})");
+                        Console.WriteLine($"[SPAWN] - {template.Name} ({template.Width}x{template.Height}, Priority: {template.Priority})");
                     }
                 }
             }
@@ -3087,6 +3063,7 @@ class Program
             }
         }
 
+        // Load template priorities from a config file
         private static Dictionary<string, int> LoadTemplatePriorities()
         {
             Dictionary<string, int> priorities = new Dictionary<string, int>();
@@ -3126,7 +3103,6 @@ class Program
 
             return priorities;
         }
-
 
         private static bool IsImageFile(string filePath)
         {
@@ -3218,129 +3194,209 @@ class Program
         }
 
         private static void WatcherThreadFunction(IntPtr gameWindow)
-    {
-        Console.WriteLine("[SPAWN] Optimized watcher thread started");
-
-        try
         {
-            Stopwatch iterationTimer = new Stopwatch();
-            int iterationCount = 0;
+            Console.WriteLine("[SPAWN] Optimized watcher thread started");
 
-            // Create and reuse result matrices for template matching
-            Mat resultMat = new Mat();
-
-            while (watcherActive)
+            try
             {
-                try
+                Stopwatch iterationTimer = new Stopwatch();
+                int iterationCount = 0;
+
+                // Create and reuse result matrices for template matching
+                Mat resultMat = new Mat();
+
+                while (watcherActive)
                 {
-                    iterationTimer.Restart();
-                    iterationCount++;
-
-                    if (templates.Count == 0)
+                    try
                     {
-                        if (iterationCount % 20 == 0)
+                        iterationTimer.Restart();
+                        iterationCount++;
+
+                        // Get window dimensions for both template matching and color detection
+                        GetClientRect(gameWindow, out RECT clientRect);
+                        int windowWidth = clientRect.Right - clientRect.Left;
+                        int windowHeight = clientRect.Bottom - clientRect.Top;
+
+                        // Determine if we should run template matching
+                        bool doTemplateMatching = templates.Count > 0 &&
+                                                 (DateTime.Now - lastMatchTime) >= matchCooldown;
+
+                        // Determine if we should run color detection
+                        bool doColorDetection = colorChangeAlarmEnabled &&
+                                                 (DateTime.Now - lastColorAlarmTime) >= colorAlarmCooldown;
+
+                        // If nothing to do, wait a bit and continue
+                        if (!doTemplateMatching && !doColorDetection)
                         {
-                            Console.WriteLine("[SPAWN] No templates to watch for. Please add images to the images folder.");
-                        }
-                        Thread.Sleep(1000);
-                        continue;
-                    }
-
-                    int scanLeft = Math.Max(0, scanCenterX - (scanWidth / 2));
-                    int scanTop = Math.Max(0, scanCenterY - (scanHeight / 2));
-
-                    // Output debug info occasionally
-                    if (verboseDebug && DateTime.Now.Subtract(lastDebugOutput) > debugOutputInterval)
-                    {
-                        Console.WriteLine($"[SPAWN] Scanning area: X={scanLeft}-{scanLeft + scanWidth}, Y={scanTop}-{scanTop + scanHeight}");
-                        lastDebugOutput = DateTime.Now;
-                    }
-
-                    // Check if we're still in match cooldown period
-                    if ((DateTime.Now - lastMatchTime) < matchCooldown)
-                    {
-                        // Still in cooldown, skip scanning
-                        Thread.Sleep(100);
-                        continue;
-                    }
-
-                    // Capture the screen area as a Mat
-                    using (Mat screenshot = CaptureWindowAsMat(gameWindow, scanLeft, scanTop, scanWidth, scanHeight))
-                    {
-                        if (screenshot == null)
-                        {
-                            if (verboseDebug && iterationCount % 100 == 0)
-                            {
-                                Console.WriteLine("[SPAWN] Failed to capture screenshot");
-                            }
+                            Thread.Sleep(100);
                             continue;
                         }
 
-                        bool debugOutputThisIteration = verboseDebug && iterationCount % 50 == 0;
-                        if (debugOutputThisIteration)
+                        // =================== TEMPLATE MATCHING ===================
+                        if (doTemplateMatching)
                         {
-                            Console.WriteLine($"[SPAWN] Scan #{scanCount + 1}: Comparing against {templates.Count} templates in priority order...");
-                        }
+                            int scanLeft = Math.Max(0, scanCenterX - (scanWidth / 2));
+                            int scanTop = Math.Max(0, scanCenterY - (scanHeight / 2));
 
-                        bool matchFound = false;
-
-                        // MODIFIED: Process templates in priority order (single-threaded)
-                        foreach (var template in templates)
-                        {
-                            double minVal = 0, maxVal = 0;
-                            Point minLoc = new Point(), maxLoc = new Point();
-
-                            // Perform template matching with result mat reuse
-                            CvInvoke.MatchTemplate(screenshot, template.Template, resultMat, TemplateMatchingType.CcoeffNormed);
-                            CvInvoke.MinMaxLoc(resultMat, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
-                            bool match = maxVal >= matchThreshold;
-
-                            if (debugOutputThisIteration || maxVal > 0.5)
+                            // Output debug info occasionally
+                            if (verboseDebug && DateTime.Now.Subtract(lastDebugOutput) > debugOutputInterval)
                             {
-                                Console.WriteLine($"[SPAWN] Template {template.Name} (Priority: {template.Priority}): similarity={maxVal:F3} at ({maxLoc.X},{maxLoc.Y}) - {(match ? "MATCH!" : "no match")}");
+                                Console.WriteLine($"[SPAWN] Scanning area: X={scanLeft}-{scanLeft + scanWidth}, Y={scanTop}-{scanTop + scanHeight}");
+                                lastDebugOutput = DateTime.Now;
                             }
 
-                            if (match)
+                            // Capture the screen area as a Mat
+                            using (Mat screenshot = CaptureWindowAsMat(gameWindow, scanLeft, scanTop, scanWidth, scanHeight))
                             {
-                                HandleMatchFound(template.Name, screenshot, maxLoc, template.Width, template.Height, maxVal);
-                                lastMatchTime = DateTime.Now; // Set the last match time
-                                matchFound = true;
-                                break; // Only handle the first match (highest priority)
+                                if (screenshot == null)
+                                {
+                                    if (verboseDebug && iterationCount % 100 == 0)
+                                    {
+                                        Console.WriteLine("[SPAWN] Failed to capture screenshot");
+                                    }
+                                }
+                                else
+                                {
+                                    bool debugOutputThisIteration = verboseDebug && iterationCount % 50 == 0;
+                                    if (debugOutputThisIteration)
+                                    {
+                                        Console.WriteLine($"[SPAWN] Scan #{scanCount + 1}: Comparing against {templates.Count} templates in priority order...");
+                                    }
+
+                                    bool matchFound = false;
+
+                                    // Process templates in priority order (single-threaded)
+                                    foreach (var template in templates)
+                                    {
+                                        double minVal = 0, maxVal = 0;
+                                        Point minLoc = new Point(), maxLoc = new Point();
+
+                                        // Perform template matching with result mat reuse
+                                        CvInvoke.MatchTemplate(screenshot, template.Template, resultMat, TemplateMatchingType.CcoeffNormed);
+                                        CvInvoke.MinMaxLoc(resultMat, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
+                                        bool match = maxVal >= matchThreshold;
+
+                                        if (debugOutputThisIteration || maxVal > 0.5)
+                                        {
+                                            //Console.WriteLine($"[SPAWN] Template {template.Name} (Priority: {template.Priority}): similarity={maxVal:F3} at ({maxLoc.X},{maxLoc.Y}) - {(match ? "MATCH!" : "no match")}");
+                                        }
+
+                                        if (match)
+                                        {
+                                            Rectangle matchedRect = new Rectangle(maxLoc, new Size(template.Width, template.Height));
+                                            Mat matchedRegion = new Mat(screenshot, matchedRect);
+
+                                            var (isColorSimilar, colorSimilarityPercent) = IsColorSimilar(template.Template, matchedRegion);
+
+                                            if (isColorSimilar)
+                                            {
+                                                Console.WriteLine($"[SPAWN] MATCH FOUND: {template.Name}, Shape Match: {maxVal:F3}, Color Match: {colorSimilarityPercent:F1}%");
+
+                                                HandleMatchFound(template.Name, screenshot, maxLoc, template.Width, template.Height, maxVal);
+                                                lastMatchTime = DateTime.Now;
+                                                matchFound = true;
+                                                break;
+                                            }
+                                            else
+                                            {
+                                                Console.WriteLine($"[SPAWN] REJECTED {template.Name}: Good shape ({maxVal:F3}) but poor color ({colorSimilarityPercent:F1}%)");
+                                            }
+                                        }
+
+                                    }
+
+                                    if (iterationCount % 200 == 0 && !matchFound)
+                                    {
+                                        Console.WriteLine($"[SPAWN] Scanning...");
+                                    }
+                                }
                             }
                         }
 
-                        if (iterationCount % 200 == 0 && !matchFound)
+                        // =================== COLOR CHANGE DETECTION ===================
+                        if (doColorDetection)
                         {
-                            Console.WriteLine($"[SPAWN] Scanning...");
+                            // Calculate dimensions for bottom-left 10% of screen
+                            int colorDetectWidth = (int)(windowWidth * 0.1);
+                            int colorDetectHeight = (int)(windowHeight * 0.1);
+                            int colorDetectX = 0; // Left edge
+                            int colorDetectY = windowHeight - colorDetectHeight; // Bottom edge
+
+                            using (Mat bottomLeftCorner = CaptureWindowAsMat(gameWindow, colorDetectX, colorDetectY, colorDetectWidth, colorDetectHeight))
+                            {
+                                if (bottomLeftCorner != null)
+                                {
+                                    // Save the current screenshot
+                                    string debugDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug");
+                                    if (!Directory.Exists(debugDir))
+                                    {
+                                        Directory.CreateDirectory(debugDir);
+                                    }
+
+                                    // Only save every 10 iterations to avoid disk space issues
+                                    if (iterationCount % 10 == 0)
+                                    {
+                                        CvInvoke.Imwrite(Path.Combine(debugDir, "current_capture.png"), bottomLeftCorner);
+                                    }
+
+                                    // Use the color change detection
+                                    string detectionResult = DetectColorChanges(bottomLeftCorner);
+
+                                    if (detectionResult == "change")
+                                    {
+                                        // Color change detected!
+                                        Console.WriteLine("[COLOR] Significant color change detected in bottom-left corner!");
+                                        HandleColorChangeDetection(bottomLeftCorner);
+                                        lastColorAlarmTime = DateTime.Now;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Add a small delay to avoid consuming too much CPU
+                        if (iterationCount % 5 == 0)
+                        {
+                            Thread.Sleep(1);
                         }
                     }
-
-                    // Add a small delay to avoid consuming too much CPU
-                    // This can be adjusted based on your CPU usage
-                    if (iterationCount % 5 == 0)
+                    catch (Exception ex)
                     {
-                        Thread.Sleep(1);
+                        Console.WriteLine($"[SPAWN] Scan error: {ex.Message}");
+                        Thread.Sleep(500);
                     }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[SPAWN] Scan error: {ex.Message}");
-                    Thread.Sleep(500);
                 }
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SPAWN] Watcher thread error: {ex.Message}");
+            }
+            finally
+            {
+                Console.WriteLine("[SPAWN] Optimized watcher thread exited");
+            }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[SPAWN] Watcher thread error: {ex.Message}");
-        }
-        finally
-        {
-            Console.WriteLine("[SPAWN] Optimized watcher thread exited");
-        }
-    }
 
-        // In the SPAWNWATCHER class, modify the HandleMatchFound method:
+        private static (bool, double) IsColorSimilar(Mat template, Mat matchedRegion, double colorThreshold = 30.0)
+        {
+            MCvScalar templateMean = CvInvoke.Mean(template);
+            MCvScalar matchedMean = CvInvoke.Mean(matchedRegion);
 
+            double colorDistance = Math.Sqrt(
+                Math.Pow(templateMean.V0 - matchedMean.V0, 2) +
+                Math.Pow(templateMean.V1 - matchedMean.V1, 2) +
+                Math.Pow(templateMean.V2 - matchedMean.V2, 2)
+            );
+
+            double maxPossibleDistance = Math.Sqrt(3 * Math.Pow(255, 2)); // 441.67
+            double similarityPercent = 100.0 * (1.0 - (colorDistance / maxPossibleDistance));
+
+            bool isSimilar = colorDistance <= colorThreshold;
+            return (isSimilar, similarityPercent);
+        }
+
+
+
+        // This method handles what happens when a template match is found
         private static void HandleMatchFound(string templateName, Mat screenshot, Point matchLocation, int templateWidth, int templateHeight, double similarity)
         {
             Console.WriteLine($"[SPAWN] !!! MATCH FOUND !!! - {templateName} - Similarity: {similarity:F3}");
@@ -3358,7 +3414,7 @@ class Program
 
             try
             {
-                // Instead of using the scan area screenshot, capture the full game window
+                // Capture full window for context
                 IntPtr gameWindow = Program.targetWindow;
                 GetClientRect(gameWindow, out RECT clientRect);
                 int windowWidth = clientRect.Right - clientRect.Left;
@@ -3399,19 +3455,7 @@ class Program
                     }
                     else
                     {
-                        // If full screenshot fails, fall back to the scan area screenshot
-                        Console.WriteLine("[SPAWN] Full window capture failed, saving scan area only");
-
-                        // Draw a rectangle on the scan area screenshot to highlight the match
-                        Rectangle matchRect = new Rectangle(matchLocation.X, matchLocation.Y, templateWidth, templateHeight);
-                        CvInvoke.Rectangle(screenshot, matchRect, new MCvScalar(0, 0, 255), 2);
-
-                        // Add text with match information
-                        string label = $"{templateName} ({similarity:F2})";
-                        Point textLocation = new Point(matchRect.X, Math.Max(0, matchRect.Y - 10));
-                        CvInvoke.PutText(screenshot, label, textLocation, FontFace.HersheyComplex, 0.5, new MCvScalar(0, 0, 255), 2);
-
-                        // Save the highlighted match
+                        // Fall back to the scan area screenshot
                         CvInvoke.Imwrite(matchPath, screenshot);
                         Console.WriteLine($"[SPAWN] Scan area match screenshot saved to: {matchPath}");
                     }
@@ -3422,11 +3466,350 @@ class Program
                 Console.WriteLine($"[SPAWN] Error saving match screenshot: {ex.Message}");
             }
 
+            // Trigger the alarm
             TriggerAlarm(templateName);
         }
 
-        // You'll also need to ensure the CaptureWindowAsMat method is accessible
-        // This modified version uses the same method but is now used with the full window dimensions
+        private static Mat referenceImage = null;
+        private static DateTime referenceImageTime = DateTime.MinValue;
+        private static bool isFirstCapture = true;
+        private static readonly TimeSpan referenceUpdateInterval = TimeSpan.FromMinutes(10); // Update reference every 10 minutes
+
+        // Color change detection settings
+        private static double colorDifferenceThreshold = 30.0; // Threshold for considering a pixel "changed"
+        private static double changedPixelPercentageThreshold = 2.0; // Percentage of changed pixels to trigger detection
+        private static bool colorChangeAlarmEnabled = true;
+        private static readonly object colorDetectionLock = new object();
+
+        // Color change detection method
+        private static string DetectColorChanges(Mat currentImage)
+        {
+            try
+            {
+                // Save original input image for debugging
+                string debugDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug");
+                if (!Directory.Exists(debugDir))
+                {
+                    Directory.CreateDirectory(debugDir);
+                }
+                CvInvoke.Imwrite(Path.Combine(debugDir, "original_input.png"), currentImage);
+
+                lock (colorDetectionLock)
+                {
+                    // On first capture, just save the reference image and return
+                    if (isFirstCapture || referenceImage == null)
+                    {
+                        if (referenceImage != null)
+                        {
+                            referenceImage.Dispose();
+                        }
+
+                        referenceImage = currentImage.Clone();
+                        referenceImageTime = DateTime.Now;
+                        isFirstCapture = false;
+
+                        Console.WriteLine("[COLOR] First capture - saved as reference image");
+                        CvInvoke.Imwrite(Path.Combine(debugDir, "reference_image.png"), referenceImage);
+                        return null;
+                    }
+
+                    // Check if we need to update the reference image
+                    if (DateTime.Now - referenceImageTime > referenceUpdateInterval)
+                    {
+                        // Only update reference if current image doesn't have significant changes
+                        // This prevents a gradual drift toward the "alert" state
+                        bool hasSignificantChanges = CheckForColorChanges(currentImage, referenceImage, debugDir, "reference_update_check");
+                        if (!hasSignificantChanges)
+                        {
+                            Console.WriteLine("[COLOR] Updating reference image (scheduled update)");
+                            referenceImage.Dispose();
+                            referenceImage = currentImage.Clone();
+                            referenceImageTime = DateTime.Now;
+                            CvInvoke.Imwrite(Path.Combine(debugDir, "updated_reference_image.png"), referenceImage);
+                        }
+                        else
+                        {
+                            Console.WriteLine("[COLOR] Skipping reference update because significant changes detected");
+                        }
+                    }
+
+                    // Check for color changes
+                    bool changeDetected = CheckForColorChanges(currentImage, referenceImage, debugDir, "current_diff");
+
+                    if (changeDetected)
+                    {
+                        Console.WriteLine("[COLOR] Significant color change detected!");
+                        CvInvoke.Imwrite(Path.Combine(debugDir, "triggered_current.png"), currentImage);
+                        return "change"; // Return a simple indicator that a change was detected
+                    }
+                }
+
+                return null; // No significant change detected
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[COLOR] Error in color change detection: {ex.Message}");
+                return null;
+            }
+        }
+
+        // Helper method to check for color changes between two images
+        private static bool CheckForColorChanges(Mat currentImage, Mat referenceImage, string debugDir, string debugPrefix)
+        {
+            // Create result image to store difference visualization
+            using (Mat diffImage = new Mat(currentImage.Size, DepthType.Cv8U, 3))
+            {
+                // FIXED: Don't try to convert BGR to BGR, just use the images directly
+                // Both images should already be in BGR format from capture
+
+                // Split the images into BGR channels
+                using (VectorOfMat currentChannels = new VectorOfMat())
+                using (VectorOfMat referenceChannels = new VectorOfMat())
+                {
+                    CvInvoke.Split(currentImage, currentChannels);
+                    CvInvoke.Split(referenceImage, referenceChannels);
+
+                    // Create mask for each channel that's different beyond threshold
+                    using (Mat bDiff = new Mat())
+                    using (Mat gDiff = new Mat())
+                    using (Mat rDiff = new Mat())
+                    using (Mat combinedMask = new Mat(currentImage.Rows, currentImage.Cols, DepthType.Cv8U, 1))
+                    {
+                        // Calculate absolute difference for each channel
+                        CvInvoke.AbsDiff(currentChannels[0], referenceChannels[0], bDiff);
+                        CvInvoke.AbsDiff(currentChannels[1], referenceChannels[1], gDiff);
+                        CvInvoke.AbsDiff(currentChannels[2], referenceChannels[2], rDiff);
+
+                        // Save the channel differences for debugging
+                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_b_diff.png"), bDiff);
+                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_g_diff.png"), gDiff);
+                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_r_diff.png"), rDiff);
+
+                        // Create mask of pixels that differ significantly in any channel
+                        using (Mat bMask = new Mat())
+                        using (Mat gMask = new Mat())
+                        using (Mat rMask = new Mat())
+                        {
+                            CvInvoke.Threshold(bDiff, bMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
+                            CvInvoke.Threshold(gDiff, gMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
+                            CvInvoke.Threshold(rDiff, rMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
+
+                            // Combine masks - if any channel differs significantly, mark the pixel
+                            CvInvoke.BitwiseOr(bMask, gMask, combinedMask);
+                            CvInvoke.BitwiseOr(combinedMask, rMask, combinedMask);
+
+                            // Save the combined mask for debugging
+                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_combined_mask.png"), combinedMask);
+
+                            // Count changed pixels
+                            double totalPixels = combinedMask.Rows * combinedMask.Cols;
+                            double changedPixels = CvInvoke.CountNonZero(combinedMask);
+                            double percentChanged = (changedPixels / totalPixels) * 100.0;
+
+                            //Console.WriteLine($"[COLOR] Change detection: {percentChanged:F2}% pixels changed (threshold: {changedPixelPercentageThreshold}%)");
+
+                            // Visualize the changes
+                            currentImage.CopyTo(diffImage);
+
+                            // Mark changed areas with red
+                            using (Mat redLayer = new Mat(diffImage.Size, DepthType.Cv8U, 1))
+                            {
+                                CvInvoke.BitwiseNot(combinedMask, redLayer);
+                                using (VectorOfMat diffChannels = new VectorOfMat())
+                                {
+                                    CvInvoke.Split(diffImage, diffChannels);
+                                    // Set blue and green to 0 where mask is white (changed pixels)
+                                    CvInvoke.BitwiseAnd(diffChannels[0], redLayer, diffChannels[0]);
+                                    CvInvoke.BitwiseAnd(diffChannels[1], redLayer, diffChannels[1]);
+                                    // Set red to 255 where mask is white (changed pixels)
+                                    CvInvoke.BitwiseOr(diffChannels[2], combinedMask, diffChannels[2]);
+
+                                    CvInvoke.Merge(diffChannels, diffImage);
+                                }
+                            }
+
+                            // Save the visualization
+                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_visualization.png"), diffImage);
+
+                            // Calculate if the change is significant enough
+                            bool isSignificantChange = percentChanged >= changedPixelPercentageThreshold;
+
+                            // Add text with the percentage to the visualization
+                            string percentText = $"Changed: {percentChanged:F1}% ({(isSignificantChange ? "ALERT" : "normal")})";
+                            CvInvoke.PutText(
+                                diffImage,
+                                percentText,
+                                new System.Drawing.Point(10, 20),
+                                FontFace.HersheyComplex,
+                                0.5,
+                                isSignificantChange ? new MCvScalar(0, 0, 255) : new MCvScalar(0, 255, 0),
+                                1
+                            );
+
+                            // Save the visualization with text
+                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_visualization_with_text.png"), diffImage);
+
+                            return isSignificantChange;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Simplified version without channel analysis if needed
+        private static void SaveColorDistributionInfoSimple(Mat image, string outputPath)
+        {
+            try
+            {
+                using (StreamWriter writer = new StreamWriter(outputPath))
+                {
+                    writer.WriteLine("COLOR DETECTION INFORMATION");
+                    writer.WriteLine("===========================");
+                    writer.WriteLine($"Image size: {image.Width}x{image.Height}");
+                    writer.WriteLine();
+                    writer.WriteLine("COLOR DETECTION THRESHOLDS (HSV):");
+                    writer.WriteLine("Cyan/Teal: H(75-95), S(50-255), V(50-255)");
+                    writer.WriteLine("Green: H(45-75), S(50-255), V(50-255)");
+                    writer.WriteLine("Yellow: H(15-45), S(50-255), V(50-255)");
+                    writer.WriteLine("Red: H(0-10 or 160-180), S(50-255), V(50-255)");
+                    writer.WriteLine("Blue: H(100-130), S(50-255), V(50-255)");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[COLOR] Error saving color detection info: {ex.Message}");
+            }
+        }
+
+        private static bool HasSignificantColor(Mat mask)
+        {
+            // Calculate the percentage of pixels that match the color
+            double nonZeroPixels = CvInvoke.CountNonZero(mask);
+            double totalPixels = mask.Rows * mask.Cols;
+            double percentage = (nonZeroPixels / totalPixels) * 100;
+
+            // Consider significant if at least 2% of pixels match (lowered threshold)
+            bool isSignificant = percentage >= 2.0;
+
+            //if (isSignificant)
+            //{
+            //    Console.WriteLine($"[COLOR] Found significant color: {percentage:F1}% of pixels match");
+            //}
+            //else if (percentage > 0.5) // Log even small amounts of color
+            //{
+            //    Console.WriteLine($"[COLOR] Found some color but below threshold: {percentage:F1}% of pixels match");
+            //}
+
+            return isSignificant;
+        }
+
+        private static void HandleColorChangeDetection(Mat image)
+        {
+            try
+            {
+                // Create directories for saving matches if they don't exist
+                string matchesDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "matches");
+                if (!Directory.Exists(matchesDir))
+                {
+                    Directory.CreateDirectory(matchesDir);
+                }
+
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string matchFileName = $"color_change_{timestamp}.png";
+                string matchPath = Path.Combine(matchesDir, matchFileName);
+
+                // Save the screenshot with timestamp
+                CvInvoke.Imwrite(matchPath, image);
+                Console.WriteLine($"[COLOR] Color change detection screenshot saved to: {matchPath}");
+
+                // Trigger the color change alert
+                TriggerColorChangeAlert();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[COLOR] Error handling color change detection: {ex.Message}");
+            }
+        }
+
+  
+        private static void TriggerColorChangeAlert()
+        {
+            try
+            {
+                Console.WriteLine("\n[!!!] COLOR CHANGE ALERT - UNUSUAL COLOR DETECTED [!!!]");
+                Console.WriteLine("[!!!] Stopping all threads and sounding alarm [!!!]\n");
+
+                IntPtr copyWindow = Program.targetWindow;
+                // Stop all program threads except for this one
+                Program.threadFlags["recording"] = false;
+                Program.threadFlags["playing"] = false;
+                Program.threadFlags["autopot"] = false;
+                Program.threadFlags["spawnwatch"] = false;
+                Program.memoryReadActive = false;
+                Program.programRunning = false;
+                Program.StopPositionAlertSound();  // Stop any existing alert sounds
+
+                // Create a thread for the alarm sound - will run asynchronously
+                Thread alarmSoundThread = new Thread(() =>
+                {
+                    try
+                    {
+                        // Sound the alarm until program exit - pattern for color change alert
+                        while (true)
+                        {
+                            // Distinctive pattern for color change alert
+                            Beep(1400, 200);
+                            Thread.Sleep(150);
+                            Beep(1800, 200);
+                            Thread.Sleep(150);
+                            Beep(1400, 200);
+                            Thread.Sleep(500);
+
+                            Console.WriteLine("[COLOR ALARM] Unusual color detected in game interface!");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[COLOR ALARM] Error in alarm sound: {ex.Message}");
+                    }
+                });
+
+                // Make alarm thread independent
+                alarmSoundThread.IsBackground = true;
+                alarmSoundThread.Start();
+
+                // Create a thread for focusing the game window (without sending panic keys)
+                Thread focusWindowThread = new Thread(() =>
+                {
+                    try
+                    {
+                        // Only focus the window, don't send panic keys
+                        FocusGameWindow(copyWindow);
+
+                        Console.WriteLine("[COLOR ALARM] Color change alert: Window focused, press ESC to exit");
+
+                        // Exit after a delay
+                        Thread.Sleep(60000); // Wait 60 seconds
+                        Environment.Exit(1);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[COLOR ALARM] Error in window focus: {ex.Message}");
+                        Environment.Exit(1);
+                    }
+                });
+
+                // Make sure this thread will continue even if main thread ends
+                focusWindowThread.IsBackground = false;
+                focusWindowThread.Start();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[COLOR ALARM] Error triggering color change alert: {ex.Message}");
+                Environment.Exit(1);
+            }
+        }
+
         private static void TriggerAlarm(string templateName)
         {
             try
@@ -3510,24 +3893,11 @@ class Program
             }
         }
 
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool SetForegroundWindow(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        static extern IntPtr GetForegroundWindow();
-
-        [DllImport("user32.dll")]
-        static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-        // ShowWindow command constants
-        const int SW_RESTORE = 9;
-
-        private static void SendPanicKeysToGame(IntPtr gameWindow)
+        private static void FocusGameWindow(IntPtr gameWindow)
         {
             if (gameWindow == IntPtr.Zero)
             {
-                Console.WriteLine("[ALARM] Cannot send keys - game window handle is invalid");
+                Console.WriteLine("[ALARM] Cannot focus - game window handle is invalid");
                 return;
             }
 
@@ -3552,15 +3922,34 @@ class Program
                 IntPtr activeWindow = GetForegroundWindow();
                 if (activeWindow != gameWindow)
                 {
-                    Console.WriteLine("[ALARM] Warning: Game window is not in foreground, keys may not be received");
+                    Console.WriteLine("[ALARM] Warning: Game window is not in foreground");
                 }
+                else
+                {
+                    Console.WriteLine("[ALARM] Game window successfully focused");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ALARM] Error focusing window: {ex.Message}");
+            }
+        }
 
-                Console.WriteLine("[ALARM] Sending panic keys to game...");
+        private static void SendPanicKeysToGame(IntPtr gameWindow)
+        {
+            if (gameWindow == IntPtr.Zero)
+            {
+                Console.WriteLine("[ALARM] Cannot send keys - game window handle is invalid");
+                return;
+            }
+
+            try
+            {
+                // First focus the window
+                FocusGameWindow(gameWindow);
                 Thread.Sleep(200); // Give the window time to get focus
 
                 Console.WriteLine("[ALARM] Sending panic keys to game...");
-
-                // Send ENTER key
 
                 Console.WriteLine("[ALARM] Sending ESC 3 times...");
                 for (int i = 0; i < 3; i++)
@@ -3570,7 +3959,7 @@ class Program
                 }
 
                 Random random = new Random();
-                int questionMarkCount = random.Next(4, 8); // 2 to 7 inclusive
+                int questionMarkCount = random.Next(4, 8); // 4 to 7 inclusive
 
                 Console.WriteLine($"[ALARM] Sending {questionMarkCount} question marks...");
 
@@ -3583,7 +3972,6 @@ class Program
 
                 SendKeys.SendWait("{ENTER}");
                 Thread.Sleep(1);
-
 
                 for (int i = 0; i < questionMarkCount; i++)
                 {
@@ -3607,7 +3995,7 @@ class Program
                     string[] directions = new string[] { "{UP}", "{RIGHT}", "{DOWN}", "{LEFT}" };
                     Random rand = new Random();
 
-                    // Random number of movements per cycle (2-5 movements)
+                    // Random number of movements per cycle (100-250 movements)
                     int movementsInCycle = rand.Next(100, 250);
 
                     for (int i = 0; i < movementsInCycle; i++)
@@ -3628,11 +4016,10 @@ class Program
                             SendKeys.SendWait(direction);  // Sometimes just send arrow key without CTRL
                         }
 
-                        // Random delay between key presses (20-120 ms)
+                        // Random delay between key presses (20-30 ms)
                         int keyDelay = rand.Next(20, 30);
                         Thread.Sleep(keyDelay);
                     }
-
                 }
 
                 Console.WriteLine("[ALARM] Finished sending panic keys to game");
@@ -3643,6 +4030,59 @@ class Program
             }
         }
 
+        // Win32 API declarations
+        [DllImport("user32.dll")]
+        static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("gdi32.dll")]
+        static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight,
+            IntPtr hdcSrc, int nXSrc, int nYSrc, uint dwRop);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr GetDC(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        [DllImport("gdi32.dll")]
+        static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+        [DllImport("gdi32.dll")]
+        static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+
+        [DllImport("gdi32.dll")]
+        static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
+
+        [DllImport("gdi32.dll")]
+        static extern bool DeleteObject(IntPtr hObject);
+
+        [DllImport("gdi32.dll")]
+        static extern bool DeleteDC(IntPtr hdc);
+
+        [DllImport("kernel32.dll")]
+        static extern bool Beep(int frequency, int duration);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        // ShowWindow command constants
+        const int SW_RESTORE = 9;
+
+        // BitBlt constant
+        const uint SRCCOPY = 0x00CC0020;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT
+        {
+            public int Left, Top, Right, Bottom;
+        }
     }
 
 
