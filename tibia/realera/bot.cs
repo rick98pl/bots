@@ -3,16 +3,27 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Collections.Concurrent;
+using System.Drawing;
+using System.Diagnostics;
+using System.Drawing.Drawing2D;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
-using System;
-using System.Buffers.Text;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
+using Emgu.CV.Util;
+using System.Windows.Forms;  // For SendKeys
+
+
+
 class Program
 {
     [DllImport("kernel32.dll")]
     static extern IntPtr OpenProcess(int dwDesiredAccess, bool bInheritHandle, int processId);
     [DllImport("user32.dll", SetLastError = true)]
     static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-    [DllImport("kernel32.dll")]
+    [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool ReadProcessMemory(
         IntPtr hProcess,
         IntPtr lpBaseAddress,
@@ -34,6 +45,7 @@ class Program
     const int VK_UP = 0x26;
     const int VK_RIGHT = 0x27;
     const int VK_DOWN = 0x28;
+    static extern bool SetForegroundWindow(IntPtr hWnd);
     static class Keys
     {
         public static readonly Dictionary<string, int> KeyMap = new Dictionary<string, int>
@@ -55,7 +67,7 @@ class Program
             KeyMap.ContainsKey(keyName) ? KeyMap[keyName] : -1;
     }
     const int DEFAULT_HP_THRESHOLD = 50;
-    const int DEFAULT_BEEP_HP_THRESHOLD = 30;
+    const int DEFAULT_BEEP_HP_THRESHOLD = 1;
     const int DEFAULT_MANA_THRESHOLD = 70;
     const string DEFAULT_HP_KEY_NAME = "F1";
     const string DEFAULT_MANA_KEY_NAME = "F2";
@@ -126,6 +138,7 @@ class Program
         threadFlags["recording"] = false;
         threadFlags["playing"] = false;
         threadFlags["autopot"] = true;
+        threadFlags["spawnwatch"] = true;
 
         // Initialize the sound system
         InitializeSounds();
@@ -231,6 +244,13 @@ class Program
         autoPotionThread.IsBackground = true;
         autoPotionThread.Name = "AutoPotion";
         autoPotionThread.Start();
+
+        // Start SPAWNWATCHER if enabled
+        if (threadFlags["spawnwatch"])
+        {
+            SPAWNWATCHER.Start(targetWindow, pixelSize);
+        }
+
         Console.WriteLine("Worker threads started successfully");
     }
     static void StopWorkerThreads()
@@ -238,6 +258,7 @@ class Program
         memoryReadActive = false;
         threadFlags["recording"] = false;
         threadFlags["playing"] = false;
+        SPAWNWATCHER.Stop();
         StopPositionAlertSound(); // Stop any playing alert sounds
         Console.WriteLine("Worker threads stopping...");
         Sleep(1000);
@@ -384,6 +405,7 @@ class Program
     static void AutoPotionThread()
     {
         Console.WriteLine("Auto-potion thread started");
+        DisplayStats();
         while (memoryReadActive)
         {
             try
@@ -425,7 +447,7 @@ class Program
                     {
                         //StopPositionAlertSound();
                     }
-                    if (manaPercent <= DEFAULT_MANA_THRESHOLD)
+                    if (false && manaPercent <= DEFAULT_MANA_THRESHOLD)
                     {
                         if ((now - lastManaActionTime).TotalMilliseconds >= thresholdms)
                         {
@@ -577,6 +599,12 @@ class Program
                 threadFlags["autopot"] = false;
                 // Make sure to stop any playing sounds
                 StopPositionAlertSound();
+                break;
+            case ConsoleKey.W:
+                // Toggle spawn watcher
+                bool isActive = SPAWNWATCHER.Toggle(targetWindow, pixelSize);
+                threadFlags["spawnwatch"] = isActive;
+                Console.WriteLine($"Spawn watcher {(isActive ? "enabled" : "disabled")}");
                 break;
         }
     }
@@ -1463,6 +1491,11 @@ class Program
             Console.WriteLine($"  - Equipment position: ({equipmentX},{equipmentY})");
             Console.WriteLine($"  - Second slot position: ({secondSlotBpX},{secondSLotBpY})");
         }
+
+        if (threadFlags["spawnwatch"] && SPAWNWATCHER.IsActive())
+        {
+            SPAWNWATCHER.UpdateScanArea(targetWindow, pixelSize);
+        }
     }
 
     static bool ClickWaypoint(Coordinate target)
@@ -1693,7 +1726,7 @@ class Program
     }
     static void ClickAroundCharacter(IntPtr hWnd)
     {
-        ClickSecondSlotInBackpack(hWnd);
+        //ClickSecondSlotInBackpack(hWnd);
         (int dx, int dy)[] directions = new (int, int)[]
         {
             (0, -1),
@@ -1729,6 +1762,7 @@ class Program
         }
         //CorpseEatFood(targetWindow);
         //CloseCorspe(targetWindow);
+        ClickSecondSlotInBackpack(hWnd);
     }
     const int WM_MOUSEMOVE = 0x0200;
     const int WM_RBUTTONDOWN = 0x0204;
@@ -1855,6 +1889,21 @@ class Program
         }
     }
     static List<string> blacklistedMonsterNames = new List<string> { "Rat", "Rabbit", "Snake" };
+    static List<string> whitelistedMonsterNames = new List<string> {
+        "Tarantula",
+        "Poison Spider"
+    };
+
+//    static List<string> whitelistedMonsterNames = new List<string> {
+//    "Tarantula",
+//    "Poison Spider",
+//    "Centipede",
+//    "Dworc Venomsniper",
+//    "Dworc Fleshhunter",
+//    "Dworc Voodoomaster",
+//    "Crypt Shambler"
+//};
+
     static (int monsterX, int monsterY, int monsterZ, string monsterName) GetTargetMonsterInfo()
     {
         int targetId = 0;
@@ -1927,8 +1976,65 @@ class Program
                 }
             }
         }
+
+        if (!string.IsNullOrEmpty(monsterName) && monsterName != "" && !whitelistedMonsterNames.Contains(monsterName))
+        {
+            Console.WriteLine($"[CRITICAL] Non-whitelisted monster detected: '{monsterName}'. Stopping all threads!");
+
+            // Stop all threads
+            threadFlags["recording"] = false;
+            threadFlags["playing"] = false;
+            threadFlags["autopot"] = false;
+            memoryReadActive = false;
+
+            // Start the 60-second emergency alert
+            PlayEmergencyAlert(60);
+
+            // Consider adding this to force the program to exit completely after the alert
+            Environment.Exit(1);
+        }
+
         return (monsterX, monsterY, monsterZ, monsterName);
     }
+
+    static void PlayEmergencyAlert(int durationSeconds)
+    {
+        Console.WriteLine($"[EMERGENCY] Playing alert for {durationSeconds} seconds!");
+
+        // Create a dedicated thread for the alert that won't be stopped by the other thread controls
+        Thread alertThread = new Thread(() =>
+        {
+            DateTime endTime = DateTime.Now.AddSeconds(durationSeconds);
+
+            try
+            {
+                while (DateTime.Now < endTime)
+                {
+                    // Use a more urgent, higher-pitched sound for the emergency
+                    Beep(2000, 300);  // Higher frequency
+                    Thread.Sleep(100);
+                    Beep(1800, 300);
+                    Thread.Sleep(100);
+                    Beep(2000, 300);
+
+                    // Small pause between alert sequences
+                    Thread.Sleep(500);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in emergency alert: {ex.Message}");
+            }
+        });
+
+        // Make sure this thread will continue even if the main thread ends
+        alertThread.IsBackground = false;
+        alertThread.Start();
+
+        // Wait for the alert to finish
+        alertThread.Join();
+    }
+
     static int lastRingEquippedTargetId = 0;
     static bool isRingCurrentlyEquipped = false;
     static List<string> blacklistedRingMonsters = new List<string> { "Poison Spider", };
@@ -2670,4 +2776,876 @@ class Program
             }
         }
     }
+    static class SPAWNWATCHER
+    {
+        private static string imageFolderPath = "images";
+        private static bool watcherActive = false;
+        private static Thread watcherThread = null;
+        private static object watcherLock = new object();
+        private static double matchThreshold = 0.79; // Adjust this based on testing
+        private static bool verboseDebug = false;
+        private static long scanCount = 0;
+        private static long totalScanTime = 0;
+        private static DateTime lastDebugOutput = DateTime.MinValue;
+        private static readonly TimeSpan debugOutputInterval = TimeSpan.FromSeconds(3);
+        private static int scanCenterX = 0;
+        private static int scanCenterY = 0;
+        private static int scanWidth = 0;
+        private static int scanHeight = 0;
+
+        // Win32 API imports
+        [DllImport("user32.dll")]
+        static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("gdi32.dll")]
+        static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight,
+            IntPtr hdcSrc, int nXSrc, int nYSrc, uint dwRop);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr GetDC(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        [DllImport("gdi32.dll")]
+        static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+        [DllImport("gdi32.dll")]
+        static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+
+        [DllImport("gdi32.dll")]
+        static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
+
+        [DllImport("gdi32.dll")]
+        static extern bool DeleteObject(IntPtr hObject);
+
+        [DllImport("gdi32.dll")]
+        static extern bool DeleteDC(IntPtr hdc);
+
+        [DllImport("kernel32.dll")]
+        static extern bool Beep(int frequency, int duration);
+
+        const uint SRCCOPY = 0x00CC0020;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT
+        {
+            public int Left, Top, Right, Bottom;
+        }
+
+        // Class to store template information
+        private static DateTime lastMatchTime = DateTime.MinValue;
+        private static readonly TimeSpan matchCooldown = TimeSpan.FromSeconds(30); // 30 second cooldown between matches
+
+        // Class to store template information
+        private class TemplateInfo
+        {
+            public string FilePath { get; set; }
+            public Mat Template { get; set; }
+            public string Name => Path.GetFileNameWithoutExtension(FilePath);
+            public int Width => Template?.Width ?? 0;
+            public int Height => Template?.Height ?? 0;
+            public int Priority { get; set; } = 0; // NEW: Default priority is 0
+        }
+
+        private static List<TemplateInfo> templates = new List<TemplateInfo>();
+
+        public static bool IsActive()
+        {
+            lock (watcherLock)
+            {
+                return watcherActive;
+            }
+        }
+
+        public static string GetStats()
+        {
+            lock (watcherLock)
+            {
+                if (!watcherActive || scanCount == 0)
+                    return "No stats available";
+                double avgScanTimeMs = (double)totalScanTime / scanCount;
+                double scansPerSecond = scanCount > 0 ? 1000.0 / avgScanTimeMs : 0;
+                return $"Scans: {scanCount}, Avg time: {avgScanTimeMs:F2}ms, Rate: {scansPerSecond:F1}/sec";
+            }
+        }
+
+        public static void Start(IntPtr gameWindow, int pixelSize)
+        {
+            lock (watcherLock)
+            {
+                if (watcherActive)
+                {
+                    Console.WriteLine("[SPAWN] Watcher already running");
+                    return;
+                }
+
+                if (!Directory.Exists(imageFolderPath))
+                {
+                    Directory.CreateDirectory(imageFolderPath);
+                    Console.WriteLine($"[SPAWN] Created image directory: {Path.GetFullPath(imageFolderPath)}");
+                    Console.WriteLine("[SPAWN] Place PNG or JPG template images in this directory to detect them");
+                }
+
+                // Calculate scan area
+                GetClientRect(gameWindow, out RECT rect);
+                scanCenterX = (rect.Right - rect.Left) / 2 - 186;
+                scanCenterY = (rect.Bottom - rect.Top) / 2 - 260; // Assuming baseYOffset is 260
+                scanWidth = pixelSize * 10;
+                scanHeight = pixelSize * 10;
+
+                Console.WriteLine($"[SPAWN] Scan area set to: Center({scanCenterX},{scanCenterY}), Size({scanWidth}x{scanHeight})");
+
+                LoadTemplates();
+
+                if (templates.Count == 0)
+                {
+                    Console.WriteLine($"[SPAWN] No template images found in {Path.GetFullPath(imageFolderPath)}");
+                    Console.WriteLine("[SPAWN] Add .png or .jpg files to detect them in-game");
+                }
+                else
+                {
+                    Console.WriteLine($"[SPAWN] Loaded {templates.Count} template(s) to watch for:");
+                    foreach (var template in templates)
+                    {
+                        Console.WriteLine($"[SPAWN] - {template.Name} ({template.Width}x{template.Height})");
+                    }
+                }
+
+                scanCount = 0;
+                totalScanTime = 0;
+                watcherActive = true;
+
+                watcherThread = new Thread(() => WatcherThreadFunction(gameWindow));
+                watcherThread.IsBackground = true;
+                watcherThread.Name = "OptimizedSpawnWatcher";
+                watcherThread.Start();
+
+                Console.WriteLine("[SPAWN] Optimized watcher thread started");
+            }
+        }
+
+        public static void Stop()
+        {
+            lock (watcherLock)
+            {
+                if (!watcherActive)
+                {
+                    return;
+                }
+
+                watcherActive = false;
+                Console.WriteLine("[SPAWN] Watcher stopping...");
+
+                if (scanCount > 0)
+                {
+                    double avgScanTimeMs = (double)totalScanTime / scanCount;
+                    double scansPerSecond = 1000.0 / avgScanTimeMs;
+                    Console.WriteLine($"[SPAWN] Final stats: {scanCount} scans completed");
+                    Console.WriteLine($"[SPAWN] Average scan time: {avgScanTimeMs:F2}ms");
+                    Console.WriteLine($"[SPAWN] Scan rate: {scansPerSecond:F1} scans/second");
+                }
+
+                // Clean up resources
+                foreach (var template in templates)
+                {
+                    template.Template?.Dispose();
+                }
+                templates.Clear();
+            }
+        }
+
+        public static bool Toggle(IntPtr gameWindow, int pixelSize)
+        {
+            lock (watcherLock)
+            {
+                if (watcherActive)
+                {
+                    Stop();
+                    return false;
+                }
+                else
+                {
+                    Start(gameWindow, pixelSize);
+                    return true;
+                }
+            }
+        }
+
+        public static void UpdateScanArea(IntPtr gameWindow, int pixelSize)
+        {
+            lock (watcherLock)
+            {
+                if (!watcherActive)
+                    return;
+
+                GetClientRect(gameWindow, out RECT rect);
+                scanCenterX = (rect.Right - rect.Left) / 2 - 186;
+                scanCenterY = (rect.Bottom - rect.Top) / 2 - 260; // Assuming baseYOffset is 260
+                scanWidth = pixelSize * 10;
+                scanHeight = pixelSize * 10;
+
+                Console.WriteLine($"[SPAWN] Scan area updated: Center({scanCenterX},{scanCenterY}), Size({scanWidth}x{scanHeight})");
+            }
+        }
+
+        public static void ReloadTemplates()
+        {
+            lock (watcherLock)
+            {
+                foreach (var template in templates)
+                {
+                    template.Template?.Dispose();
+                }
+                templates.Clear();
+
+                LoadTemplates();
+
+                if (templates.Count == 0)
+                {
+                    Console.WriteLine($"[SPAWN] No template images found in {Path.GetFullPath(imageFolderPath)}");
+                }
+                else
+                {
+                    Console.WriteLine($"[SPAWN] Reloaded {templates.Count} template(s) to watch for:");
+                    foreach (var template in templates)
+                    {
+                        Console.WriteLine($"[SPAWN] - {template.Name} ({template.Width}x{template.Height})");
+                    }
+                }
+            }
+        }
+
+        private static void LoadTemplates()
+        {
+            try
+            {
+                if (!Directory.Exists(imageFolderPath))
+                {
+                    return;
+                }
+
+                string[] imageFiles = Directory.GetFiles(imageFolderPath, "*.*", SearchOption.TopDirectoryOnly)
+                    .Where(f => IsImageFile(f))
+                    .ToArray();
+
+                Console.WriteLine($"[SPAWN] Found {imageFiles.Length} image files in {Path.GetFullPath(imageFolderPath)}");
+
+                // Load template priority settings if available
+                Dictionary<string, int> priorityMap = LoadTemplatePriorities();
+
+                foreach (string filePath in imageFiles)
+                {
+                    try
+                    {
+                        string fileName = Path.GetFileNameWithoutExtension(filePath);
+                        Console.WriteLine($"[SPAWN] Loading template: {Path.GetFileName(filePath)}");
+
+                        // Load template image directly as Mat
+                        Mat template = CvInvoke.Imread(filePath, ImreadModes.Color);
+
+                        if (template.IsEmpty)
+                        {
+                            Console.WriteLine($"[SPAWN] Failed to load template: {Path.GetFileName(filePath)}");
+                            continue;
+                        }
+
+                        // Get priority from map or use default
+                        int priority = 0;
+                        if (priorityMap.ContainsKey(fileName))
+                        {
+                            priority = priorityMap[fileName];
+                        }
+
+                        Console.WriteLine($"[SPAWN] Loaded {Path.GetFileName(filePath)}: {template.Width}x{template.Height}, Priority: {priority}");
+
+                        templates.Add(new TemplateInfo
+                        {
+                            FilePath = filePath,
+                            Template = template,
+                            Priority = priority
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[SPAWN] Error loading template {filePath}: {ex.Message}");
+                    }
+                }
+
+                // Sort templates by priority (higher priority first)
+                templates = templates.OrderByDescending(t => t.Priority).ToList();
+
+                Console.WriteLine("[SPAWN] Templates sorted by priority:");
+                foreach (var template in templates)
+                {
+                    Console.WriteLine($"[SPAWN] - {template.Name} (Priority: {template.Priority})");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SPAWN] Error loading templates: {ex.Message}");
+            }
+        }
+
+        private static Dictionary<string, int> LoadTemplatePriorities()
+        {
+            Dictionary<string, int> priorities = new Dictionary<string, int>();
+            string priorityFilePath = Path.Combine(imageFolderPath, "priorities.txt");
+
+            if (!File.Exists(priorityFilePath))
+            {
+                Console.WriteLine("[SPAWN] No priorities.txt file found. Using default priorities.");
+                Console.WriteLine("[SPAWN] To set priorities, create a file 'images/priorities.txt' with lines like 'image_name.png=10'");
+                return priorities;
+            }
+
+            try
+            {
+                string[] lines = File.ReadAllLines(priorityFilePath);
+                foreach (string line in lines)
+                {
+                    if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#"))
+                        continue;
+
+                    string[] parts = line.Split('=');
+                    if (parts.Length == 2)
+                    {
+                        string imageName = parts[0].Trim();
+                        if (int.TryParse(parts[1].Trim(), out int priority))
+                        {
+                            priorities[imageName] = priority;
+                            Console.WriteLine($"[SPAWN] Priority set: {imageName} = {priority}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SPAWN] Error loading priorities: {ex.Message}");
+            }
+
+            return priorities;
+        }
+
+
+        private static bool IsImageFile(string filePath)
+        {
+            string ext = Path.GetExtension(filePath).ToLower();
+            return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp";
+        }
+
+        private static unsafe Mat CaptureWindowAsMat(IntPtr hWnd, int x, int y, int width, int height)
+        {
+            IntPtr hdcWindow = IntPtr.Zero;
+            IntPtr hdcMemDC = IntPtr.Zero;
+            IntPtr hBitmap = IntPtr.Zero;
+            IntPtr hOld = IntPtr.Zero;
+            Mat result = null;
+
+            try
+            {
+                hdcWindow = GetDC(hWnd);
+                if (hdcWindow == IntPtr.Zero)
+                {
+                    if (verboseDebug)
+                        Console.WriteLine("[SPAWN] GetDC failed");
+                    return null;
+                }
+
+                hdcMemDC = CreateCompatibleDC(hdcWindow);
+                if (hdcMemDC == IntPtr.Zero)
+                {
+                    if (verboseDebug)
+                        Console.WriteLine("[SPAWN] CreateCompatibleDC failed");
+                    return null;
+                }
+
+                hBitmap = CreateCompatibleBitmap(hdcWindow, width, height);
+                if (hBitmap == IntPtr.Zero)
+                {
+                    if (verboseDebug)
+                        Console.WriteLine("[SPAWN] CreateCompatibleBitmap failed");
+                    return null;
+                }
+
+                hOld = SelectObject(hdcMemDC, hBitmap);
+
+                bool success = BitBlt(hdcMemDC, 0, 0, width, height, hdcWindow, x, y, SRCCOPY);
+                if (!success)
+                {
+                    if (verboseDebug)
+                        Console.WriteLine("[SPAWN] BitBlt failed");
+                    return null;
+                }
+
+                SelectObject(hdcMemDC, hOld);
+
+                // Create a temporary Bitmap and convert to Mat
+                using (Bitmap bmp = Bitmap.FromHbitmap(hBitmap))
+                {
+                    // This is much faster than using Image<Bgr, byte>
+                    Rectangle rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
+                    BitmapData bmpData = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+
+                    try
+                    {
+                        // Create a Mat directly from the bitmap data - no copying
+                        result = new Mat(bmp.Height, bmp.Width, DepthType.Cv8U, 3, bmpData.Scan0, bmpData.Stride);
+                        // Create a deep copy to keep the Mat alive after unlocking the bitmap
+                        result = result.Clone();
+                    }
+                    finally
+                    {
+                        bmp.UnlockBits(bmpData);
+                    }
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                if (verboseDebug)
+                    Console.WriteLine($"[SPAWN] Screenshot error: {ex.Message}");
+                result?.Dispose();
+                return null;
+            }
+            finally
+            {
+                if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
+                if (hdcMemDC != IntPtr.Zero) DeleteDC(hdcMemDC);
+                if (hdcWindow != IntPtr.Zero) ReleaseDC(hWnd, hdcWindow);
+            }
+        }
+
+        private static void WatcherThreadFunction(IntPtr gameWindow)
+    {
+        Console.WriteLine("[SPAWN] Optimized watcher thread started");
+
+        try
+        {
+            Stopwatch iterationTimer = new Stopwatch();
+            int iterationCount = 0;
+
+            // Create and reuse result matrices for template matching
+            Mat resultMat = new Mat();
+
+            while (watcherActive)
+            {
+                try
+                {
+                    iterationTimer.Restart();
+                    iterationCount++;
+
+                    if (templates.Count == 0)
+                    {
+                        if (iterationCount % 20 == 0)
+                        {
+                            Console.WriteLine("[SPAWN] No templates to watch for. Please add images to the images folder.");
+                        }
+                        Thread.Sleep(1000);
+                        continue;
+                    }
+
+                    int scanLeft = Math.Max(0, scanCenterX - (scanWidth / 2));
+                    int scanTop = Math.Max(0, scanCenterY - (scanHeight / 2));
+
+                    // Output debug info occasionally
+                    if (verboseDebug && DateTime.Now.Subtract(lastDebugOutput) > debugOutputInterval)
+                    {
+                        Console.WriteLine($"[SPAWN] Scanning area: X={scanLeft}-{scanLeft + scanWidth}, Y={scanTop}-{scanTop + scanHeight}");
+                        lastDebugOutput = DateTime.Now;
+                    }
+
+                    // Check if we're still in match cooldown period
+                    if ((DateTime.Now - lastMatchTime) < matchCooldown)
+                    {
+                        // Still in cooldown, skip scanning
+                        Thread.Sleep(100);
+                        continue;
+                    }
+
+                    // Capture the screen area as a Mat
+                    using (Mat screenshot = CaptureWindowAsMat(gameWindow, scanLeft, scanTop, scanWidth, scanHeight))
+                    {
+                        if (screenshot == null)
+                        {
+                            if (verboseDebug && iterationCount % 100 == 0)
+                            {
+                                Console.WriteLine("[SPAWN] Failed to capture screenshot");
+                            }
+                            continue;
+                        }
+
+                        bool debugOutputThisIteration = verboseDebug && iterationCount % 50 == 0;
+                        if (debugOutputThisIteration)
+                        {
+                            Console.WriteLine($"[SPAWN] Scan #{scanCount + 1}: Comparing against {templates.Count} templates in priority order...");
+                        }
+
+                        bool matchFound = false;
+
+                        // MODIFIED: Process templates in priority order (single-threaded)
+                        foreach (var template in templates)
+                        {
+                            double minVal = 0, maxVal = 0;
+                            Point minLoc = new Point(), maxLoc = new Point();
+
+                            // Perform template matching with result mat reuse
+                            CvInvoke.MatchTemplate(screenshot, template.Template, resultMat, TemplateMatchingType.CcoeffNormed);
+                            CvInvoke.MinMaxLoc(resultMat, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
+                            bool match = maxVal >= matchThreshold;
+
+                            if (debugOutputThisIteration || maxVal > 0.5)
+                            {
+                                Console.WriteLine($"[SPAWN] Template {template.Name} (Priority: {template.Priority}): similarity={maxVal:F3} at ({maxLoc.X},{maxLoc.Y}) - {(match ? "MATCH!" : "no match")}");
+                            }
+
+                            if (match)
+                            {
+                                HandleMatchFound(template.Name, screenshot, maxLoc, template.Width, template.Height, maxVal);
+                                lastMatchTime = DateTime.Now; // Set the last match time
+                                matchFound = true;
+                                break; // Only handle the first match (highest priority)
+                            }
+                        }
+
+                        if (iterationCount % 200 == 0 && !matchFound)
+                        {
+                            Console.WriteLine($"[SPAWN] Scanning...");
+                        }
+                    }
+
+                    // Add a small delay to avoid consuming too much CPU
+                    // This can be adjusted based on your CPU usage
+                    if (iterationCount % 5 == 0)
+                    {
+                        Thread.Sleep(1);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SPAWN] Scan error: {ex.Message}");
+                    Thread.Sleep(500);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SPAWN] Watcher thread error: {ex.Message}");
+        }
+        finally
+        {
+            Console.WriteLine("[SPAWN] Optimized watcher thread exited");
+        }
+    }
+
+        // In the SPAWNWATCHER class, modify the HandleMatchFound method:
+
+        private static void HandleMatchFound(string templateName, Mat screenshot, Point matchLocation, int templateWidth, int templateHeight, double similarity)
+        {
+            Console.WriteLine($"[SPAWN] !!! MATCH FOUND !!! - {templateName} - Similarity: {similarity:F3}");
+
+            // Create directories for saving matches if they don't exist
+            string matchesDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "matches");
+            if (!Directory.Exists(matchesDir))
+            {
+                Directory.CreateDirectory(matchesDir);
+            }
+
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string matchFileName = $"match_{templateName}_{timestamp}.png";
+            string matchPath = Path.Combine(matchesDir, matchFileName);
+
+            try
+            {
+                // Instead of using the scan area screenshot, capture the full game window
+                IntPtr gameWindow = Program.targetWindow;
+                GetClientRect(gameWindow, out RECT clientRect);
+                int windowWidth = clientRect.Right - clientRect.Left;
+                int windowHeight = clientRect.Bottom - clientRect.Top;
+
+                // Capture the full window
+                using (Mat fullScreenshot = CaptureWindowAsMat(gameWindow, 0, 0, windowWidth, windowHeight))
+                {
+                    if (fullScreenshot != null)
+                    {
+                        // Adjust match location coordinates to full window coordinates
+                        int scanLeft = Math.Max(0, scanCenterX - (scanWidth / 2));
+                        int scanTop = Math.Max(0, scanCenterY - (scanHeight / 2));
+
+                        Point fullScreenMatchLocation = new Point(
+                            scanLeft + matchLocation.X,
+                            scanTop + matchLocation.Y
+                        );
+
+                        // Draw a rectangle on the full screenshot to highlight the match
+                        Rectangle matchRect = new Rectangle(
+                            fullScreenMatchLocation.X,
+                            fullScreenMatchLocation.Y,
+                            templateWidth,
+                            templateHeight
+                        );
+
+                        CvInvoke.Rectangle(fullScreenshot, matchRect, new MCvScalar(0, 0, 255), 2);
+
+                        // Add text with match information
+                        string label = $"{templateName} ({similarity:F2})";
+                        Point textLocation = new Point(matchRect.X, Math.Max(0, matchRect.Y - 10));
+                        CvInvoke.PutText(fullScreenshot, label, textLocation, FontFace.HersheyComplex, 0.5, new MCvScalar(0, 0, 255), 2);
+
+                        // Save the highlighted match
+                        CvInvoke.Imwrite(matchPath, fullScreenshot);
+                        Console.WriteLine($"[SPAWN] Full window match screenshot saved to: {matchPath}");
+                    }
+                    else
+                    {
+                        // If full screenshot fails, fall back to the scan area screenshot
+                        Console.WriteLine("[SPAWN] Full window capture failed, saving scan area only");
+
+                        // Draw a rectangle on the scan area screenshot to highlight the match
+                        Rectangle matchRect = new Rectangle(matchLocation.X, matchLocation.Y, templateWidth, templateHeight);
+                        CvInvoke.Rectangle(screenshot, matchRect, new MCvScalar(0, 0, 255), 2);
+
+                        // Add text with match information
+                        string label = $"{templateName} ({similarity:F2})";
+                        Point textLocation = new Point(matchRect.X, Math.Max(0, matchRect.Y - 10));
+                        CvInvoke.PutText(screenshot, label, textLocation, FontFace.HersheyComplex, 0.5, new MCvScalar(0, 0, 255), 2);
+
+                        // Save the highlighted match
+                        CvInvoke.Imwrite(matchPath, screenshot);
+                        Console.WriteLine($"[SPAWN] Scan area match screenshot saved to: {matchPath}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SPAWN] Error saving match screenshot: {ex.Message}");
+            }
+
+            TriggerAlarm(templateName);
+        }
+
+        // You'll also need to ensure the CaptureWindowAsMat method is accessible
+        // This modified version uses the same method but is now used with the full window dimensions
+        private static void TriggerAlarm(string templateName)
+        {
+            try
+            {
+                Console.WriteLine("\n[!!!] CRITICAL ALARM - SPAWN DETECTED [!!!]");
+                Console.WriteLine($"[!!!] Matched template: {templateName}");
+                Console.WriteLine("[!!!] STOPPING ALL THREADS AND SOUNDING ALARM [!!!]\n");
+
+                IntPtr copyWindow = Program.targetWindow;
+                // Stop all program threads
+                Program.threadFlags["recording"] = false;
+                Program.threadFlags["playing"] = false;
+                Program.threadFlags["autopot"] = false;
+                Program.threadFlags["spawnwatch"] = false;
+                Program.memoryReadActive = false;
+                Program.programRunning = false;
+                Program.StopPositionAlertSound();  // Stop any existing alert sounds
+
+                // Create a thread for the alarm sound - will run asynchronously
+                Thread alarmSoundThread = new Thread(() =>
+                {
+                    try
+                    {
+                        // Sound the alarm until program exit
+                        while (true)
+                        {
+                            Beep(2000, 200);
+                            Thread.Sleep(50);
+                            Beep(1500, 200);
+                            Thread.Sleep(50);
+                            Beep(2000, 200);
+                            Thread.Sleep(50);
+                            Beep(1500, 200);
+                            Thread.Sleep(200);
+
+                            Console.WriteLine($"[ALARM] CRITICAL: Spawn '{templateName}' detected!");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[ALARM] Error in alarm sound: {ex.Message}");
+                    }
+                });
+
+                // Make alarm thread independent so it can run parallel to panic keys
+                alarmSoundThread.IsBackground = true;
+                alarmSoundThread.Start();
+
+                // Create a thread for sending panic keys
+                Thread panicKeysThread = new Thread(() =>
+                {
+                    try
+                    {
+                        // Send key inputs to the game
+                        SendPanicKeysToGame(copyWindow);
+
+                        Console.WriteLine("[ALARM] CRITICAL: Terminating program immediately!");
+
+                        // Force immediate program exit with error code
+                        Environment.Exit(1);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[ALARM] Error in panic keys: {ex.Message}");
+                        Environment.Exit(1); // Still exit even if there's an error
+                    }
+                });
+
+                // Make sure this thread will continue even if the main thread ends
+                panicKeysThread.IsBackground = false;
+                panicKeysThread.Start();
+
+                // Wait for panic keys thread to complete
+                panicKeysThread.Join();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ALARM] Error triggering alarm: {ex.Message}");
+                // Still try to exit the program even if there's an exception
+                Environment.Exit(1);
+            }
+        }
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        // ShowWindow command constants
+        const int SW_RESTORE = 9;
+
+        private static void SendPanicKeysToGame(IntPtr gameWindow)
+        {
+            if (gameWindow == IntPtr.Zero)
+            {
+                Console.WriteLine("[ALARM] Cannot send keys - game window handle is invalid");
+                return;
+            }
+
+            try
+            {
+                Console.WriteLine("[ALARM] Attempting to focus game window...");
+
+                // Try to bring the window to the foreground
+                if (!SetForegroundWindow(gameWindow))
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    Console.WriteLine($"[ALARM] Failed to set foreground window. Error code: {error}");
+
+                    // Alternative approach - activate the window first
+                    ShowWindow(gameWindow, SW_RESTORE);
+                    Thread.Sleep(100);
+                    SetForegroundWindow(gameWindow);
+                    Thread.Sleep(100);
+                }
+
+                // Verify the window is now active
+                IntPtr activeWindow = GetForegroundWindow();
+                if (activeWindow != gameWindow)
+                {
+                    Console.WriteLine("[ALARM] Warning: Game window is not in foreground, keys may not be received");
+                }
+
+                Console.WriteLine("[ALARM] Sending panic keys to game...");
+                Thread.Sleep(200); // Give the window time to get focus
+
+                Console.WriteLine("[ALARM] Sending panic keys to game...");
+
+                // Send ENTER key
+
+                Console.WriteLine("[ALARM] Sending ESC 3 times...");
+                for (int i = 0; i < 3; i++)
+                {
+                    SendKeys.SendWait("{ESC}");
+                    Thread.Sleep(100);
+                }
+
+                Random random = new Random();
+                int questionMarkCount = random.Next(4, 8); // 2 to 7 inclusive
+
+                Console.WriteLine($"[ALARM] Sending {questionMarkCount} question marks...");
+
+                for (int i = 0; i < questionMarkCount; i++)
+                {
+                    // Send question mark - in SendKeys, shift+/ is represented as "?"
+                    SendKeys.SendWait("?");
+                    Thread.Sleep(1);
+                }
+
+                SendKeys.SendWait("{ENTER}");
+                Thread.Sleep(1);
+
+
+                for (int i = 0; i < questionMarkCount; i++)
+                {
+                    // Send question mark - in SendKeys, shift+/ is represented as "?"
+                    SendKeys.SendWait("?");
+                    Thread.Sleep(1);
+                }
+
+                // Send ENTER key again
+                SendKeys.SendWait("{ENTER}");
+                Thread.Sleep(1);
+
+                // Prepare for arrow sequence with CTRL
+                Console.WriteLine("[ALARM] Starting CTRL+Arrow key sequence...");
+                DateTime endTime = DateTime.Now.AddSeconds(15); // Do this for 15 seconds
+
+                // Improved panic movement code with randomization
+                while (DateTime.Now < endTime)
+                {
+                    // Pick a random direction
+                    string[] directions = new string[] { "{UP}", "{RIGHT}", "{DOWN}", "{LEFT}" };
+                    Random rand = new Random();
+
+                    // Random number of movements per cycle (2-5 movements)
+                    int movementsInCycle = rand.Next(100, 250);
+
+                    for (int i = 0; i < movementsInCycle; i++)
+                    {
+                        // Select a random direction
+                        string direction = directions[rand.Next(directions.Length)];
+
+                        // Randomly decide if we'll use CTRL (70% chance)
+                        bool useCtrl = true;
+
+                        // Send the key combo
+                        if (useCtrl)
+                        {
+                            SendKeys.SendWait("^" + direction);  // ^ represents CTRL
+                        }
+                        else
+                        {
+                            SendKeys.SendWait(direction);  // Sometimes just send arrow key without CTRL
+                        }
+
+                        // Random delay between key presses (20-120 ms)
+                        int keyDelay = rand.Next(20, 30);
+                        Thread.Sleep(keyDelay);
+                    }
+
+                }
+
+                Console.WriteLine("[ALARM] Finished sending panic keys to game");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ALARM] Error sending panic keys: {ex.Message}");
+            }
+        }
+
+    }
+
+
+
+
 }
