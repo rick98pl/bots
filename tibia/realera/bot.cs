@@ -1405,6 +1405,7 @@ class Program
                             nextWaypoint.X,
                             nextWaypoint.Y
                         );
+                        SendKeyPress(VK_F6);
                         Sleep(250);
                         lock (memoryLock)
                         {
@@ -4703,6 +4704,19 @@ class Program
                                                // =======================================
 
     // Updated EnsureOverlayExists method with all configurable parameters
+    const int WS_EX_NOACTIVATE = 0x08000000;
+    const int WS_EX_TOOLWINDOW = 0x00000080;
+
+
+    const int HWND_TOPMOST = -1;
+    const int SWP_NOMOVE = 0x0002;
+    const int SWP_NOSIZE = 0x0001;
+    const int SWP_NOACTIVATE = 0x0010;
+
+    // Add this Win32 API declaration with your other DllImport statements
+    [DllImport("user32.dll")]
+    static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
     static void EnsureOverlayExists()
     {
         // If overlay is already created and valid, just return
@@ -4731,8 +4745,15 @@ class Program
                     threadForm.TransparencyKey = Color.Black;
                     threadForm.BackColor = Color.Black;
 
-                    // Initial size and position - will be updated by timer
-                    // Apply size scaling to initial size
+                    threadForm.Deactivate += (s, e) => {
+                        if (threadForm != null && !threadForm.IsDisposed)
+                        {
+                            // Re-assert TopMost when the form loses focus
+                            threadForm.TopMost = false; // Toggle to refresh the topmost status
+                            threadForm.TopMost = true;
+                        }
+                    };
+
                     int baseWidth = 300;
                     int baseHeight = 200;
                     threadForm.Width = (int)(baseWidth * statsOverlaySizeScale);
@@ -4754,16 +4775,10 @@ class Program
                             Screen.PrimaryScreen.WorkingArea.Bottom - threadForm.Height - statsOverlayBottomOffset);
                     }
 
-                    // Make form click-through
                     int exStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
-                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED);
-                    threadForm.Deactivate += (s, e) => {
-                        if (threadForm != null && !threadForm.IsDisposed)
-                        {
-                            threadForm.TopMost = false;
-                            threadForm.TopMost = true;
-                        }
-                    };
+                    exStyle |= WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE, exStyle);
+
                     // Set up painting
                     threadForm.Paint += (sender, e) =>
                     {
@@ -5037,6 +5052,20 @@ class Program
                                 }
                             }
 
+                            if (threadForm.IsHandleCreated)
+                            {
+                                // Force window to stay topmost and click-through
+                                int currentExStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
+                                if ((currentExStyle & (WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW))
+                                    != (WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW))
+                                {
+                                    // Re-apply all the required window styles
+                                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE,
+                                        currentExStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+                                }
+                                SetWindowPos(threadForm.Handle, (IntPtr)HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                            }
+
                             // Always refresh display
                             threadForm.Invalidate();
 
@@ -5078,11 +5107,19 @@ class Program
                         System.Windows.Forms.Application.DoEvents();
                         Thread.Sleep(10);
 
-                        // Periodically check if we should exit
+                        // Periodically check if we should exit and refresh TopMost status
                         DateTime now = DateTime.Now;
                         if ((now - lastCheckTime).TotalSeconds >= 1)
                         {
                             lastCheckTime = now;
+
+                            // Ensure the form maintains TopMost
+                            if (!threadForm.TopMost)
+                            {
+                                threadForm.TopMost = true;
+                            }
+
+                            // Check exit conditions
                             if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
                                 overlayForm != threadForm)
                             {
@@ -5309,27 +5346,32 @@ class Program
 
         Console.WriteLine("[OVERLAY] Stopping overlay display");
         var form = overlayForm;
-        overlayForm = null; // Clear reference first
+        overlayForm = null; // Clear reference first to prevent further access
 
         try
         {
-            if (form.InvokeRequired)
+            // Create a dedicated thread to close the form to avoid deadlocks
+            Thread closeThread = new Thread(() =>
             {
-                form.BeginInvoke(new Action(() =>
+                try
                 {
-                    try
+                    if (!form.IsDisposed)
                     {
                         form.Close();
                         form.Dispose();
                     }
-                    catch { }
-                }));
-            }
-            else
-            {
-                form.Close();
-                form.Dispose();
-            }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[OVERLAY] Error in close thread: {ex.Message}");
+                }
+            });
+
+            closeThread.IsBackground = true;
+            closeThread.SetApartmentState(ApartmentState.STA);
+            closeThread.Start();
+
+            // We don't wait for the thread to complete to avoid blocking
         }
         catch (Exception ex)
         {
