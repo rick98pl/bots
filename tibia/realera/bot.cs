@@ -2064,23 +2064,28 @@ class Program
             Sleep(1);
         }
     }
+
+    static int maxItemsToEat = 2;
     static void CorpseEatFood(IntPtr hWnd)
     {
         (int x, int y)[] locations = GetCorspeFoodCoordinates();
         GetClientRect(hWnd, out RECT rect);
         if (rect.Right < 1237 || rect.Bottom < 319)
-            foreach (var location in locations)
+        {
+            // Calculate how many items to process (either maxItemsToEat or all available items)
+            int itemsToProcess = Math.Min(maxItemsToEat, locations.Length);
+
+            for (int i = 0; i < itemsToProcess; i++)
             {
-                int x = location.x;
-                int y = location.y;
+                int x = locations[i].x;
+                int y = locations[i].y;
                 POINT screenPoint = new POINT { X = x, Y = y };
                 ClientToScreen(hWnd, ref screenPoint);
                 Sleep(1);
-
-
                 VirtualRightClick(hWnd, x, y);
                 Sleep(1);
             }
+        }
     }
     static void ClickSecondSlotInBackpack(IntPtr hWnd)
     {
