@@ -1167,6 +1167,7 @@ class Program
     static private HashSet<int> clickedAroundTargets = new HashSet<int>();
     static private int lastTrackedTargetId = 0;
 
+    static bool firstFound = true;
 
     static void PlayCoordinates()
     {
@@ -1235,16 +1236,7 @@ class Program
                         clickedAroundTargets.Add(previousTargetId); // Track that we've clicked for this target
 
                         // Perform click around and wait for it to complete
-                        bool targetFoundDuringClickAround = ClickAroundCharacter(targetWindow);
-
-                        // Only press F6 if we didn't find a target during clicking around
-                        if (!targetFoundDuringClickAround)
-                        {
-                            Console.WriteLine("[DEBUG] No target found during click around, pressing F6");
-                            Sleep(1); // A short delay before F6
-                            SendKeyPress(VK_F6);
-                            Sleep(1); // Wait after F6
-                        }
+                        bool targetFoundDuringClickAround = ClickAroundCharacter(targetWindow);                       
                     }
 
 
@@ -1362,13 +1354,6 @@ class Program
                     {
                         TimeSpan remainingCooldown = F6Cooldown - (DateTime.Now - lastF6Press);
                         Console.WriteLine($"[DEBUG] F6 cooldown active: {remainingCooldown.TotalMilliseconds:F0}ms remaining");
-                    }
-                    // Now we can safely press F6
-                    else
-                    {
-                        Console.WriteLine("[DEBUG] No target, pressing F6 to search");
-                        SendKeyPress(VK_F6);
-                        Sleep(50); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no monster
                     }
                 }
 
@@ -1587,8 +1572,15 @@ class Program
 
                         currentTargetId = targetId;
                     }
-                    if (currentTargetId == 0)
+                    if(currentTargetId == 0)
                     {
+                        firstFound = false;
+                        Thread.Sleep(150);
+                    }
+
+                    if (!firstFound && currentTargetId == 0)
+                    {
+                        firstFound = true;
                         SendKeyPress(VK_F6);
                         // Keep the crucial Sleep(1) as you mentioned
                         Sleep(1); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no monster
@@ -1859,16 +1851,16 @@ class Program
     static bool smallWindow = true;
     static bool previousSmallWindowValue = true; // Track the previous state
 
-    static int pixelSize = smallWindow ? 38 : 58;
-    static int baseYOffset = smallWindow ? 260 : 300;
-    static int inventoryX = smallWindow ? 620 : 940;
-    static int inventoryY = 65;
-    static int equipmentX = smallWindow ? 800 : 1115;
-    static int equipmentY = 150;
-    static int secondSlotBpX = smallWindow ? 850 : 1165;
-    static int secondSLotBpY = 250;
-    static int closeCorpseX = smallWindow ? 944 : 1262;
-    static int closeCorpseY = smallWindow ? 320 : 400;
+    static int pixelSize;
+    static int baseYOffset;
+    static int inventoryX;
+    static int inventoryY;
+    static int equipmentX;
+    static int equipmentY;
+    static int secondSlotBpX;
+    static int secondSLotBpY;
+    static int closeCorpseX;
+    static int closeCorpseY;
     static (int, int)[] normalCoordinates = new (int, int)[]
     {
         (1126, 325),
@@ -1883,14 +1875,14 @@ class Program
 
     static (int, int)[] smallCoordinates = new (int, int)[]
     {
-        (800, 340),
-        (800+pixelSize, 340),
-        (800+2*pixelSize, 340),
-        (800+3*pixelSize, 340),
-        (800, 380),
-        (800+pixelSize, 380),
-        (800+2*pixelSize, 380),
-        (800+3*pixelSize, 380)
+        (800, 360),
+        (800+pixelSize, 360),
+        (800+2*pixelSize, 360),
+        (800+3*pixelSize, 360),
+        (800, 400),
+        (800+pixelSize, 400),
+        (800+2*pixelSize, 400),
+        (800+3*pixelSize, 400)
     };
     static (int, int)[] GetCorspeFoodCoordinates()
     {
@@ -1914,7 +1906,7 @@ class Program
         inventoryY = 65;
         equipmentX = smallWindow ? 800 : 1115;
         equipmentY = 150;
-        secondSlotBpX = smallWindow ? 850 : 1165;
+        secondSlotBpX = smallWindow ? 840 : 1165;
         secondSLotBpY = 250;
         closeCorpseX = smallWindow ? 944 : 1262;
         closeCorpseY = smallWindow ? 320 : 400;
@@ -2049,7 +2041,7 @@ class Program
     static extern int GetSystemMetrics(int nIndex);
     [DllImport("user32.dll")]
     static extern bool SetCursorPos(int X, int Y);
-    static void CloseCorspe(IntPtr hWnd)
+    static void CloseCorpse(IntPtr hWnd)
     {
         (int x, int y)[] locations = new (int, int)[] { (closeCorpseX, closeCorpseY) };
         GetClientRect(hWnd, out RECT rect);
@@ -2102,34 +2094,7 @@ class Program
 
             VirtualRightClick(hWnd, x, y);
             Sleep(1);
-            int currentTargetId = GetTargetId();
-            if (currentTargetId != 0)
-            {
-                Console.WriteLine(
-                    $"Target acquired after clicking at ({x}, {y}). Target ID: {currentTargetId}"
-                );
-            }
         }
-    }
-    static void DragItemToCharacterCenter(IntPtr hWnd)
-    {
-        int sourceX = 1236;
-        int sourceY = 285;
-        GetClientRect(hWnd, out RECT rect);
-        int centerX = (rect.Right - rect.Left) / 2 - 186;
-        int centerY = (rect.Bottom - rect.Top) / 2 - 300;
-        Console.WriteLine($"Moving to source position ({sourceX}, {sourceY})");
-        IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
-        SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
-        Sleep(1);
-        SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
-        Sleep(1);
-        IntPtr centerLParam = MakeLParam(centerX, centerY);
-        SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), centerLParam);
-        Sleep(1);
-        SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, centerLParam);
-        Sleep(1);
-        Console.WriteLine($"Completed drag from ({sourceX}, {sourceY}) to ({centerX}, {centerY})");
     }
     const int MK_LBUTTON = 0x0001;
     static IntPtr MakeLParam(int x, int y)
@@ -2160,7 +2125,7 @@ class Program
     {
         try
         {
-            CloseCorspe(targetWindow);
+            //CloseCorpse(targetWindow);
             // Set flag to indicate click around is in progress
             isClickAroundInProgress = true;
             Console.WriteLine("[DEBUG] Click around character operation started");
@@ -2212,7 +2177,7 @@ class Program
             // Additional looting operations
             CorpseEatFood(targetWindow);
             Sleep(1); // Allow time for food looting
-            CloseCorspe(targetWindow);
+            //CloseCorpse(targetWindow);
             Sleep(1); // Allow time for corpse closing
             ClickSecondSlotInBackpack(hWnd);
             Sleep(1); // Allow time for backpack operation
@@ -2530,6 +2495,7 @@ class Program
     static readonly int MAX_MONSTER_DISTANCE = 4; // Maximum allowed distance in sqm
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
+        return;
         try
         {
             int currentTargetId;
@@ -5506,7 +5472,11 @@ class Program
                                 Math.Max(pixelSize, 20) : // Smaller size for waypoints (was pixelSize * 2, 32)
                                 Math.Max(pixelSize, 24);  // Normal size for regular clicks
 
-                            squareSize = 13;
+                            //squareSize = 13;
+                            //if (isWaypoint)
+                            //{
+                            //    squareSize = 28;
+                            //}
 
                             // Calculate the center of the square
                             int left = relX - (squareSize / 2);
