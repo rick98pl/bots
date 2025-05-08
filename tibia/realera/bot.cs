@@ -460,7 +460,7 @@ class Program
         // Start SPAWNWATCHER if enabled
         if (threadFlags["spawnwatch"])
         {
-            //SPAWNWATCHER.Start(targetWindow, pixelSize);
+            SPAWNWATCHER.Start(targetWindow, pixelSize);
         }
 
         Console.WriteLine("Worker threads started successfully");
@@ -5398,8 +5398,8 @@ class Program
                             double remainingPercent = timeRemaining.TotalMilliseconds / totalLifespan.TotalMilliseconds;
 
                             // Fade out effect - adjust alpha based on remaining time
-                            int alpha = (int)(remainingPercent * 180); // Start from 180 instead of 130
-                            if (alpha < 50) alpha = 50; // Higher minimum alpha for better visibility
+                            int alpha = (int)(remainingPercent * 180);
+                            alpha = Math.Max(50, Math.Min(255, alpha)); // Clamp between 50 and 255
 
                             // Create a fading color based on remaining time
                             Color fadingColor = Color.FromArgb(
@@ -5423,7 +5423,7 @@ class Program
                                 }
 
                                 // Draw crosshairs
-                                using (Pen crosshairPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 2))
+                                using (Pen crosshairPen = new Pen(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 255, 255, 255), 2))
                                 {
                                     // Horizontal line
                                     e.Graphics.DrawLine(
@@ -5447,7 +5447,7 @@ class Program
                                 }
 
                                 // Add pulsing effect - second larger circle with lower opacity
-                                using (Pen pulsePen = new Pen(Color.FromArgb(alpha / 3, 255, 255, 255), 1))
+                                using (Pen pulsePen = new Pen(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)) / 3, 255, 255, 255), 1))
                                 {
                                     int pulseSize = (int)(diameter * 1.5);
                                     int pulseOffset = (pulseSize - diameter) / 2;
@@ -5469,7 +5469,7 @@ class Program
                                 }
 
                                 // Add a border for better visibility
-                                using (Pen borderPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1))
+                                using (Pen borderPen = new Pen(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 255, 255, 255), 1))
                                 {
                                     e.Graphics.DrawRectangle(borderPen, left, top, squareSize, squareSize);
                                 }
@@ -5487,13 +5487,13 @@ class Program
                                 float textY = top + (squareSize - textSize.Height) / 2;
 
                                 // Draw text shadow for better readability
-                                using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(alpha, 0, 0, 0)))
+                                using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 0, 0, 0)))
                                 {
                                     e.Graphics.DrawString(timeText, font, shadowBrush, textX + 1, textY + 1);
                                 }
 
                                 // Draw text with improved visibility
-                                using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255)))
+                                using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 255, 255, 255)))
                                 {
                                     e.Graphics.DrawString(timeText, font, textBrush, textX, textY);
                                 }
@@ -5511,8 +5511,8 @@ class Program
                                     float textY = top + squareSize + 2;
 
                                     // Draw with shadow for visibility
-                                    using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(alpha, 0, 0, 0)))
-                                    using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(alpha, 255, 255, 0))) // Yellow text
+                                    using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 0, 0, 0)))
+                                    using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 255, 255, 0))) // Yellow text
                                     {
                                         e.Graphics.DrawString(waypointText, labelFont, shadowBrush, textX + 1, textY + 1);
                                         e.Graphics.DrawString(waypointText, labelFont, textBrush, textX, textY);
@@ -5670,7 +5670,7 @@ class Program
             DateTime creationTime = DateTime.Now;
             DateTime expirationTime;
 
-            expirationTime = creationTime.Add(TimeSpan.FromSeconds(1.2)); // Slightly longer for waypoints
+            expirationTime = creationTime.Add(TimeSpan.FromSeconds(0.7)); // Slightly longer for waypoints
 
             // Add to the list with the waypoint color
             clickPositions.Add((
