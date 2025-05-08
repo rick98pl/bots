@@ -1216,12 +1216,10 @@ class Program
                         // Force update the chase tracker with latest position after killing the monster
                         chaseTracker.Update(posX, posY, posZ, targetId);
                     }
+
                     if (chaseTracker.ShouldReturnToStart())
                     {
                         Console.WriteLine("[DEBUG] Need to return to chase start position");
-
-                        // We don't need to do anything else here - the FindNextWaypoint method
-                        // will handle getting the return position and navigating there
                     }
                     else
                     {
@@ -1235,18 +1233,28 @@ class Program
                     {
                         Console.WriteLine($"[DEBUG] Fight finished, calling ClickAroundCharacter for target ID: {previousTargetId}");
                         clickedAroundTargets.Add(previousTargetId); // Track that we've clicked for this target
-                        ClickAroundCharacter(targetWindow);
+
+                        // Perform click around and wait for it to complete
+                        bool targetFoundDuringClickAround = ClickAroundCharacter(targetWindow);
+
+                        // Only press F6 if we didn't find a target during clicking around
+                        if (!targetFoundDuringClickAround)
+                        {
+                            Console.WriteLine("[DEBUG] No target found during click around, pressing F6");
+                            Sleep(1); // A short delay before F6
+                            SendKeyPress(VK_F6);
+                            Sleep(1); // Wait after F6
+                        }
                     }
-                    else
-                    {
-                        Console.WriteLine($"[DEBUG] Already clicked around for target ID: {previousTargetId}, skipping");
-                    }
-                    Sleep(1);
+
+
                     lock (memoryLock)
                     {
                         currentTargetId = targetId;
                     }
                 }
+
+                
                 previousTargetId = currentTargetId;
                 lock (memoryLock)
                 {
@@ -1344,10 +1352,24 @@ class Program
                 }
                 if (currentTargetId == 0)
                 {
-
-                    Console.WriteLine("[DEBUG] No target, pressing F6 to search");
-                    SendKeyPress(VK_F6);
-                    Sleep(1); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no mnoster
+                    // Check if click around is in progress - never press F6 while click around is happening
+                    if (isClickAroundInProgress)
+                    {
+                        Console.WriteLine("[DEBUG] Click around operation in progress, skipping F6");
+                    }
+                    // Check if F6 was pressed very recently
+                    else if ((DateTime.Now - lastF6Press).TotalMilliseconds < F6Cooldown.TotalMilliseconds)
+                    {
+                        TimeSpan remainingCooldown = F6Cooldown - (DateTime.Now - lastF6Press);
+                        Console.WriteLine($"[DEBUG] F6 cooldown active: {remainingCooldown.TotalMilliseconds:F0}ms remaining");
+                    }
+                    // Now we can safely press F6
+                    else
+                    {
+                        Console.WriteLine("[DEBUG] No target, pressing F6 to search");
+                        SendKeyPress(VK_F6);
+                        Sleep(50); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no monster
+                    }
                 }
 
                 lock (memoryLock)
@@ -2119,59 +2141,93 @@ class Program
             (array[i], array[j]) = (array[j], array[i]);
         }
     }
-    static void ClickAroundCharacter(IntPtr hWnd)
+
+    static bool isClickAroundInProgress = false;
+    static DateTime lastClickAroundCompleted = DateTime.MinValue;
+    static int lastClickAroundTargetId = 0;
+
+    // Modify your ClickAroundCharacter function to set flags when it starts and finishes
+    static bool ClickAroundCharacter(IntPtr hWnd)
     {
-        //ClickSecondSlotInBackpack(hWnd);
-        (int dx, int dy)[] directions = new (int, int)[]
+        try
         {
-        (0, -1),
-        (1, -1),
-        (1, 0),
-        (1, 1),
-        (0, 1),
-        (-1, 1),
-        (-1, 0),
-        (-1, -1)
-        };
+            CloseCorspe(targetWindow);
+            // Set flag to indicate click around is in progress
+            isClickAroundInProgress = true;
+            Console.WriteLine("[DEBUG] Click around character operation started");
 
-        Random random = new Random();
-        ShuffleArray(directions, random);
-
-        GetClientRect(hWnd, out RECT rect);
-        int centerX = (rect.Right - rect.Left) / 2 - 186;
-        int centerY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
-
-        // Add a delay before clicking to allow overlays to initialize
-        Sleep(100);
-
-        foreach (var direction in directions)
-        {
-            int dx = direction.dx;
-            int dy = direction.dy;
-            int clickX = centerX + (int)(dx * pixelSize);
-            int clickY = centerY + (int)(dy * pixelSize);
-
-            Sleep(1); // Give time for highlight to appear
-
-            // Now perform the click
-            VirtualRightClick(targetWindow, clickX, clickY);
-
-            // Add a small delay between clicks
-            Sleep(1);
-
-            int currentTargetId = GetTargetId();
-            if (currentTargetId != 0)
+            // Your existing ClickAroundCharacter code here...
+            (int dx, int dy)[] directions = new (int, int)[]
             {
-                Console.WriteLine(
-                    $"Target acquired after clicking at ({clickX}, {clickY}). Target ID: {currentTargetId}"
-                );
-                break; // Exit the loop if target found
-            }
-        }
+            (0, -1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+            (0, 1),
+            (-1, 1),
+            (-1, 0),
+            (-1, -1)
+            };
 
-        //CorpseEatFood(targetWindow);
-        //CloseCorspe(targetWindow);
-        ClickSecondSlotInBackpack(hWnd);
+            Random random = new Random();
+            ShuffleArray(directions, random);
+
+            GetClientRect(hWnd, out RECT rect);
+            int centerX = (rect.Right - rect.Left) / 2 - 186;
+            int centerY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
+
+            // Add a delay before clicking to allow overlays to initialize
+            Sleep(1);
+            //int currentTargetId = GetTargetId();
+            foreach (var direction in directions)
+            {
+                int dx = direction.dx;
+                int dy = direction.dy;
+                int clickX = centerX + (int)(dx * pixelSize);
+                int clickY = centerY + (int)(dy * pixelSize);
+
+                Sleep(1); // Give time for highlight to appear
+                VirtualRightClick(targetWindow, clickX, clickY);
+                Sleep(1); // Allow game time to process click
+
+                
+                //if (currentTargetId != 0)
+                //{
+                //    Console.WriteLine($"[DEBUG] Target acquired during click around. Target ID: {currentTargetId}");
+                //    lastClickAroundTargetId = currentTargetId; // Track the target ID we found
+                //    lastClickAroundCompleted = DateTime.Now;
+                //    return true; // Found target
+                //}
+            }
+
+            // Additional looting operations
+            CorpseEatFood(targetWindow);
+            Sleep(1); // Allow time for food looting
+            CloseCorspe(targetWindow);
+            Sleep(1); // Allow time for corpse closing
+            ClickSecondSlotInBackpack(hWnd);
+            Sleep(1); // Allow time for backpack operation
+
+            // Play a sound to indicate click around is complete (if you have this function)
+            if (typeof(Program).GetMethod("PlayClickCompletedSound") != null)
+            {
+                PlayClickCompletedSound();
+            }
+
+            Console.WriteLine("[DEBUG] Click around character operation completed");
+            lastClickAroundCompleted = DateTime.Now;
+            return false; // No target found
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERROR] Error in ClickAroundCharacter: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            // Always reset the in-progress flag when done, even if there was an error
+            isClickAroundInProgress = false;
+        }
     }
 
     const int WM_MOUSEMOVE = 0x0200;
@@ -2462,10 +2518,9 @@ class Program
     static int lastRingEquippedTargetId = 0;
     static bool isRingCurrentlyEquipped = false;
     static List<string> blacklistedRingMonsters = new List<string> { "Poison Spider", };
-    static readonly int MAX_MONSTER_DISTANCE = 2; // Maximum allowed distance in sqm
+    static readonly int MAX_MONSTER_DISTANCE = 4; // Maximum allowed distance in sqm
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
-        return;
         try
         {
             int currentTargetId;
