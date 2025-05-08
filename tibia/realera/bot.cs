@@ -5243,7 +5243,7 @@ class Program
         {
             if (clickOverlayActive)
             {
-                Console.WriteLine("[CLICK OVERLAY] Already running");
+                //Console.WriteLine("[CLICK OVERLAY] Already running");
                 return;
             }
 
@@ -5256,12 +5256,12 @@ class Program
             {
                 try
                 {
-                    Console.WriteLine("[CLICK OVERLAY] Thread started");
+                    //Console.WriteLine("[CLICK OVERLAY] Thread started");
                     RunClickOverlay();
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[CLICK OVERLAY] Thread error: {ex.Message}");
+                    //Console.WriteLine($"[CLICK OVERLAY] Thread error: {ex.Message}");
                 }
                 finally
                 {
@@ -5270,7 +5270,7 @@ class Program
                         clickOverlayActive = false;
                         clickOverlayForm = null;
                     }
-                    Console.WriteLine("[CLICK OVERLAY] Thread exited");
+                    //Console.WriteLine("[CLICK OVERLAY] Thread exited");
                 }
             });
 
@@ -5289,7 +5289,7 @@ class Program
                 return;
 
             clickOverlayActive = false;
-            Console.WriteLine("[CLICK OVERLAY] Stopping...");
+            //Console.WriteLine("[CLICK OVERLAY] Stopping...");
 
             // Close the form if it exists
             Form form = clickOverlayForm;
@@ -5311,7 +5311,7 @@ class Program
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[CLICK OVERLAY] Error closing form: {ex.Message}");
+                    //Console.WriteLine($"[CLICK OVERLAY] Error closing form: {ex.Message}");
                 }
             }
         }
@@ -5321,6 +5321,7 @@ class Program
 
 
     // 5. Modify the timer logic to remove expired markers
+    // Modified RunClickOverlay method for waypoint clicks
     static void RunClickOverlay()
     {
         Form form = new Form
@@ -5380,29 +5381,34 @@ class Program
                             // Determine if this is a waypoint click (magenta color)
                             bool isWaypoint = click.color.R > 200 && click.color.G < 100 && click.color.B > 200;
 
-                            // Adjust size based on click type - larger for waypoints
+                            // MODIFIED: Smaller size for waypoints
                             int squareSize = isWaypoint ?
-                                Math.Max(pixelSize * 2, 32) : // Larger for waypoints
-                                Math.Max(pixelSize, 24);     // Normal size for regular clicks
+                                Math.Max(pixelSize, 20) : // Smaller size for waypoints (was pixelSize * 2, 32)
+                                Math.Max(pixelSize, 24);  // Normal size for regular clicks
 
                             // Calculate the center of the square
                             int left = relX - (squareSize / 2);
                             int top = relY - (squareSize / 2);
 
-                            // Calculate time remaining as a percentage
-                            TimeSpan timeRemaining = click.expires - DateTime.Now;
-                            TimeSpan totalLifespan = isWaypoint ?
-                                TimeSpan.FromSeconds(0.6) : // Longer for waypoints
-                                CLICK_MARKER_LIFESPAN;
+                            // MODIFIED: For waypoints, no alpha fade - use full alpha until expiration
+                            // For regular clicks, maintain the gradual fade
+                            int alpha;
+                            if (isWaypoint)
+                            {
+                                // No alpha fade for waypoints - maintain full opacity until expiration
+                                alpha = 180; // Fixed alpha value, no gradual fade
+                            }
+                            else
+                            {
+                                // Calculate time remaining as a percentage for regular clicks
+                                TimeSpan timeRemaining = click.expires - DateTime.Now;
+                                double remainingPercent = timeRemaining.TotalMilliseconds / CLICK_MARKER_LIFESPAN.TotalMilliseconds;
+                                alpha = (int)(remainingPercent * 180);
+                                alpha = Math.Max(50, Math.Min(255, alpha)); // Clamp between 50 and 255
+                            }
 
-                            double remainingPercent = timeRemaining.TotalMilliseconds / totalLifespan.TotalMilliseconds;
-
-                            // Fade out effect - adjust alpha based on remaining time
-                            int alpha = (int)(remainingPercent * 180);
-                            alpha = Math.Max(50, Math.Min(255, alpha)); // Clamp between 50 and 255
-
-                            // Create a fading color based on remaining time
-                            Color fadingColor = Color.FromArgb(
+                            // Create color with appropriate alpha
+                            Color displayColor = Color.FromArgb(
                                 alpha,
                                 click.color.R,
                                 click.color.G,
@@ -5417,13 +5423,13 @@ class Program
                                 int radius = diameter / 2;
 
                                 // Draw filled circle
-                                using (SolidBrush brush = new SolidBrush(fadingColor))
+                                using (SolidBrush brush = new SolidBrush(displayColor))
                                 {
                                     e.Graphics.FillEllipse(brush, left, top, diameter, diameter);
                                 }
 
                                 // Draw crosshairs
-                                using (Pen crosshairPen = new Pen(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 255, 255, 255), 2))
+                                using (Pen crosshairPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1)) // Thinner crosshairs (was 2)
                                 {
                                     // Horizontal line
                                     e.Graphics.DrawLine(
@@ -5446,40 +5452,28 @@ class Program
                                     );
                                 }
 
-                                // Add pulsing effect - second larger circle with lower opacity
-                                using (Pen pulsePen = new Pen(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)) / 3, 255, 255, 255), 1))
-                                {
-                                    int pulseSize = (int)(diameter * 1.5);
-                                    int pulseOffset = (pulseSize - diameter) / 2;
-                                    e.Graphics.DrawEllipse(
-                                        pulsePen,
-                                        left - pulseOffset,
-                                        top - pulseOffset,
-                                        pulseSize,
-                                        pulseSize
-                                    );
-                                }
+                                // MODIFIED: Removed pulsing effect for waypoints
                             }
                             else
                             {
                                 // For regular clicks: draw a standard square
-                                using (SolidBrush brush = new SolidBrush(fadingColor))
+                                using (SolidBrush brush = new SolidBrush(displayColor))
                                 {
                                     e.Graphics.FillRectangle(brush, left, top, squareSize, squareSize);
                                 }
 
                                 // Add a border for better visibility
-                                using (Pen borderPen = new Pen(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 255, 255, 255), 1))
+                                using (Pen borderPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1))
                                 {
                                     e.Graphics.DrawRectangle(borderPen, left, top, squareSize, squareSize);
                                 }
                             }
 
                             // Display remaining time (in tenths of a second)
-                            string timeText = $"{timeRemaining.TotalSeconds:F1}s";
+                            string timeText = $"{(click.expires - DateTime.Now).TotalSeconds:F1}s";
 
                             // Draw countdown timer INSIDE the marker
-                            using (Font font = new Font("Arial", isWaypoint ? 10 : 8, FontStyle.Bold))
+                            using (Font font = new Font("Arial", isWaypoint ? 8 : 8, FontStyle.Bold)) // Smaller font for waypoints (was 10)
                             {
                                 // Measure text to center it
                                 SizeF textSize = e.Graphics.MeasureString(timeText, font);
@@ -5487,38 +5481,19 @@ class Program
                                 float textY = top + (squareSize - textSize.Height) / 2;
 
                                 // Draw text shadow for better readability
-                                using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 0, 0, 0)))
+                                using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(alpha, 0, 0, 0)))
                                 {
                                     e.Graphics.DrawString(timeText, font, shadowBrush, textX + 1, textY + 1);
                                 }
 
                                 // Draw text with improved visibility
-                                using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 255, 255, 255)))
+                                using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255)))
                                 {
                                     e.Graphics.DrawString(timeText, font, textBrush, textX, textY);
                                 }
                             }
 
-                            // For waypoints, add text indicating it's a waypoint click
-                            if (isWaypoint)
-                            {
-                                string waypointText = "WAYPOINT";
-                                using (Font labelFont = new Font("Arial", 7, FontStyle.Bold))
-                                {
-                                    // Position below the circle
-                                    SizeF textSize = e.Graphics.MeasureString(waypointText, labelFont);
-                                    float textX = left + (squareSize - textSize.Width) / 2;
-                                    float textY = top + squareSize + 2;
-
-                                    // Draw with shadow for visibility
-                                    using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 0, 0, 0)))
-                                    using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), 255, 255, 0))) // Yellow text
-                                    {
-                                        e.Graphics.DrawString(waypointText, labelFont, shadowBrush, textX + 1, textY + 1);
-                                        e.Graphics.DrawString(waypointText, labelFont, textBrush, textX, textY);
-                                    }
-                                }
-                            }
+                            // MODIFIED: Removed the "WAYPOINT" text label for waypoints to keep them cleaner
                         }
                     }
                 }
@@ -5529,8 +5504,7 @@ class Program
             }
         };
 
-        // Set up a timer for position updates and repainting
-        // Using shorter interval for smoother animation
+        // Rest of the method remains the same...
         System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer
         {
             Interval = 33  // Reduced to ~30fps for smoother animation
@@ -5570,7 +5544,7 @@ class Program
                     int removed = countBefore - clickPositions.Count;
                     if (removed > 0)
                     {
-                        Console.WriteLine($"[CLICK OVERLAY] Removed {removed} expired click markers. {clickPositions.Count} active");
+                        //Console.WriteLine($"[CLICK OVERLAY] Removed {removed} expired click markers. {clickPositions.Count} active");
                     }
                 }
 
@@ -5620,6 +5594,35 @@ class Program
         }
     }
 
+    // Also update the RecordWaypointClick method to change the expiration time
+    static void RecordWaypointClick(int x, int y)
+    {
+        lock (clickOverlayLock)
+        {
+            if (!clickOverlayActive)
+                return;
+
+            // Get screen coordinates
+            POINT screenPoint = new POINT { X = x, Y = y };
+            ClientToScreen(targetWindow, ref screenPoint);
+
+            // Calculate creation and expiration times
+            DateTime creationTime = DateTime.Now;
+
+            // MODIFIED: Slightly shorter lifetime for waypoint clicks
+            DateTime expirationTime = creationTime.Add(TimeSpan.FromSeconds(0.5)); // Reduced from 0.7 seconds
+
+            // Add to the list with the waypoint color
+            clickPositions.Add((
+                screenPoint.X,
+                screenPoint.Y,
+                WAYPOINT_CLICK_COLOR,
+                creationTime,
+                expirationTime
+            ));
+        }
+    }
+
     // Add this method to record a click position
     static readonly TimeSpan CLICK_MARKER_LIFESPAN = TimeSpan.FromSeconds(0.8);
 
@@ -5651,39 +5654,7 @@ class Program
                 expirationTime  // New expiration time
             ));
 
-            Console.WriteLine($"[CLICK OVERLAY] Recorded {(isLeftClick ? "left" : "right")} click at ({screenPoint.X}, {screenPoint.Y}) - expires in {CLICK_MARKER_LIFESPAN.TotalMilliseconds}ms");
-        }
-    }
-
-    static void RecordWaypointClick(int x, int y)
-    {
-        lock (clickOverlayLock)
-        {
-            if (!clickOverlayActive)
-                return;
-
-            // Get screen coordinates
-            POINT screenPoint = new POINT { X = x, Y = y };
-            ClientToScreen(targetWindow, ref screenPoint);
-
-            // Calculate creation and expiration times
-            DateTime creationTime = DateTime.Now;
-            DateTime expirationTime;
-
-            expirationTime = creationTime.Add(TimeSpan.FromSeconds(0.7)); // Slightly longer for waypoints
-
-            // Add to the list with the waypoint color
-            clickPositions.Add((
-                screenPoint.X,
-                screenPoint.Y,
-                WAYPOINT_CLICK_COLOR,
-                creationTime,
-                expirationTime
-            ));
-
-            string expirationInfo = "- expires in 1.2s";
-
-            Console.WriteLine($"[CLICK OVERLAY] Recorded waypoint click at ({screenPoint.X}, {screenPoint.Y}) {expirationInfo}");
+            //Console.WriteLine($"[CLICK OVERLAY] Recorded {(isLeftClick ? "left" : "right")} click at ({screenPoint.X}, {screenPoint.Y}) - expires in {CLICK_MARKER_LIFESPAN.TotalMilliseconds}ms");
         }
     }
 }
