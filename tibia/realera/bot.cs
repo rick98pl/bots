@@ -152,8 +152,11 @@ class Program
         if (!threadFlags.ContainsKey("overlay"))
         {
             threadFlags.TryAdd("overlay", true);
-            // In your Main method after initializing other systems:
-            StartHighlightTimer();
+        }
+
+        if (!threadFlags.ContainsKey("clickoverlay"))
+        {
+            threadFlags.TryAdd("clickoverlay", true);
         }
 
         // Initialize the sound system
@@ -233,11 +236,6 @@ class Program
             smallWindow = windowHeight < 1200;
             Console.WriteLine($"[DEBUG] Using {(smallWindow ? "small window (1080p)" : "large window (1440p)")} settings");
 
-            // Start the overlay if enabled
-            if (threadFlags["overlay"])
-            {
-                StartOverlay();
-            }
 
             StartWorkerThreads();
 
@@ -457,6 +455,8 @@ class Program
         outfitThread.Name = "OutfitMaintenance";
         outfitThread.Start();
 
+        StartClickOverlay();
+
         // Start SPAWNWATCHER if enabled
         if (threadFlags["spawnwatch"])
         {
@@ -475,15 +475,9 @@ class Program
         SPAWNWATCHER.Stop();
         StopPositionAlertSound(); // Stop any playing alert sounds
 
-        // In your StopWorkerThreads method:
-        if (highlightTimer != null)
-        {
-            highlightTimer.Dispose();
-            highlightTimer = null;
-        }
-
         // Explicitly stop the overlay
         StopOverlay();
+        StopClickOverlay();
 
 
         Console.WriteLine("Worker threads stopping...");
@@ -1905,9 +1899,7 @@ class Program
                 Console.WriteLine("[DEBUG] Clicking waypoint that is a chase return position");
             }
 
-
-            int currentX,
-                currentY;
+            int currentX, currentY;
             lock (memoryLock)
             {
                 currentX = posX;
@@ -1916,10 +1908,6 @@ class Program
             GetClientRect(targetWindow, out RECT rect);
             int baseX = (rect.Right - rect.Left) / 2 - 186;
             int baseY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
-
-            //POINT screenPoint = new POINT { X = baseX, Y = baseY };
-            //ClientToScreen(targetWindow, ref screenPoint);
-            // SetCursorPos(screenPoint.X, screenPoint.Y);
 
             int diffX = target.X - currentX;
             int diffY = target.Y - currentY;
@@ -1940,7 +1928,10 @@ class Program
             PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
             Sleep(64);
             int centerLParam = (baseY << 16) | (baseX & 0xFFFF);
-            //PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)centerLParam);
+
+            // Record the waypoint click with special color
+            RecordWaypointClick(targetX, targetY);
+
             Console.WriteLine(
                 $"[DEBUG] Clicked: X={diffX}, Y={diffY} (Screen: {targetX}, {targetY}, Pixel Size: {pixelSize})"
             );
@@ -1952,6 +1943,8 @@ class Program
             return false;
         }
     }
+
+
     const byte VK_ESCAPE = 0x1B;
     const int VK_F6 = 0x75;
     const int WM_LBUTTONDOWN = 0x0201;
@@ -2166,20 +2159,9 @@ class Program
     const uint KEYEVENTF_KEYUP = 0x0002;
     [DllImport("user32.dll")]
     static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, uint dwExtraInfo);
-    static void VirtualRightClick(IntPtr hWnd, int x, int y)
-    {
-        int lParam = (y << 16) | (x & 0xFFFF);
-
-
-        SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
-        SendMessage(hWnd, WM_RBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
-        SendMessage(hWnd, WM_RBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
-    }
     static void VirtualLeftClick(IntPtr hWnd, int x, int y)
     {
         int lParam = (y << 16) | (x & 0xFFFF);
-
-
 
         PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
         Sleep(1);
@@ -2187,7 +2169,23 @@ class Program
         Sleep(1);
         PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
         Sleep(1);
+
+        // Record the click position
+        RecordClickPosition(x, y, true);
     }
+
+    static void VirtualRightClick(IntPtr hWnd, int x, int y)
+    {
+        int lParam = (y << 16) | (x & 0xFFFF);
+
+        SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
+        SendMessage(hWnd, WM_RBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
+        SendMessage(hWnd, WM_RBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
+
+        // Record the click position
+        RecordClickPosition(x, y, false);
+    }
+
     static int GetTargetId()
     {
         lock (memoryLock)
@@ -2480,7 +2478,6 @@ class Program
 
             Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} ring");
 
-
             // Perform the drag-and-drop operation
             IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
             PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
@@ -2488,12 +2485,17 @@ class Program
             PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
             Sleep(25);
 
+            // *** Record the source click for our overlay ***
+            RecordClickPosition(sourceX, sourceY, true);
 
             IntPtr destLParam = MakeLParam(destX, destY);
             PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
             Sleep(25);
             PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
             Sleep(1);
+
+            // *** Record the destination click for our overlay ***
+            RecordClickPosition(destX, destY, true);
 
             // Log the result of the operation
             if (equip)
@@ -4513,6 +4515,15 @@ class Program
     static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
     // This method initializes the overlay if it doesn't exist, positioned over the game window
+    // Add these variables with your class-level variables at the top of your Program class
+    // ===== STATS OVERLAY CONFIGURATION =====
+    static int statsOverlayRightOffset = 380;  // Distance from right edge (smaller = closer to right edge)
+    static int statsOverlayBottomOffset = 40;  // Distance from bottom edge (smaller = closer to bottom)
+    static float statsOverlaySizeScale = 0.92f; // Size multiplier (1.0 = 100%, 1.5 = 150%, 0.8 = 80%)
+    static float statsOverlayOpacity = 0.99f;  // Transparency (1.0 = fully opaque, 0.5 = 50% transparent)
+                                               // =======================================
+
+    // Updated EnsureOverlayExists method with all configurable parameters
     static void EnsureOverlayExists()
     {
         // If overlay is already created and valid, just return
@@ -4537,25 +4548,31 @@ class Program
                     threadForm.FormBorderStyle = System.Windows.Forms.FormBorderStyle.None;
                     threadForm.ShowInTaskbar = false;
                     threadForm.TopMost = true;
-                    threadForm.Opacity = 0.85;
+                    threadForm.Opacity = statsOverlayOpacity; // Use configurable opacity
                     threadForm.TransparencyKey = Color.Black;
                     threadForm.BackColor = Color.Black;
 
                     // Initial size and position - will be updated by timer
-                    threadForm.Width = 300;
-                    threadForm.Height = 200;
+                    // Apply size scaling to initial size
+                    int baseWidth = 300;
+                    int baseHeight = 200;
+                    threadForm.Width = (int)(baseWidth * statsOverlaySizeScale);
+                    threadForm.Height = (int)(baseHeight * statsOverlaySizeScale);
                     threadForm.StartPosition = System.Windows.Forms.FormStartPosition.Manual;
 
                     try
                     {
                         GetWindowRect(targetWindow, out RECT gameWindowRect);
-                        threadForm.Location = new Point(gameWindowRect.Right - threadForm.Width - 10,
-                                                  gameWindowRect.Bottom - threadForm.Height - 40);
+                        // Position using configurable offsets
+                        threadForm.Location = new Point(
+                            Math.Max(0, gameWindowRect.Right - threadForm.Width - statsOverlayRightOffset),
+                            gameWindowRect.Bottom - threadForm.Height - statsOverlayBottomOffset);
                     }
                     catch
                     {
-                        threadForm.Location = new Point(Screen.PrimaryScreen.WorkingArea.Right - threadForm.Width - 10,
-                                                  Screen.PrimaryScreen.WorkingArea.Bottom - threadForm.Height - 40);
+                        threadForm.Location = new Point(
+                            Math.Max(0, Screen.PrimaryScreen.WorkingArea.Right - threadForm.Width - statsOverlayRightOffset),
+                            Screen.PrimaryScreen.WorkingArea.Bottom - threadForm.Height - statsOverlayBottomOffset);
                     }
 
                     // Make form click-through
@@ -4567,28 +4584,49 @@ class Program
                     {
                         try
                         {
+                            // Apply scaling to graphics for text rendering
+                            if (statsOverlaySizeScale != 1.0f)
+                            {
+                                e.Graphics.ScaleTransform(statsOverlaySizeScale, statsOverlaySizeScale);
+                            }
+
                             // Fill background with semi-transparent dark color (no border)
                             using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(180, 0, 0, 0)))
                             {
-                                e.Graphics.FillRectangle(bgBrush, 0, 0, threadForm.Width, threadForm.Height);
+                                // When using scaling, adjust the rectangle to fill the scaled area
+                                float scaledWidth = threadForm.Width / statsOverlaySizeScale;
+                                float scaledHeight = threadForm.Height / statsOverlaySizeScale;
+                                e.Graphics.FillRectangle(bgBrush, 0, 0, scaledWidth, scaledHeight);
                             }
 
+                            // Calculate font sizes based on scaling
+                            float titleFontSize = 10.0f;
+                            float statsFontSize = 9.0f;
+                            float smallFontSize = 8.0f;
+
                             // Increased font sizes
-                            using (Font titleFont = new Font("Arial", 10.0f, FontStyle.Bold))
-                            using (Font statsFont = new Font("Arial", 9.0f, FontStyle.Regular))
+                            using (Font titleFont = new Font("Arial", titleFontSize, FontStyle.Bold))
+                            using (Font statsFont = new Font("Arial", statsFontSize, FontStyle.Regular))
+                            using (Font smallFont = new Font("Arial", smallFontSize, FontStyle.Regular))
                             using (Brush whiteBrush = new SolidBrush(Color.White))
                             using (Brush greenBrush = new SolidBrush(Color.LightGreen))
                             using (Brush blueBrush = new SolidBrush(Color.LightBlue))  // Blue for mana
                             using (Brush yellowBrush = new SolidBrush(Color.Yellow))
                             using (Brush orangeBrush = new SolidBrush(Color.Orange))
+                            using (Brush pinkBrush = new SolidBrush(Color.LightPink))  // For invisibility
+                            using (Brush redBrush = new SolidBrush(Color.LightCoral))  // For target info
                             {
+                                // Calculate scaled dimensions
+                                float scaledWidth = threadForm.Width / statsOverlaySizeScale;
+
                                 int y = 5;  // Start position
                                 int rightPadding = 20;  // Padding from right edge
                                 int lineSpacing = 18;   // Increased spacing between lines (was 14)
 
                                 // Get current stats
                                 double hpPercent, manaPercent;
-                                int currentX, currentY, currentZ;
+                                int currentX, currentY, currentZ, currentTargetId, currentInvisibilityCode, currentOutfitValue;
+                                string currentTargetName = "";
                                 lock (memoryLock)
                                 {
                                     hpPercent = (curHP / maxHP) * 100;
@@ -4596,56 +4634,120 @@ class Program
                                     currentX = posX;
                                     currentY = posY;
                                     currentZ = posZ;
+                                    currentTargetId = targetId;
+                                    currentInvisibilityCode = invisibilityCode;
+                                    currentOutfitValue = currentOutfit;
+                                }
+
+                                // Get target monster info if we have a target
+                                int monsterX = 0, monsterY = 0, monsterZ = 0;
+                                if (currentTargetId != 0)
+                                {
+                                    var (mX, mY, mZ, mName) = GetTargetMonsterInfo();
+                                    monsterX = mX;
+                                    monsterY = mY;
+                                    monsterZ = mZ;
+                                    currentTargetName = mName;
                                 }
 
                                 // Title
                                 string titleText = "RealeraDX - Live Stats";
                                 SizeF titleSize = e.Graphics.MeasureString(titleText, titleFont);
                                 e.Graphics.DrawString(titleText, titleFont, whiteBrush,
-                                    threadForm.Width - titleSize.Width - rightPadding, y);
+                                    scaledWidth - titleSize.Width - rightPadding, y);
                                 y += lineSpacing + 2; // Extra spacing after title
 
                                 // Format right-aligned stats 
                                 DrawRightAlignedStat(e, "HP:", $"{curHP:F0}/{maxHP:F0} ({hpPercent:F1}%)",
-                                    statsFont, hpPercent < 50 ? orangeBrush : greenBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+                                    statsFont, hpPercent < 50 ? orangeBrush : greenBrush,
+                                    scaledWidth - rightPadding, ref y, lineSpacing);
 
                                 DrawRightAlignedStat(e, "Mana:", $"{curMana:F0}/{maxMana:F0} ({manaPercent:F1}%)",
-                                    statsFont, blueBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+                                    statsFont, blueBrush, scaledWidth - rightPadding, ref y, lineSpacing);
 
                                 // Position coordinates - each on separate line
                                 DrawRightAlignedStat(e, "X:", $"{currentX}", statsFont, whiteBrush,
-                                    threadForm.Width - rightPadding, ref y, lineSpacing);
+                                    scaledWidth - rightPadding, ref y, lineSpacing);
 
                                 DrawRightAlignedStat(e, "Y:", $"{currentY}", statsFont, whiteBrush,
-                                    threadForm.Width - rightPadding, ref y, lineSpacing);
+                                    scaledWidth - rightPadding, ref y, lineSpacing);
 
                                 DrawRightAlignedStat(e, "Z:", $"{currentZ}", statsFont, whiteBrush,
-                                    threadForm.Width - rightPadding, ref y, lineSpacing);
+                                    scaledWidth - rightPadding, ref y, lineSpacing);
 
-                                DrawRightAlignedStat(e, "Target ID:", $"{targetId}",
-                                    statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+                                // Add invisibility code
+                                DrawRightAlignedStat(e, "Invisibility:", $"{currentInvisibilityCode} " +
+                                    (currentInvisibilityCode == 2 ? "(Ring ON)" : "(Ring OFF)"),
+                                    statsFont, pinkBrush, scaledWidth - rightPadding, ref y, lineSpacing);
 
-                                DrawRightAlignedStat(e, "Outfit:", $"{currentOutfit}",
-                                    statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+                                // Add outfit value
+                                DrawRightAlignedStat(e, "Outfit:", $"{currentOutfitValue}",
+                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
 
-                                y += 2; // Small extra gap
+                                y += 5; // Extra spacing before target section
+
+                                // Target information section
+                                if (currentTargetId != 0)
+                                {
+                                    string targetHeader = "Target Info:";
+                                    SizeF headerSize = e.Graphics.MeasureString(targetHeader, statsFont);
+                                    e.Graphics.DrawString(targetHeader, statsFont, redBrush,
+                                        scaledWidth - headerSize.Width - rightPadding, y);
+                                    y += lineSpacing;
+
+                                    // Target ID and name
+                                    DrawRightAlignedStat(e, "ID:", $"{currentTargetId}",
+                                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                    if (!string.IsNullOrEmpty(currentTargetName))
+                                    {
+                                        DrawRightAlignedStat(e, "Name:", $"{currentTargetName}",
+                                            statsFont, redBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                    }
+
+                                    // Target coordinates
+                                    if (monsterX != 0 || monsterY != 0 || monsterZ != 0)
+                                    {
+                                        DrawRightAlignedStat(e, "Pos:", $"({monsterX}, {monsterY}, {monsterZ})",
+                                            statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                        // Calculate distance to target
+                                        int distanceX = Math.Abs(monsterX - currentX);
+                                        int distanceY = Math.Abs(monsterY - currentY);
+                                        int totalDistance = distanceX + distanceY;
+
+                                        DrawRightAlignedStat(e, "Distance:", $"{totalDistance} steps",
+                                            statsFont, totalDistance > 5 ? orangeBrush : greenBrush,
+                                            scaledWidth - rightPadding, ref y, lineSpacing);
+                                    }
+                                }
+                                else
+                                {
+                                    DrawRightAlignedStat(e, "Target:", "None",
+                                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                }
+
+                                y += 5; // Extra spacing before features section
 
                                 // Features heading in yellow
                                 string featuresText = "Active Features:";
                                 SizeF featuresSize = e.Graphics.MeasureString(featuresText, statsFont);
                                 e.Graphics.DrawString(featuresText, statsFont, yellowBrush,
-                                    threadForm.Width - featuresSize.Width - rightPadding, y);
+                                    scaledWidth - featuresSize.Width - rightPadding, y);
                                 y += lineSpacing;
 
                                 // Format features
                                 DrawRightAlignedFeature(e, "Auto-Potions:", threadFlags["autopot"],
-                                    statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
 
                                 DrawRightAlignedFeature(e, "Recording:", threadFlags["recording"],
-                                    statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
 
                                 DrawRightAlignedFeature(e, "Playback:", threadFlags["playing"],
-                                    statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                DrawRightAlignedFeature(e, "Click Overlay:", clickOverlayActive,
+                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
 
                                 // If we're playing a path, show progress
                                 if (threadFlags["playing"] && currentTarget != null)
@@ -4655,8 +4757,8 @@ class Program
                                     // Target distance
                                     int distanceX = Math.Abs(currentTarget.X - currentX);
                                     int distanceY = Math.Abs(currentTarget.Y - currentY);
-                                    DrawRightAlignedStat(e, "Distance:", $"{distanceX + distanceY} steps",
-                                        statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+                                    DrawRightAlignedStat(e, "Waypoint:", $"{distanceX + distanceY} steps",
+                                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
 
                                     float progress = (float)(currentCoordIndex + 1) / totalCoords;
 
@@ -4664,11 +4766,11 @@ class Program
                                     string progressText = $"Path: {(progress * 100):F1}% ({currentCoordIndex + 1}/{totalCoords})";
                                     SizeF progressSize = e.Graphics.MeasureString(progressText, statsFont);
                                     e.Graphics.DrawString(progressText, statsFont, whiteBrush,
-                                        threadForm.Width - progressSize.Width - rightPadding, y);
+                                        scaledWidth - progressSize.Width - rightPadding, y);
                                     y += lineSpacing;
 
                                     // Progress bar
-                                    int progressWidth = threadForm.Width - 40 - rightPadding; // with margins
+                                    int progressWidth = (int)(scaledWidth - 40 - rightPadding); // with margins
                                     int barHeight = 6; // Slightly taller bar
                                     int barX = 20; // Left margin
                                     int filledWidth = (int)(progressWidth * progress);
@@ -4679,58 +4781,27 @@ class Program
                                     // Add minimal spacing after bar
                                     y += barHeight + 2;
                                 }
-                            }
 
-                            // Draw each active highlight
-                            lock (highlightLock)
-                            {
-                                foreach (var highlight in activeHighlights)
+                                // Display offset and scaling values for easy adjustment
+                                scaledWidth = threadForm.Width / statsOverlaySizeScale;
+                                float scaledHeight = threadForm.Height / statsOverlaySizeScale;
+
+                                string configText = $"R:{statsOverlayRightOffset} B:{statsOverlayBottomOffset} S:{statsOverlaySizeScale:F1}";
+                                using (Font configFont = new Font("Arial", 7.0f, FontStyle.Regular))
                                 {
-                                    // Get position of highlight in screen coordinates
-                                    int screenX = highlight.x;
-                                    int screenY = highlight.y;
-
-                                    // Get game window position
-                                    GetWindowRect(targetWindow, out RECT gameRect);
-
-                                    // Convert to relative position within game window (0 to 1)
-                                    float relX = (float)(screenX - gameRect.Left) / (gameRect.Right - gameRect.Left);
-                                    float relY = (float)(screenY - gameRect.Top) / (gameRect.Bottom - gameRect.Top);
-
-                                    // Convert relative position to position within minimap
-                                    int miniX = (int)(relX * threadForm.Width);
-                                    int miniY = (int)(relY * threadForm.Height);
-
-                                    using (Pen redPen = new Pen(Color.Red, 2))
-                                    {
-                                        // Draw small dot at position
-                                        e.Graphics.DrawEllipse(redPen, miniX - 2, miniY - 2, 4, 4);
-                                        e.Graphics.DrawLine(redPen, miniX - 3, miniY, miniX + 3, miniY);
-                                        e.Graphics.DrawLine(redPen, miniX, miniY - 3, miniX, miniY + 3);
-                                    }
+                                    SizeF configSize = e.Graphics.MeasureString(configText, configFont);
+                                    e.Graphics.DrawString(configText, configFont, whiteBrush,
+                                        5, scaledHeight - configSize.Height - 5);
                                 }
 
-                                // Draw debug text messages
-                                int textY = 10;
-                                using (Font debugFont = new Font("Arial", 9.0f, FontStyle.Bold))
-                                using (Brush textBrush = new SolidBrush(Color.Yellow))
-                                using (Brush bgBrush = new SolidBrush(Color.FromArgb(150, 0, 0, 0)))
+                                // Version and time info at bottom right
+                                string versionText = $"v1.2.0 | {DateTime.Now.ToString("HH:mm:ss")}";
+                                using (Font versionFont = new Font("Arial", 7.0f, FontStyle.Regular))
                                 {
-                                    foreach (var item in activeHighlights)
-                                    {
-                                        // Only handle items with non-empty labels and no coordinates
-                                        if (item.x == 0 && item.y == 0 && !string.IsNullOrEmpty(item.label))
-                                        {
-                                            SizeF textSize = e.Graphics.MeasureString(item.label, debugFont);
-
-                                            // Draw background behind text
-                                            e.Graphics.FillRectangle(bgBrush, 10, textY, textSize.Width + 10, textSize.Height + 2);
-
-                                            // Draw text
-                                            e.Graphics.DrawString(item.label, debugFont, textBrush, 15, textY);
-                                            textY += (int)textSize.Height + 5;
-                                        }
-                                    }
+                                    SizeF versionSize = e.Graphics.MeasureString(versionText, versionFont);
+                                    e.Graphics.DrawString(versionText, versionFont, whiteBrush,
+                                        scaledWidth - versionSize.Width - rightPadding,
+                                        scaledHeight - versionSize.Height - 5);
                                 }
                             }
                         }
@@ -4754,16 +4825,24 @@ class Program
                             if (currentGameRect.Right > currentGameRect.Left &&
                                 currentGameRect.Bottom > currentGameRect.Top)
                             {
-                                int newWidth = (currentGameRect.Right - currentGameRect.Left) / 3;
-                                int contentLines = 13;
+                                // Apply size scaling
+                                int baseWidth = (currentGameRect.Right - currentGameRect.Left) / 3;
+                                int newWidth = (int)(baseWidth * statsOverlaySizeScale);
+
+                                int contentLines = 20; // Increased for additional information
                                 if (threadFlags["playing"] && currentTarget != null)
                                     contentLines += 3;
+                                if (targetId != 0)
+                                    contentLines += 4; // Extra lines for target info
+
                                 int lineHeight = 18;
                                 int bottomMargin = 20;
-                                int newHeight = contentLines * lineHeight + bottomMargin;
+                                int baseHeight = contentLines * lineHeight + bottomMargin;
+                                int newHeight = (int)(baseHeight * statsOverlaySizeScale);
 
-                                int newX = currentGameRect.Right - newWidth;
-                                int newY = currentGameRect.Bottom - newHeight - bottomMargin;
+                                // Use configurable right and bottom offsets
+                                int newX = Math.Max(0, currentGameRect.Right - newWidth - statsOverlayRightOffset);
+                                int newY = Math.Max(0, currentGameRect.Bottom - newHeight - statsOverlayBottomOffset);
 
                                 // Only update if dimensions actually changed
                                 if (newX != threadForm.Left || newY != threadForm.Top ||
@@ -4771,33 +4850,6 @@ class Program
                                 {
                                     threadForm.Location = new Point(newX, newY);
                                     threadForm.Size = new Size(newWidth, newHeight);
-                                }
-                            }
-
-                            // Update highlights
-                            lock (highlightLock)
-                            {
-                                var now = DateTime.Now;
-
-                                // First list what we're about to remove (for debugging)
-                                var toRemove = activeHighlights.Where(h => now >= h.time).ToList();
-                                if (toRemove.Count > 0)
-                                {
-                                    Console.WriteLine($"[DEBUG] Removing {toRemove.Count} expired highlights:");
-                                    foreach (var h in toRemove)
-                                    {
-                                        Console.WriteLine($"  - Highlight at ({h.x},{h.y}) expired at {h.time:HH:mm:ss.fff}");
-                                    }
-                                }
-
-                                // Now do the actual removal based on the expiration time
-                                int beforeCount = activeHighlights.Count;
-                                activeHighlights.RemoveAll(h => now >= h.time);
-                                int afterCount = activeHighlights.Count;
-
-                                if (beforeCount != afterCount)
-                                {
-                                    Console.WriteLine($"[DEBUG] Removed {beforeCount - afterCount} highlights, {afterCount} remaining");
                                 }
                             }
 
@@ -4901,10 +4953,30 @@ class Program
         Sleep(100);
     }
 
+    // Add a helper method to adjust overlay configuration during runtime
+    static void AdjustOverlayConfig(int rightOffsetChange, int bottomOffsetChange, float scaleChange)
+    {
+        statsOverlayRightOffset = Math.Max(10, statsOverlayRightOffset + rightOffsetChange);
+        statsOverlayBottomOffset = Math.Max(10, statsOverlayBottomOffset + bottomOffsetChange);
+        statsOverlaySizeScale = Math.Max(0.5f, Math.Min(2.0f, statsOverlaySizeScale + scaleChange));
+
+        Console.WriteLine($"[OVERLAY] Config: Right Offset={statsOverlayRightOffset}, " +
+                         $"Bottom Offset={statsOverlayBottomOffset}, " +
+                         $"Scale={statsOverlaySizeScale:F1}");
+
+        // Restart overlay to apply changes
+        if (overlayForm != null)
+        {
+            StopOverlay();
+            Sleep(200);
+            StartOverlay();
+        }
+    }
+
     // Helper method to draw a right-aligned stat line
     // Updated helper methods with line spacing parameter
     static void DrawRightAlignedStat(PaintEventArgs e, string label, string value, Font font,
-        Brush brush, int rightEdge, ref int y, int lineSpacing)
+       Brush brush, float rightEdge, ref int y, int lineSpacing)
     {
         string fullText = $"{label} {value}";
         SizeF textSize = e.Graphics.MeasureString(fullText, font);
@@ -4912,8 +4984,9 @@ class Program
         y += lineSpacing; // Use the provided line spacing
     }
 
+    // Updated DrawRightAlignedFeature to also accept float
     static void DrawRightAlignedFeature(PaintEventArgs e, string label, bool enabled, Font font,
-        Brush brush, int rightEdge, ref int y, int lineSpacing)
+        Brush brush, float rightEdge, ref int y, int lineSpacing)
     {
         string status = enabled ? "✅" : "❌";
         string fullText = $"{label} {status}";
@@ -4921,7 +4994,6 @@ class Program
         e.Graphics.DrawString(fullText, font, brush, rightEdge - textSize.Width, y);
         y += lineSpacing; // Use the provided line spacing
     }
-
 
     class ClickHighlight
     {
@@ -4945,70 +5017,7 @@ class Program
         }
     }
 
-    static System.Threading.Timer highlightTimer = null;
 
-    static void StartHighlightTimer()
-    {
-        if (highlightTimer != null)
-            return;
-
-        highlightTimer = new System.Threading.Timer(
-         (state) =>
-         {
-             try
-             {
-                 // Clean up expired highlights
-                 lock (highlightLock)
-                 {
-                     var now = DateTime.Now;
-
-                     // Log details about all highlights before removal
-                     if (activeHighlights.Count > 0)
-                     {
-                         Console.WriteLine($"[DEBUG] Current highlights before cleanup: {activeHighlights.Count}");
-                         foreach (var h in activeHighlights)
-                         {
-                             TimeSpan timeRemaining = h.time - now;
-                             bool isExpired = now >= h.time;
-                             Console.WriteLine($"[DEBUG] Highlight at ({h.x},{h.y}) size={h.size}, " +
-                                 $"expires at {h.time:HH:mm:ss.fff}, " +
-                                 $"remaining time: {timeRemaining.TotalMilliseconds:F0}ms, " +
-                                 $"expired: {isExpired}");
-                         }
-                     }
-
-                     // Create a list of what will be removed for logging
-                     var toRemove = activeHighlights.Where(h => now >= h.time).ToList();
-
-                     if (toRemove.Count > 0)
-                     {
-                         Console.WriteLine($"[DEBUG] Removing {toRemove.Count} expired highlights:");
-                         foreach (var h in toRemove)
-                         {
-                             Console.WriteLine($"[DEBUG] Removing highlight at ({h.x},{h.y}) " +
-                                 $"which expired at {h.time:HH:mm:ss.fff} " +
-                                 $"(current time: {now:HH:mm:ss.fff})");
-                         }
-
-                         // Perform the actual removal
-                         activeHighlights.RemoveAll(h => now >= h.time);
-
-                         Console.WriteLine($"[DEBUG] After removal: {activeHighlights.Count} highlights remaining");
-                     }
-                 }
-
-                 // Draw current highlights
-                 DrawGameWindowHighlights();
-             }
-             catch (Exception ex)
-             {
-                 Console.WriteLine($"[DEBUG] Highlight timer error: {ex.Message}");
-             }
-         },
-         null,
-         0,
-         50); // Update every 50ms
-    }
 
     static void DrawGameWindowHighlights()
     {
@@ -5217,5 +5226,464 @@ class Program
         return ((uint)r) | (((uint)g) << 8) | (((uint)b) << 16);
     }
 
+    static object clickOverlayLock = new object();
+    static List<(int x, int y, Color color, DateTime created, DateTime expires)> clickPositions =
+    new List<(int x, int y, Color color, DateTime created, DateTime expires)>();
+    static Thread clickOverlayThread = null;
+    static bool clickOverlayActive = false;
+    static Form clickOverlayForm = null;
+    static readonly Color DEFAULT_LEFT_CLICK_COLOR = Color.FromArgb(180, 0, 255, 0);     // Bright green with more alpha
+    static readonly Color DEFAULT_RIGHT_CLICK_COLOR = Color.FromArgb(180, 255, 128, 0);  // Bright orange with more alpha
+    static readonly Color WAYPOINT_CLICK_COLOR = Color.FromArgb(180, 255, 0, 255);
 
+    // Add this method to start the click overlay
+    static void StartClickOverlay()
+    {
+        lock (clickOverlayLock)
+        {
+            if (clickOverlayActive)
+            {
+                Console.WriteLine("[CLICK OVERLAY] Already running");
+                return;
+            }
+
+            // Clear any existing click positions if restarting
+            clickPositions.Clear();
+            clickOverlayActive = true;
+
+            // Start the overlay thread
+            clickOverlayThread = new Thread(() =>
+            {
+                try
+                {
+                    Console.WriteLine("[CLICK OVERLAY] Thread started");
+                    RunClickOverlay();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[CLICK OVERLAY] Thread error: {ex.Message}");
+                }
+                finally
+                {
+                    lock (clickOverlayLock)
+                    {
+                        clickOverlayActive = false;
+                        clickOverlayForm = null;
+                    }
+                    Console.WriteLine("[CLICK OVERLAY] Thread exited");
+                }
+            });
+
+            clickOverlayThread.IsBackground = true;
+            clickOverlayThread.SetApartmentState(ApartmentState.STA);
+            clickOverlayThread.Start();
+        }
+    }
+
+    // Add this method to stop the click overlay
+    static void StopClickOverlay()
+    {
+        lock (clickOverlayLock)
+        {
+            if (!clickOverlayActive)
+                return;
+
+            clickOverlayActive = false;
+            Console.WriteLine("[CLICK OVERLAY] Stopping...");
+
+            // Close the form if it exists
+            Form form = clickOverlayForm;
+            if (form != null && !form.IsDisposed)
+            {
+                try
+                {
+                    if (form.InvokeRequired)
+                    {
+                        form.BeginInvoke(new Action(() =>
+                        {
+                            try { form.Close(); } catch { }
+                        }));
+                    }
+                    else
+                    {
+                        form.Close();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[CLICK OVERLAY] Error closing form: {ex.Message}");
+                }
+            }
+        }
+    }
+
+
+
+
+    // 5. Modify the timer logic to remove expired markers
+    static void RunClickOverlay()
+    {
+        Form form = new Form
+        {
+            FormBorderStyle = FormBorderStyle.None,
+            ShowInTaskbar = false,
+            TopMost = true,
+            Opacity = 0.8,  // Slightly higher overall opacity
+            TransparencyKey = Color.Black,
+            BackColor = Color.Black
+        };
+
+        // Set position
+        if (targetWindow != IntPtr.Zero)
+        {
+            GetWindowRect(targetWindow, out RECT rect);
+            form.Location = new Point(rect.Left, rect.Top);
+            form.Size = new Size(rect.Right - rect.Left, rect.Bottom - rect.Top);
+        }
+        else
+        {
+            form.Location = new Point(0, 0);
+            form.Size = new Size(800, 600);
+        }
+
+        // Make form transparent to mouse events
+        int exStyle = GetWindowLong(form.Handle, GWL_EXSTYLE);
+        SetWindowLong(form.Handle, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED);
+
+        // Set up painting
+        form.Paint += (sender, e) =>
+        {
+            try
+            {
+                // Draw all click positions
+                lock (clickOverlayLock)
+                {
+                    // Only proceed if we have game window and clicks to show
+                    if (targetWindow == IntPtr.Zero || clickPositions.Count == 0)
+                        return;
+
+                    // Get the game window position relative to screen
+                    GetWindowRect(targetWindow, out RECT gameRect);
+
+                    foreach (var click in clickPositions)
+                    {
+                        // Skip expired clicks (should be rare as timer should clean them)
+                        if (DateTime.Now > click.expires)
+                            continue;
+
+                        // Calculate click position relative to overlay form
+                        int relX = click.x - gameRect.Left;
+                        int relY = click.y - gameRect.Top;
+
+                        if (relX >= 0 && relY >= 0 && relX < form.Width && relY < form.Height)
+                        {
+                            // Determine if this is a waypoint click (magenta color)
+                            bool isWaypoint = click.color.R > 200 && click.color.G < 100 && click.color.B > 200;
+
+                            // Adjust size based on click type - larger for waypoints
+                            int squareSize = isWaypoint ?
+                                Math.Max(pixelSize * 2, 32) : // Larger for waypoints
+                                Math.Max(pixelSize, 24);     // Normal size for regular clicks
+
+                            // Calculate the center of the square
+                            int left = relX - (squareSize / 2);
+                            int top = relY - (squareSize / 2);
+
+                            // Calculate time remaining as a percentage
+                            TimeSpan timeRemaining = click.expires - DateTime.Now;
+                            TimeSpan totalLifespan = isWaypoint ?
+                                TimeSpan.FromSeconds(0.6) : // Longer for waypoints
+                                CLICK_MARKER_LIFESPAN;
+
+                            double remainingPercent = timeRemaining.TotalMilliseconds / totalLifespan.TotalMilliseconds;
+
+                            // Fade out effect - adjust alpha based on remaining time
+                            int alpha = (int)(remainingPercent * 180); // Start from 180 instead of 130
+                            if (alpha < 50) alpha = 50; // Higher minimum alpha for better visibility
+
+                            // Create a fading color based on remaining time
+                            Color fadingColor = Color.FromArgb(
+                                alpha,
+                                click.color.R,
+                                click.color.G,
+                                click.color.B
+                            );
+
+                            // Draw the marker with appropriate style
+                            if (isWaypoint)
+                            {
+                                // For waypoints: draw a filled circle with crosshairs
+                                int diameter = squareSize;
+                                int radius = diameter / 2;
+
+                                // Draw filled circle
+                                using (SolidBrush brush = new SolidBrush(fadingColor))
+                                {
+                                    e.Graphics.FillEllipse(brush, left, top, diameter, diameter);
+                                }
+
+                                // Draw crosshairs
+                                using (Pen crosshairPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 2))
+                                {
+                                    // Horizontal line
+                                    e.Graphics.DrawLine(
+                                        crosshairPen,
+                                        left, top + radius,
+                                        left + diameter, top + radius
+                                    );
+
+                                    // Vertical line
+                                    e.Graphics.DrawLine(
+                                        crosshairPen,
+                                        left + radius, top,
+                                        left + radius, top + diameter
+                                    );
+
+                                    // Circle outline
+                                    e.Graphics.DrawEllipse(
+                                        crosshairPen,
+                                        left, top, diameter, diameter
+                                    );
+                                }
+
+                                // Add pulsing effect - second larger circle with lower opacity
+                                using (Pen pulsePen = new Pen(Color.FromArgb(alpha / 3, 255, 255, 255), 1))
+                                {
+                                    int pulseSize = (int)(diameter * 1.5);
+                                    int pulseOffset = (pulseSize - diameter) / 2;
+                                    e.Graphics.DrawEllipse(
+                                        pulsePen,
+                                        left - pulseOffset,
+                                        top - pulseOffset,
+                                        pulseSize,
+                                        pulseSize
+                                    );
+                                }
+                            }
+                            else
+                            {
+                                // For regular clicks: draw a standard square
+                                using (SolidBrush brush = new SolidBrush(fadingColor))
+                                {
+                                    e.Graphics.FillRectangle(brush, left, top, squareSize, squareSize);
+                                }
+
+                                // Add a border for better visibility
+                                using (Pen borderPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1))
+                                {
+                                    e.Graphics.DrawRectangle(borderPen, left, top, squareSize, squareSize);
+                                }
+                            }
+
+                            // Display remaining time (in tenths of a second)
+                            string timeText = $"{timeRemaining.TotalSeconds:F1}s";
+
+                            // Draw countdown timer INSIDE the marker
+                            using (Font font = new Font("Arial", isWaypoint ? 10 : 8, FontStyle.Bold))
+                            {
+                                // Measure text to center it
+                                SizeF textSize = e.Graphics.MeasureString(timeText, font);
+                                float textX = left + (squareSize - textSize.Width) / 2;
+                                float textY = top + (squareSize - textSize.Height) / 2;
+
+                                // Draw text shadow for better readability
+                                using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(alpha, 0, 0, 0)))
+                                {
+                                    e.Graphics.DrawString(timeText, font, shadowBrush, textX + 1, textY + 1);
+                                }
+
+                                // Draw text with improved visibility
+                                using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255)))
+                                {
+                                    e.Graphics.DrawString(timeText, font, textBrush, textX, textY);
+                                }
+                            }
+
+                            // For waypoints, add text indicating it's a waypoint click
+                            if (isWaypoint)
+                            {
+                                string waypointText = "WAYPOINT";
+                                using (Font labelFont = new Font("Arial", 7, FontStyle.Bold))
+                                {
+                                    // Position below the circle
+                                    SizeF textSize = e.Graphics.MeasureString(waypointText, labelFont);
+                                    float textX = left + (squareSize - textSize.Width) / 2;
+                                    float textY = top + squareSize + 2;
+
+                                    // Draw with shadow for visibility
+                                    using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(alpha, 0, 0, 0)))
+                                    using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(alpha, 255, 255, 0))) // Yellow text
+                                    {
+                                        e.Graphics.DrawString(waypointText, labelFont, shadowBrush, textX + 1, textY + 1);
+                                        e.Graphics.DrawString(waypointText, labelFont, textBrush, textX, textY);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CLICK OVERLAY] Paint error: {ex.Message}");
+            }
+        };
+
+        // Set up a timer for position updates and repainting
+        // Using shorter interval for smoother animation
+        System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer
+        {
+            Interval = 33  // Reduced to ~30fps for smoother animation
+        };
+
+        timer.Tick += (sender, e) =>
+        {
+            try
+            {
+                // Update overlay position to track game window
+                if (targetWindow != IntPtr.Zero)
+                {
+                    GetWindowRect(targetWindow, out RECT gameRect);
+                    if (gameRect.Right > gameRect.Left && gameRect.Bottom > gameRect.Top)
+                    {
+                        int newWidth = gameRect.Right - gameRect.Left;
+                        int newHeight = gameRect.Bottom - gameRect.Top;
+
+                        if (form.Left != gameRect.Left || form.Top != gameRect.Top ||
+                            form.Width != newWidth || form.Height != newHeight)
+                        {
+                            form.Location = new Point(gameRect.Left, gameRect.Top);
+                            form.Size = new Size(newWidth, newHeight);
+                        }
+                    }
+                }
+
+                // Remove expired items from the list
+                lock (clickOverlayLock)
+                {
+                    DateTime now = DateTime.Now;
+                    int countBefore = clickPositions.Count;
+
+                    // Remove all expired click positions
+                    clickPositions.RemoveAll(click => now >= click.expires);
+
+                    int removed = countBefore - clickPositions.Count;
+                    if (removed > 0)
+                    {
+                        Console.WriteLine($"[CLICK OVERLAY] Removed {removed} expired click markers. {clickPositions.Count} active");
+                    }
+                }
+
+                // Always repaint to update animation
+                form.Invalidate();
+
+                // Check if we should exit
+                lock (clickOverlayLock)
+                {
+                    if (!clickOverlayActive || clickOverlayForm != form)
+                    {
+                        timer.Stop();
+                        form.Close();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CLICK OVERLAY] Timer error: {ex.Message}");
+            }
+        };
+
+        // Store the form reference
+        lock (clickOverlayLock)
+        {
+            clickOverlayForm = form;
+        }
+
+        timer.Start();
+        form.Show();
+
+        // Message loop
+        while (clickOverlayActive && clickOverlayForm == form && !form.IsDisposed)
+        {
+            Application.DoEvents();
+            Thread.Sleep(10);
+        }
+
+        // Clean up
+        timer.Stop();
+        timer.Dispose();
+
+        if (!form.IsDisposed)
+        {
+            form.Close();
+            form.Dispose();
+        }
+    }
+
+    // Add this method to record a click position
+    static readonly TimeSpan CLICK_MARKER_LIFESPAN = TimeSpan.FromSeconds(0.8);
+
+    // 2. Modify the RecordClickPosition method to include expiration time
+    static void RecordClickPosition(int x, int y, bool isLeftClick)
+    {
+        lock (clickOverlayLock)
+        {
+            if (!clickOverlayActive)
+                return;
+
+            // Get screen coordinates
+            POINT screenPoint = new POINT { X = x, Y = y };
+            ClientToScreen(targetWindow, ref screenPoint);
+
+            // Calculate expiration time (current time + lifespan)
+            DateTime creationTime = DateTime.Now;
+            DateTime expirationTime = creationTime.Add(CLICK_MARKER_LIFESPAN);
+
+            // Add to the list with the appropriate color
+            Color clickColor = isLeftClick ? DEFAULT_LEFT_CLICK_COLOR : DEFAULT_RIGHT_CLICK_COLOR;
+
+            // Add creation time and expiration time
+            clickPositions.Add((
+                screenPoint.X,
+                screenPoint.Y,
+                clickColor,
+                creationTime,
+                expirationTime  // New expiration time
+            ));
+
+            Console.WriteLine($"[CLICK OVERLAY] Recorded {(isLeftClick ? "left" : "right")} click at ({screenPoint.X}, {screenPoint.Y}) - expires in {CLICK_MARKER_LIFESPAN.TotalMilliseconds}ms");
+        }
+    }
+
+    static void RecordWaypointClick(int x, int y)
+    {
+        lock (clickOverlayLock)
+        {
+            if (!clickOverlayActive)
+                return;
+
+            // Get screen coordinates
+            POINT screenPoint = new POINT { X = x, Y = y };
+            ClientToScreen(targetWindow, ref screenPoint);
+
+            // Calculate creation and expiration times
+            DateTime creationTime = DateTime.Now;
+            DateTime expirationTime;
+
+            expirationTime = creationTime.Add(TimeSpan.FromSeconds(1.2)); // Slightly longer for waypoints
+
+            // Add to the list with the waypoint color
+            clickPositions.Add((
+                screenPoint.X,
+                screenPoint.Y,
+                WAYPOINT_CLICK_COLOR,
+                creationTime,
+                expirationTime
+            ));
+
+            string expirationInfo = "- expires in 1.2s";
+
+            Console.WriteLine($"[CLICK OVERLAY] Recorded waypoint click at ({screenPoint.X}, {screenPoint.Y}) {expirationInfo}");
+        }
+    }
 }
