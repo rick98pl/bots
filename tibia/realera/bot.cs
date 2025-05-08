@@ -139,6 +139,19 @@ class Program
     static bool debug = true;
     static int debugTime = 2;
 
+    static IntPtr overlayDC = IntPtr.Zero;
+    static IntPtr memDC = IntPtr.Zero;
+    static IntPtr hBitmap = IntPtr.Zero;
+    static bool overlayActive = false;
+    static DateTime lastOverlayUpdate = DateTime.MinValue;
+    static Thread directOverlayThread = null;
+    static RECT lastGameWindowRect;
+    static object directOverlayLock = new object();
+
+
+    const uint SRCCOPY = 0x00CC0020;
+
+
     static void Main()
     {
         Console.WriteLine($"Default HP Key: {DEFAULT_HP_KEY_NAME}");
@@ -455,6 +468,11 @@ class Program
         outfitThread.Name = "OutfitMaintenance";
         outfitThread.Start();
 
+        if (keepGameWindowTopMost)
+        {
+            StartGameWindowTopMost();
+        }
+
         StartClickOverlay();
 
         // Start SPAWNWATCHER if enabled
@@ -474,8 +492,7 @@ class Program
         threadFlags["overlay"] = false; // Also disable overlay
         SPAWNWATCHER.Stop();
         StopPositionAlertSound(); // Stop any playing alert sounds
-
-        // Explicitly stop the overlay
+        StopGameWindowTopMost();
         StopOverlay();
         StopClickOverlay();
 
@@ -4717,22 +4734,22 @@ class Program
         {
             try
             {
-                System.Windows.Forms.Form threadForm = null;
+                System.Windows.Forms.Form threadForm = new CustomOverlayForm();
 
                 try
                 {
-                    threadForm = new System.Windows.Forms.Form();
-
                     // Configure form properties
                     threadForm.FormBorderStyle = System.Windows.Forms.FormBorderStyle.None;
                     threadForm.ShowInTaskbar = false;
                     threadForm.TopMost = true;
-                    threadForm.Opacity = statsOverlayOpacity; // Use configurable opacity
+                    threadForm.Opacity = statsOverlayOpacity;
                     threadForm.TransparencyKey = Color.Black;
                     threadForm.BackColor = Color.Black;
+                    threadForm.MinimizeBox = false;
+                    threadForm.MaximizeBox = false;
+                    threadForm.ControlBox = false;
 
-                    // Initial size and position - will be updated by timer
-                    // Apply size scaling to initial size
+                    // Set initial size and position
                     int baseWidth = 300;
                     int baseHeight = 200;
                     threadForm.Width = (int)(baseWidth * statsOverlaySizeScale);
@@ -4742,7 +4759,6 @@ class Program
                     try
                     {
                         GetWindowRect(targetWindow, out RECT gameWindowRect);
-                        // Position using configurable offsets
                         threadForm.Location = new Point(
                             Math.Max(0, gameWindowRect.Right - threadForm.Width - statsOverlayRightOffset),
                             gameWindowRect.Bottom - threadForm.Height - statsOverlayBottomOffset);
@@ -4754,255 +4770,26 @@ class Program
                             Screen.PrimaryScreen.WorkingArea.Bottom - threadForm.Height - statsOverlayBottomOffset);
                     }
 
-                    // Make form click-through
+                    // Show the form before making it click-through
+                    threadForm.Show();
+
+                    // Make the window click-through
                     int exStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
-                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE, exStyle | WS_EX_LAYERED);
-                    threadForm.Deactivate += (s, e) => {
-                        if (threadForm != null && !threadForm.IsDisposed)
-                        {
-                            threadForm.TopMost = false;
-                            threadForm.TopMost = true;
-                        }
-                    };
-                    // Set up painting
-                    threadForm.Paint += (sender, e) =>
-                    {
-                        try
-                        {
-                            // Apply scaling to graphics for text rendering
-                            if (statsOverlaySizeScale != 1.0f)
-                            {
-                                e.Graphics.ScaleTransform(statsOverlaySizeScale, statsOverlaySizeScale);
-                            }
+                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE);
 
-                            // Fill background with semi-transparent dark color (no border)
-                            using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(180, 0, 0, 0)))
-                            {
-                                // When using scaling, adjust the rectangle to fill the scaled area
-                                float scaledWidth = threadForm.Width / statsOverlaySizeScale;
-                                float scaledHeight = threadForm.Height / statsOverlaySizeScale;
-                                e.Graphics.FillRectangle(bgBrush, 0, 0, scaledWidth, scaledHeight);
-                            }
-
-                            // Calculate font sizes based on scaling
-                            float titleFontSize = 10.0f;
-                            float statsFontSize = 9.0f;
-                            float smallFontSize = 8.0f;
-
-                            // Increased font sizes
-                            using (Font titleFont = new Font("Arial", titleFontSize, FontStyle.Bold))
-                            using (Font statsFont = new Font("Arial", statsFontSize, FontStyle.Regular))
-                            using (Font smallFont = new Font("Arial", smallFontSize, FontStyle.Regular))
-                            using (Brush whiteBrush = new SolidBrush(Color.White))
-                            using (Brush greenBrush = new SolidBrush(Color.LightGreen))
-                            using (Brush blueBrush = new SolidBrush(Color.LightBlue))  // Blue for mana
-                            using (Brush yellowBrush = new SolidBrush(Color.Yellow))
-                            using (Brush orangeBrush = new SolidBrush(Color.Orange))
-                            using (Brush pinkBrush = new SolidBrush(Color.LightPink))  // For invisibility
-                            using (Brush redBrush = new SolidBrush(Color.LightCoral))  // For target info
-                            {
-                                // Calculate scaled dimensions
-                                float scaledWidth = threadForm.Width / statsOverlaySizeScale;
-
-                                int y = 5;  // Start position
-                                int rightPadding = 20;  // Padding from right edge
-                                int lineSpacing = 18;   // Increased spacing between lines (was 14)
-
-                                // Get current stats
-                                double hpPercent, manaPercent;
-                                int currentX, currentY, currentZ, currentTargetId, currentInvisibilityCode, currentOutfitValue;
-                                string currentTargetName = "";
-                                lock (memoryLock)
-                                {
-                                    hpPercent = (curHP / maxHP) * 100;
-                                    manaPercent = (curMana / maxMana) * 100;
-                                    currentX = posX;
-                                    currentY = posY;
-                                    currentZ = posZ;
-                                    currentTargetId = targetId;
-                                    currentInvisibilityCode = invisibilityCode;
-                                    currentOutfitValue = currentOutfit;
-                                }
-
-                                // Get target monster info if we have a target
-                                int monsterX = 0, monsterY = 0, monsterZ = 0;
-                                if (currentTargetId != 0)
-                                {
-                                    var (mX, mY, mZ, mName) = GetTargetMonsterInfo();
-                                    monsterX = mX;
-                                    monsterY = mY;
-                                    monsterZ = mZ;
-                                    currentTargetName = mName;
-                                }
-
-                                // Title
-                                string titleText = "RealeraDX - Live Stats";
-                                SizeF titleSize = e.Graphics.MeasureString(titleText, titleFont);
-                                e.Graphics.DrawString(titleText, titleFont, whiteBrush,
-                                    scaledWidth - titleSize.Width - rightPadding, y);
-                                y += lineSpacing + 2; // Extra spacing after title
-
-                                // Format right-aligned stats 
-                                DrawRightAlignedStat(e, "HP:", $"{curHP:F0}/{maxHP:F0} ({hpPercent:F1}%)",
-                                    statsFont, hpPercent < 50 ? orangeBrush : greenBrush,
-                                    scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                DrawRightAlignedStat(e, "Mana:", $"{curMana:F0}/{maxMana:F0} ({manaPercent:F1}%)",
-                                    statsFont, blueBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                // Position coordinates - each on separate line
-                                DrawRightAlignedStat(e, "X:", $"{currentX}", statsFont, whiteBrush,
-                                    scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                DrawRightAlignedStat(e, "Y:", $"{currentY}", statsFont, whiteBrush,
-                                    scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                DrawRightAlignedStat(e, "Z:", $"{currentZ}", statsFont, whiteBrush,
-                                    scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                // Add invisibility code
-                                DrawRightAlignedStat(e, "Invisibility:", $"{currentInvisibilityCode} " +
-                                    (currentInvisibilityCode == 2 ? "(Ring ON)" : "(Ring OFF)"),
-                                    statsFont, pinkBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                // Add outfit value
-                                DrawRightAlignedStat(e, "Outfit:", $"{currentOutfitValue}",
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                y += 5; // Extra spacing before target section
-
-                                // Target information section
-                                if (currentTargetId != 0)
-                                {
-                                    string targetHeader = "Target Info:";
-                                    SizeF headerSize = e.Graphics.MeasureString(targetHeader, statsFont);
-                                    e.Graphics.DrawString(targetHeader, statsFont, redBrush,
-                                        scaledWidth - headerSize.Width - rightPadding, y);
-                                    y += lineSpacing;
-
-                                    // Target ID and name
-                                    DrawRightAlignedStat(e, "ID:", $"{currentTargetId}",
-                                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                    if (!string.IsNullOrEmpty(currentTargetName))
-                                    {
-                                        DrawRightAlignedStat(e, "Name:", $"{currentTargetName}",
-                                            statsFont, redBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                    }
-
-                                    // Target coordinates
-                                    if (monsterX != 0 || monsterY != 0 || monsterZ != 0)
-                                    {
-                                        DrawRightAlignedStat(e, "Pos:", $"({monsterX}, {monsterY}, {monsterZ})",
-                                            statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                        // Calculate distance to target
-                                        int distanceX = Math.Abs(monsterX - currentX);
-                                        int distanceY = Math.Abs(monsterY - currentY);
-                                        int totalDistance = distanceX + distanceY;
-
-                                        DrawRightAlignedStat(e, "Distance:", $"{totalDistance} steps",
-                                            statsFont, totalDistance > 5 ? orangeBrush : greenBrush,
-                                            scaledWidth - rightPadding, ref y, lineSpacing);
-                                    }
-                                }
-                                else
-                                {
-                                    DrawRightAlignedStat(e, "Target:", "None",
-                                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                }
-
-                                y += 5; // Extra spacing before features section
-
-                                // Features heading in yellow
-                                string featuresText = "Active Features:";
-                                SizeF featuresSize = e.Graphics.MeasureString(featuresText, statsFont);
-                                e.Graphics.DrawString(featuresText, statsFont, yellowBrush,
-                                    scaledWidth - featuresSize.Width - rightPadding, y);
-                                y += lineSpacing;
-
-                                // Format features
-                                DrawRightAlignedFeature(e, "Auto-Potions:", threadFlags["autopot"],
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                DrawRightAlignedFeature(e, "Recording:", threadFlags["recording"],
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                DrawRightAlignedFeature(e, "Playback:", threadFlags["playing"],
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                DrawRightAlignedFeature(e, "Click Overlay:", clickOverlayActive,
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                // If we're playing a path, show progress
-                                if (threadFlags["playing"] && currentTarget != null)
-                                {
-                                    y += 2; // Small extra gap
-
-                                    // Target distance
-                                    int distanceX = Math.Abs(currentTarget.X - currentX);
-                                    int distanceY = Math.Abs(currentTarget.Y - currentY);
-                                    DrawRightAlignedStat(e, "Waypoint:", $"{distanceX + distanceY} steps",
-                                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                    float progress = (float)(currentCoordIndex + 1) / totalCoords;
-
-                                    // Progress text
-                                    string progressText = $"Path: {(progress * 100):F1}% ({currentCoordIndex + 1}/{totalCoords})";
-                                    SizeF progressSize = e.Graphics.MeasureString(progressText, statsFont);
-                                    e.Graphics.DrawString(progressText, statsFont, whiteBrush,
-                                        scaledWidth - progressSize.Width - rightPadding, y);
-                                    y += lineSpacing;
-
-                                    // Progress bar
-                                    int progressWidth = (int)(scaledWidth - 40 - rightPadding); // with margins
-                                    int barHeight = 6; // Slightly taller bar
-                                    int barX = 20; // Left margin
-                                    int filledWidth = (int)(progressWidth * progress);
-
-                                    e.Graphics.FillRectangle(new SolidBrush(Color.DarkGray), barX, y, progressWidth, barHeight);
-                                    e.Graphics.FillRectangle(new SolidBrush(Color.LimeGreen), barX, y, filledWidth, barHeight);
-
-                                    // Add minimal spacing after bar
-                                    y += barHeight + 2;
-                                }
-
-                                // Display offset and scaling values for easy adjustment
-                                scaledWidth = threadForm.Width / statsOverlaySizeScale;
-                                float scaledHeight = threadForm.Height / statsOverlaySizeScale;
-
-                                //string configText = $"R:{statsOverlayRightOffset} B:{statsOverlayBottomOffset} S:{statsOverlaySizeScale:F1}";
-                                //using (Font configFont = new Font("Arial", 7.0f, FontStyle.Regular))
-                                //{
-                                //    SizeF configSize = e.Graphics.MeasureString(configText, configFont);
-                                //    e.Graphics.DrawString(configText, configFont, whiteBrush,
-                                //        5, scaledHeight - configSize.Height - 5);
-                                //}
-
-                                //// Version and time info at bottom right
-                                //string versionText = $"v1.2.0 | {DateTime.Now.ToString("HH:mm:ss")}";
-                                //using (Font versionFont = new Font("Arial", 7.0f, FontStyle.Regular))
-                                //{
-                                //    SizeF versionSize = e.Graphics.MeasureString(versionText, versionFont);
-                                //    e.Graphics.DrawString(versionText, versionFont, whiteBrush,
-                                //        scaledWidth - versionSize.Width - rightPadding,
-                                //        scaledHeight - versionSize.Height - 5);
-                                //}
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[OVERLAY] Paint error: {ex.Message}");
-                        }
-                    };
-
-                    // Set up timer for cleanup and window position update
+                    // Set up timer for updates
                     System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer { Interval = 100 };
 
                     updateTimer.Tick += (sender, e) =>
                     {
                         try
                         {
+                            // Ensure the form is still topmost
+                            if (!threadForm.TopMost)
+                            {
+                                threadForm.TopMost = true;
+                            }
+
                             // Update overlay position to track the game window
                             GetWindowRect(targetWindow, out RECT currentGameRect);
 
@@ -5032,27 +4819,30 @@ class Program
                                 if (newX != threadForm.Left || newY != threadForm.Top ||
                                     newWidth != threadForm.Width || newHeight != threadForm.Height)
                                 {
-                                    threadForm.Location = new Point(newX, newY);
-                                    threadForm.Size = new Size(newWidth, newHeight);
+                                    threadForm.Invoke(new Action(() => {
+                                        threadForm.Location = new Point(newX, newY);
+                                        threadForm.Size = new Size(newWidth, newHeight);
+                                    }));
                                 }
                             }
 
-                            // Always refresh display
-                            threadForm.Invalidate();
-
-                            // IMPORTANT: Keep form on top regardless of focus state
-                            if (!threadForm.TopMost)
+                            // Ensure window stays click-through
+                            exStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
+                            if ((exStyle & WS_EX_TRANSPARENT) == 0 || (exStyle & WS_EX_NOACTIVATE) == 0)
                             {
-                                threadForm.TopMost = true;
+                                SetWindowLong(threadForm.Handle, GWL_EXSTYLE,
+                                    exStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE);
                             }
 
+                            // Refresh display
+                            threadForm.Invoke(new Action(() => threadForm.Invalidate()));
+
                             // If main program has stopped, stop timer and close form
-                            // Only check programRunning and memoryReadActive, not focus-related states
                             if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
                                 overlayForm != threadForm)
                             {
                                 updateTimer.Stop();
-                                threadForm.Close();
+                                threadForm.Invoke(new Action(() => threadForm.Close()));
                             }
                         }
                         catch (Exception ex)
@@ -5067,61 +4857,28 @@ class Program
                     // Start the timer
                     updateTimer.Start();
 
-                    // Show the form
-                    threadForm.Show();
+                    // Run the message loop
+                    System.Windows.Forms.Application.Run(threadForm);
 
-                    // Message loop using DoEvents
-                    DateTime lastCheckTime = DateTime.MinValue;
-                    while (!threadForm.IsDisposed && programRunning && memoryReadActive &&
-                           threadFlags["overlay"] && overlayForm == threadForm)
-                    {
-                        System.Windows.Forms.Application.DoEvents();
-                        Thread.Sleep(10);
-
-                        // Periodically check if we should exit
-                        DateTime now = DateTime.Now;
-                        if ((now - lastCheckTime).TotalSeconds >= 1)
-                        {
-                            lastCheckTime = now;
-                            if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
-                                overlayForm != threadForm)
-                            {
-                                break;
-                            }
-                        }
-                    }
-
-                    // When we exit the loop, stop the timer
+                    // Cleanup when form is closed
                     updateTimer.Stop();
                     updateTimer.Dispose();
 
-                    // Clear reference if this is still the active form
                     if (overlayForm == threadForm)
                     {
                         overlayForm = null;
                     }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[OVERLAY] Form error: {ex.Message}");
 
-                    // Close the form if it's not already disposed
                     if (!threadForm.IsDisposed)
                     {
                         threadForm.Close();
                         threadForm.Dispose();
                     }
-                }
-                finally
-                {
-                    // Ensure resources are cleaned up even on exception
-                    if (threadForm != null && !threadForm.IsDisposed)
-                    {
-                        try
-                        {
-                            threadForm.Close();
-                            threadForm.Dispose();
-                        }
-                        catch { }
-                    }
 
-                    // Final check to clear overlay reference
                     if (overlayForm == threadForm)
                     {
                         overlayForm = null;
@@ -5130,7 +4887,7 @@ class Program
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[OVERLAY] Overlay thread error: {ex.Message}");
+                Console.WriteLine($"[OVERLAY] Thread error: {ex.Message}");
                 overlayForm = null;
             }
         });
@@ -5143,6 +4900,291 @@ class Program
         // Give the overlay a moment to initialize
         Sleep(100);
     }
+
+    // Add a custom form class that handles all the painting and ensures it stays click-through
+    class CustomOverlayForm : System.Windows.Forms.Form
+    {
+        public CustomOverlayForm()
+        {
+            // Required for Windows Form Designer support
+            this.SetStyle(ControlStyles.SupportsTransparentBackColor, true);
+            this.SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
+            this.SetStyle(ControlStyles.AllPaintingInWmPaint, true);
+            this.SetStyle(ControlStyles.UserPaint, true);
+            this.SetStyle(ControlStyles.ResizeRedraw, true);
+            this.UpdateStyles();
+        }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                // This is the key to making the window click-through
+                CreateParams cp = base.CreateParams;
+                cp.ExStyle |= 0x00000020; // WS_EX_TRANSPARENT
+                cp.ExStyle |= 0x00000080; // WS_EX_LAYERED
+                cp.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE
+                return cp;
+            }
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            // Ensure our custom window styles are applied immediately after shown
+            int exStyle = GetWindowLong(this.Handle, GWL_EXSTYLE);
+            SetWindowLong(this.Handle, GWL_EXSTYLE, exStyle | 0x00000020 | 0x00000080 | 0x08000000);
+        }
+
+        protected override void OnDeactivate(EventArgs e)
+        {
+            base.OnDeactivate(e);
+            // Re-apply topmost when deactivated
+            this.TopMost = true;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            try
+            {
+                // Make sure we stay topmost
+                if (!this.TopMost)
+                {
+                    this.TopMost = true;
+                }
+
+                // Apply scaling to graphics for text rendering
+                if (statsOverlaySizeScale != 1.0f)
+                {
+                    e.Graphics.ScaleTransform(statsOverlaySizeScale, statsOverlaySizeScale);
+                }
+
+                // Fill background with semi-transparent dark color (no border)
+                using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(180, 0, 0, 0)))
+                {
+                    // When using scaling, adjust the rectangle to fill the scaled area
+                    float scaledWidth = this.Width / statsOverlaySizeScale;
+                    float scaledHeight = this.Height / statsOverlaySizeScale;
+                    e.Graphics.FillRectangle(bgBrush, 0, 0, scaledWidth, scaledHeight);
+                }
+
+                // Calculate font sizes based on scaling
+                float titleFontSize = 10.0f;
+                float statsFontSize = 9.0f;
+                float smallFontSize = 8.0f;
+
+                // Draw content with increased font sizes
+                using (Font titleFont = new Font("Arial", titleFontSize, FontStyle.Bold))
+                using (Font statsFont = new Font("Arial", statsFontSize, FontStyle.Regular))
+                using (Font smallFont = new Font("Arial", smallFontSize, FontStyle.Regular))
+                using (Brush whiteBrush = new SolidBrush(Color.White))
+                using (Brush greenBrush = new SolidBrush(Color.LightGreen))
+                using (Brush blueBrush = new SolidBrush(Color.LightBlue))
+                using (Brush yellowBrush = new SolidBrush(Color.Yellow))
+                using (Brush orangeBrush = new SolidBrush(Color.Orange))
+                using (Brush pinkBrush = new SolidBrush(Color.LightPink))
+                using (Brush redBrush = new SolidBrush(Color.LightCoral))
+                {
+                    // Calculate scaled dimensions
+                    float scaledWidth = this.Width / statsOverlaySizeScale;
+
+                    int y = 5;  // Start position
+                    int rightPadding = 20;  // Padding from right edge
+                    int lineSpacing = 18;   // Increased spacing between lines
+
+                    // Get current stats
+                    double hpPercent, manaPercent;
+                    int currentX, currentY, currentZ, currentTargetId, currentInvisibilityCode, currentOutfitValue;
+                    string currentTargetName = "";
+
+                    lock (memoryLock)
+                    {
+                        hpPercent = (curHP / maxHP) * 100;
+                        manaPercent = (curMana / maxMana) * 100;
+                        currentX = posX;
+                        currentY = posY;
+                        currentZ = posZ;
+                        currentTargetId = targetId;
+                        currentInvisibilityCode = invisibilityCode;
+                        currentOutfitValue = currentOutfit;
+                    }
+
+                    // Get target monster info if we have a target
+                    int monsterX = 0, monsterY = 0, monsterZ = 0;
+                    if (currentTargetId != 0)
+                    {
+                        var (mX, mY, mZ, mName) = GetTargetMonsterInfo();
+                        monsterX = mX;
+                        monsterY = mY;
+                        monsterZ = mZ;
+                        currentTargetName = mName;
+                    }
+
+                    // Title
+                    string titleText = "RealeraDX - Live Stats";
+                    SizeF titleSize = e.Graphics.MeasureString(titleText, titleFont);
+                    e.Graphics.DrawString(titleText, titleFont, whiteBrush,
+                        scaledWidth - titleSize.Width - rightPadding, y);
+                    y += lineSpacing + 2; // Extra spacing after title
+
+                    // Format right-aligned stats 
+                    DrawRightAlignedStat(e, "HP:", $"{curHP:F0}/{maxHP:F0} ({hpPercent:F1}%)",
+                        statsFont, hpPercent < 50 ? orangeBrush : greenBrush,
+                        scaledWidth - rightPadding, ref y, lineSpacing);
+
+                    DrawRightAlignedStat(e, "Mana:", $"{curMana:F0}/{maxMana:F0} ({manaPercent:F1}%)",
+                        statsFont, blueBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                    // Position coordinates - each on separate line
+                    DrawRightAlignedStat(e, "X:", $"{currentX}", statsFont, whiteBrush,
+                        scaledWidth - rightPadding, ref y, lineSpacing);
+
+                    DrawRightAlignedStat(e, "Y:", $"{currentY}", statsFont, whiteBrush,
+                        scaledWidth - rightPadding, ref y, lineSpacing);
+
+                    DrawRightAlignedStat(e, "Z:", $"{currentZ}", statsFont, whiteBrush,
+                        scaledWidth - rightPadding, ref y, lineSpacing);
+
+                    // Add invisibility code
+                    DrawRightAlignedStat(e, "Invisibility:", $"{currentInvisibilityCode} " +
+                        (currentInvisibilityCode == 2 ? "(Ring ON)" : "(Ring OFF)"),
+                        statsFont, pinkBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                    // Add outfit value
+                    DrawRightAlignedStat(e, "Outfit:", $"{currentOutfitValue}",
+                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                    y += 5; // Extra spacing before target section
+
+                    // Target information section
+                    if (currentTargetId != 0)
+                    {
+                        string targetHeader = "Target Info:";
+                        SizeF headerSize = e.Graphics.MeasureString(targetHeader, statsFont);
+                        e.Graphics.DrawString(targetHeader, statsFont, redBrush,
+                            scaledWidth - headerSize.Width - rightPadding, y);
+                        y += lineSpacing;
+
+                        // Target ID and name
+                        DrawRightAlignedStat(e, "ID:", $"{currentTargetId}",
+                            statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                        if (!string.IsNullOrEmpty(currentTargetName))
+                        {
+                            DrawRightAlignedStat(e, "Name:", $"{currentTargetName}",
+                                statsFont, redBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                        }
+
+                        // Target coordinates
+                        if (monsterX != 0 || monsterY != 0 || monsterZ != 0)
+                        {
+                            DrawRightAlignedStat(e, "Pos:", $"({monsterX}, {monsterY}, {monsterZ})",
+                                statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                            // Calculate distance to target
+                            int distanceX = Math.Abs(monsterX - currentX);
+                            int distanceY = Math.Abs(monsterY - currentY);
+                            int totalDistance = distanceX + distanceY;
+
+                            DrawRightAlignedStat(e, "Distance:", $"{totalDistance} steps",
+                                statsFont, totalDistance > 5 ? orangeBrush : greenBrush,
+                                scaledWidth - rightPadding, ref y, lineSpacing);
+                        }
+                    }
+                    else
+                    {
+                        DrawRightAlignedStat(e, "Target:", "None",
+                            statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                    }
+
+                    y += 5; // Extra spacing before features section
+
+                    // Features heading in yellow
+                    string featuresText = "Active Features:";
+                    SizeF featuresSize = e.Graphics.MeasureString(featuresText, statsFont);
+                    e.Graphics.DrawString(featuresText, statsFont, yellowBrush,
+                        scaledWidth - featuresSize.Width - rightPadding, y);
+                    y += lineSpacing;
+
+                    // Format features
+                    DrawRightAlignedFeature(e, "Auto-Potions:", threadFlags["autopot"],
+                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                    DrawRightAlignedFeature(e, "Recording:", threadFlags["recording"],
+                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                    DrawRightAlignedFeature(e, "Playback:", threadFlags["playing"],
+                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                    DrawRightAlignedFeature(e, "Click Overlay:", clickOverlayActive,
+                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                    // If we're playing a path, show progress
+                    if (threadFlags["playing"] && currentTarget != null)
+                    {
+                        y += 2; // Small extra gap
+
+                        // Target distance
+                        int distanceX = Math.Abs(currentTarget.X - currentX);
+                        int distanceY = Math.Abs(currentTarget.Y - currentY);
+                        DrawRightAlignedStat(e, "Waypoint:", $"{distanceX + distanceY} steps",
+                            statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                        float progress = (float)(currentCoordIndex + 1) / totalCoords;
+
+                        // Progress text
+                        string progressText = $"Path: {(progress * 100):F1}% ({currentCoordIndex + 1}/{totalCoords})";
+                        SizeF progressSize = e.Graphics.MeasureString(progressText, statsFont);
+                        e.Graphics.DrawString(progressText, statsFont, whiteBrush,
+                            scaledWidth - progressSize.Width - rightPadding, y);
+                        y += lineSpacing;
+
+                        // Progress bar
+                        int progressWidth = (int)(scaledWidth - 40 - rightPadding); // with margins
+                        int barHeight = 6; // Slightly taller bar
+                        int barX = 20; // Left margin
+                        int filledWidth = (int)(progressWidth * progress);
+
+                        e.Graphics.FillRectangle(new SolidBrush(Color.DarkGray), barX, y, progressWidth, barHeight);
+                        e.Graphics.FillRectangle(new SolidBrush(Color.LimeGreen), barX, y, filledWidth, barHeight);
+
+                        // Add minimal spacing after bar
+                        y += barHeight + 2;
+                    }
+
+                    // These draw methods should already be defined in your code, but are added here for completeness
+                    // Implement them if they're not already in your program
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[OVERLAY] Paint error: {ex.Message}");
+            }
+        }
+
+        // Helper methods for drawing (as in your original code)
+        private void DrawRightAlignedStat(PaintEventArgs e, string label, string value, Font font,
+            Brush brush, float rightEdge, ref int y, int lineSpacing)
+        {
+            string fullText = $"{label} {value}";
+            SizeF textSize = e.Graphics.MeasureString(fullText, font);
+            e.Graphics.DrawString(fullText, font, brush, rightEdge - textSize.Width, y);
+            y += lineSpacing;
+        }
+
+        private void DrawRightAlignedFeature(PaintEventArgs e, string label, bool enabled, Font font,
+            Brush brush, float rightEdge, ref int y, int lineSpacing)
+        {
+            string status = enabled ? "✅" : "❌";
+            string fullText = $"{label} {status}";
+            SizeF textSize = e.Graphics.MeasureString(fullText, font);
+            e.Graphics.DrawString(fullText, font, brush, rightEdge - textSize.Width, y);
+            y += lineSpacing;
+        }
+    }
+
+    // Add this static constant for WS_EX_NOACTIVATE
+    private const int WS_EX_NOACTIVATE = 0x08000000;
 
     // Add a helper method to adjust overlay configuration during runtime
     static void AdjustOverlayConfig(int rightOffsetChange, int bottomOffsetChange, float scaleChange)
@@ -5304,36 +5346,42 @@ class Program
 
     static void StopOverlay()
     {
-        if (overlayForm == null || overlayForm.IsDisposed)
-            return;
+        Form formToClose = null;
 
-        Console.WriteLine("[OVERLAY] Stopping overlay display");
-        var form = overlayForm;
-        overlayForm = null; // Clear reference first
+        lock (typeof(Program)) // Use a lock to avoid thread issues
+        {
+            if (overlayForm == null || overlayForm.IsDisposed)
+                return;
+
+            formToClose = overlayForm;
+            overlayForm = null; // Clear reference first
+        }
 
         try
         {
-            if (form.InvokeRequired)
+            Console.WriteLine("[OVERLAY] Stopping overlay display");
+
+            if (formToClose.InvokeRequired)
             {
-                form.BeginInvoke(new Action(() =>
-                {
+                formToClose.BeginInvoke(new Action(() => {
                     try
                     {
-                        form.Close();
-                        form.Dispose();
+                        formToClose.Close();
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[OVERLAY] Error closing form on invoke: {ex.Message}");
+                    }
                 }));
             }
             else
             {
-                form.Close();
-                form.Dispose();
+                formToClose.Close();
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[OVERLAY] Error closing overlay: {ex.Message}");
+            Console.WriteLine($"[OVERLAY] Error stopping overlay: {ex.Message}");
         }
     }
 
@@ -5852,6 +5900,138 @@ class Program
             ));
 
             //Console.WriteLine($"[CLICK OVERLAY] Recorded {(isLeftClick ? "left" : "right")} click at ({screenPoint.X}, {screenPoint.Y}) - expires in {CLICK_MARKER_LIFESPAN.TotalMilliseconds}ms");
+        }
+    }
+
+    static bool keepGameWindowTopMost = true;
+    static Thread gameWindowTopMostThread = null;
+    [DllImport("user32.dll")]
+    static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    const int SW_RESTORE = 9;
+
+    [DllImport("user32.dll")]
+    static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    // For getting window state
+    [DllImport("user32.dll")]
+    static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct WINDOWPLACEMENT
+    {
+        public int length;
+        public int flags;
+        public int showCmd;
+        public Point ptMinPosition;
+        public Point ptMaxPosition;
+        public Rectangle rcNormalPosition;
+    }
+
+    // Window positioning constants
+    static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+    static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+    const uint SWP_NOMOVE = 0x0002;
+    const uint SWP_NOSIZE = 0x0001;
+    const int SW_SHOWMINIMIZED = 2;
+
+    static void StartGameWindowTopMost()
+    {
+        return;
+        if (gameWindowTopMostThread != null && gameWindowTopMostThread.IsAlive)
+            return;
+
+        Console.WriteLine("[WINDOW] Starting game window top-most thread");
+
+        gameWindowTopMostThread = new Thread(() =>
+        {
+            try
+            {
+                Console.WriteLine("[WINDOW] Game window top-most thread running");
+
+                while (memoryReadActive && keepGameWindowTopMost && programRunning)
+                {
+                    if (targetWindow != IntPtr.Zero)
+                    {
+                        // Get the current window state
+                        WINDOWPLACEMENT placement = new WINDOWPLACEMENT();
+                        placement.length = Marshal.SizeOf(placement);
+                        GetWindowPlacement(targetWindow, ref placement);
+
+                        // Only bring to front if window is not minimized
+                        if (placement.showCmd != SW_SHOWMINIMIZED)
+                        {
+                            // Don't use SetForegroundWindow directly as it has constraints
+                            // Instead, use these combined steps which are more reliable
+
+                            // 1. Try the SetWindowPos method to maintain z-order without changing size/position
+                            SetWindowPos(
+                                targetWindow,              // Window handle
+                                HWND_TOPMOST,              // Place on top of all windows
+                                0, 0, 0, 0,                // Don't change position or size (x, y, width, height)
+                                SWP_NOMOVE | SWP_NOSIZE    // Don't actually move or resize
+                            );
+
+                            // 2. Reset to normal z-order behavior but keep on top
+                            SetWindowPos(
+                                targetWindow,
+                                HWND_NOTOPMOST,            // Remove always-on-top, but keep on top of normal windows
+                                0, 0, 0, 0,
+                                SWP_NOMOVE | SWP_NOSIZE
+                            );
+
+                            // Optional debugging
+                            if (iterationCount % 15 == 0) // Log only occasionally
+                            {
+                                Console.WriteLine("[WINDOW] Setting game window z-order");
+                            }
+                            iterationCount++;
+                        }
+                    }
+
+                    // Lower frequency to reduce CPU usage
+                    Thread.Sleep(125);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WINDOW] Error in top-most thread: {ex.Message}");
+            }
+            finally
+            {
+                Console.WriteLine("[WINDOW] Game window top-most thread stopped");
+            }
+        });
+
+        gameWindowTopMostThread.IsBackground = true;
+        gameWindowTopMostThread.Start();
+    }
+
+    // Global counter for logging purposes
+    static int iterationCount = 0;
+
+    static void StopGameWindowTopMost()
+    {
+        Console.WriteLine("[WINDOW] Stopping game window top-most feature");
+        keepGameWindowTopMost = false;
+
+        // Make sure to reset the window z-order back to normal if needed
+        if (targetWindow != IntPtr.Zero)
+        {
+            try
+            {
+                SetWindowPos(
+                    targetWindow,
+                    HWND_NOTOPMOST,            // Reset to normal z-order
+                    0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE    // Don't change position or size
+                );
+                Console.WriteLine("[WINDOW] Reset game window to normal z-order");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WINDOW] Error resetting window z-order: {ex.Message}");
+            }
         }
     }
 }
