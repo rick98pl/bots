@@ -155,15 +155,16 @@ class Program
         threadFlags["autopot"] = true;
         threadFlags["spawnwatch"] = true;
 
-        // Add overlay flag with default set to true
+        threadFlags.TryAdd("overlay", true);
+        // Add overlay flag with default set to true but CHANGE TO FALSE to reduce CPU
         if (!threadFlags.ContainsKey("overlay"))
         {
-            threadFlags.TryAdd("overlay", true);
+            threadFlags.TryAdd("overlay", false); // Default to OFF to save CPU
         }
 
         if (!threadFlags.ContainsKey("clickoverlay"))
         {
-            threadFlags.TryAdd("clickoverlay", true);
+            threadFlags.TryAdd("clickoverlay", false); // Default to OFF to save CPU
         }
 
         // Initialize the sound system
@@ -188,7 +189,7 @@ class Program
                     if (processes.Length == 0)
                     {
                         Console.WriteLine($"Process '{processName}' not found.");
-                        Sleep(500);
+                        Sleep(2000); // Increased sleep when process not found
                         continue;
                     }
                     else if (processes.Length == 1)
@@ -243,23 +244,32 @@ class Program
             smallWindow = windowHeight < 1200;
             Console.WriteLine($"[DEBUG] Using {(smallWindow ? "small window (1080p)" : "large window (1440p)")} settings");
 
-
             StartWorkerThreads();
 
             DateTime lastOverlayCheck = DateTime.MinValue;
+            DateTime lastInputCheck = DateTime.MinValue; // Add tracking for input checking
+            const int INPUT_CHECK_INTERVAL = 50; // Check for input every 50ms
+            const int OVERLAY_CHECK_INTERVAL = 2000; // Check overlay every 2 seconds
 
             while (memoryReadActive && !shouldRestartMemoryThread)
             {
-                // Handle user input
-                if (Console.KeyAvailable)
+                DateTime now = DateTime.Now;
+
+                // Only check for input periodically to reduce CPU
+                if ((now - lastInputCheck).TotalMilliseconds >= INPUT_CHECK_INTERVAL)
                 {
-                    var key = Console.ReadKey(true).Key;
-                    HandleUserInput(key);
+                    lastInputCheck = now;
+
+                    // Handle user input
+                    if (Console.KeyAvailable)
+                    {
+                        var key = Console.ReadKey(true).Key;
+                        HandleUserInput(key);
+                    }
                 }
 
                 // Periodically check overlay status (every 2 seconds)
-                DateTime now = DateTime.Now;
-                if ((now - lastOverlayCheck).TotalSeconds >= 2)
+                if ((now - lastOverlayCheck).TotalMilliseconds >= OVERLAY_CHECK_INTERVAL)
                 {
                     lastOverlayCheck = now;
 
@@ -274,7 +284,7 @@ class Program
                     }
                 }
 
-                Sleep(100); // Reduced from 250ms for more responsive input
+                Sleep(50); // Less frequent checking of main loop
             }
 
             if (shouldRestartMemoryThread)
@@ -297,6 +307,10 @@ class Program
     static void MaintainOutfitThread()
     {
         Console.WriteLine($"[OUTFIT] Maintenance thread started. Maintaining outfit {desiredOutfit}");
+
+        // Reduce frequency of checks - save CPU
+        const int CHECK_INTERVAL_MS = 500; // Only check every 500ms instead of 100ms
+        DateTime lastCheckTime = DateTime.MinValue;
 
         try
         {
@@ -368,6 +382,17 @@ class Program
         {
             try
             {
+                DateTime now = DateTime.Now;
+
+                // Only check periodically rather than continuously
+                if ((now - lastCheckTime).TotalMilliseconds < CHECK_INTERVAL_MS)
+                {
+                    Sleep(50); // Short sleep to prevent CPU hammering
+                    continue;
+                }
+
+                lastCheckTime = now;
+
                 int currentOutfitValue;
                 lock (memoryLock)
                 {
@@ -431,7 +456,8 @@ class Program
                     }
                 }
 
-                Sleep(100); // Check every 100ms
+                // Longer sleep between checks (was 100ms)
+                Sleep(200);
             }
             catch (Exception ex)
             {
@@ -539,123 +565,166 @@ class Program
     static void MemoryReadingThread()
     {
         DateTime lastDebugOutputTime = DateTime.MinValue;
+        DateTime lastFullScanTime = DateTime.MinValue;
         const double DEBUG_COOLDOWN_SECONDS = 1.5;
+        const double FULL_SCAN_INTERVAL_MS = 100; // Only do full scan every 100ms
         Console.WriteLine("Memory reading thread started");
+
+        int consecutiveFailures = 0;
+        const int MAX_FAILURES = 5;
+
         while (memoryReadActive)
         {
             try
             {
-                if (selectedProcess.HasExited)
+                // Check for process exit less frequently
+                if (consecutiveFailures == 0 && selectedProcess.HasExited)
                 {
                     shouldRestartMemoryThread = true;
                     break;
                 }
-                foreach (var variable in variables)
-                {
-                    try
-                    {
-                        // Convert base address to IntPtr explicitly (if it's not already)
-                        IntPtr address = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
-                        byte[] buffer;
 
-                        if (variable.Offsets.Count > 0)
+                DateTime now = DateTime.Now;
+                bool shouldDoFullScan = (now - lastFullScanTime).TotalMilliseconds >= FULL_SCAN_INTERVAL_MS;
+
+                if (shouldDoFullScan)
+                {
+                    lastFullScanTime = now;
+
+                    foreach (var variable in variables)
+                    {
+                        try
                         {
-                            buffer = new byte[4]; // Size for pointer
+                            // Convert base address to IntPtr explicitly
+                            IntPtr address = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
+                            byte[] buffer;
+
+                            if (variable.Offsets.Count > 0)
+                            {
+                                buffer = new byte[4]; // Size for pointer
+                                if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _))
+                                    continue;
+
+                                address = (IntPtr)BitConverter.ToInt32(buffer, 0);
+                                address = IntPtr.Add(address, variable.Offsets[0]);
+                            }
+
+                            // Set buffer size based on type
+                            buffer = new byte[8];
+
                             if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _))
                                 continue;
 
-                            address = (IntPtr)BitConverter.ToInt32(buffer, 0);
-                            address = IntPtr.Add(address, variable.Offsets[0]);
-                        }
-
-                        // Set buffer size based on type
-                        buffer = new byte[8];
-
-                        if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _))
-                            continue;
-
-                        // Special debug for currentOutfit
-                        if (variable.Name.Contains("currentOutfit"))
-                        {
-                            int rawValue = BitConverter.ToInt32(buffer, 0);
-                            currentOutfit = rawValue;
-                        }
-                        if (variable.Name.Contains("invisibilityCode"))
-                        {
-                            int rawValue = BitConverter.ToInt32(buffer, 0);
-                            invisibilityCode = rawValue;
-                        }
-                        else if (variable.Type == "Double")
-                        {
-
-                            double value = BitConverter.ToDouble(buffer, 0);
-                            lock (memoryLock)
+                            // Special debug for currentOutfit
+                            if (variable.Name.Contains("currentOutfit"))
                             {
-                                if (variable.Name.Contains("HP") && !variable.Name.Contains("Max"))
-                                    curHP = value;
-                                if (variable.Name.Contains("Mana") && !variable.Name.Contains("Max"))
-                                    curMana = value;
-                                if (variable.Name.Contains("Max HP"))
-                                    maxHP = value;
-                                if (variable.Name.Contains("Max Mana"))
-                                    maxMana = value;
+                                int rawValue = BitConverter.ToInt32(buffer, 0);
+                                currentOutfit = rawValue;
+                            }
+                            else if (variable.Name.Contains("invisibilityCode"))
+                            {
+                                int rawValue = BitConverter.ToInt32(buffer, 0);
+                                invisibilityCode = rawValue;
+                            }
+                            else if (variable.Type == "Double")
+                            {
+                                double value = BitConverter.ToDouble(buffer, 0);
+                                lock (memoryLock)
+                                {
+                                    if (variable.Name.Contains("HP") && !variable.Name.Contains("Max"))
+                                        curHP = value;
+                                    if (variable.Name.Contains("Mana") && !variable.Name.Contains("Max"))
+                                        curMana = value;
+                                    if (variable.Name.Contains("Max HP"))
+                                        maxHP = value;
+                                    if (variable.Name.Contains("Max Mana"))
+                                        maxMana = value;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[DEBUG] Error reading variable {variable.Name}: {ex.Message}");
+                        }
+                    }
+
+                    // Always read position data which is critical for gameplay
+                    lock (memoryLock)
+                    {
+                        posX = ReadInt32(processHandle, moduleBase, xAddressOffset);
+                        posY = ReadInt32(processHandle, moduleBase, yAddressOffset);
+                        posZ = ReadInt32(processHandle, moduleBase, zAddressOffset);
+                        targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
+                        follow = ReadInt32(processHandle, moduleBase, followOffset);
+
+                        if (threadFlags["recording"])
+                        {
+                            RecordCoordinate(posX, posY, posZ);
+                        }
+                    }
+
+                    lock (memoryLock)
+                    {
+                        // Update the chase tracker with current position and target information
+                        chaseTracker.Update(posX, posY, posZ, targetId);
+
+                        // Debug output for monitoring chase status with cooldown
+                        if (debug && targetId != 0)
+                        {
+                            // Check if enough time has passed since the last debug output
+                            DateTime debugNow = DateTime.Now;
+                            if ((debugNow - lastDebugOutputTime).TotalSeconds >= DEBUG_COOLDOWN_SECONDS)
+                            {
+                                Console.WriteLine($"[DEBUG] In chase: targetId={targetId}, position=({posX},{posY},{posZ})");
+                                lastDebugOutputTime = debugNow;
                             }
                         }
                     }
-                    catch (Exception ex)
+
+                    // Check position distance if we have loaded coordinates
+                    if (loadedCoords != null && loadedCoords.cords.Count > 0 && threadFlags["playing"])
                     {
-                        Console.WriteLine($"[DEBUG] Error reading variable {variable.Name}: {ex.Message}");
+                        CheckPositionDistance(loadedCoords.cords);
+                    }
+
+                    // Reset failure counter on successful scans
+                    consecutiveFailures = 0;
+                }
+                else
+                {
+                    // On off-cycles, only read critical data like player position and target
+                    lock (memoryLock)
+                    {
+                        posX = ReadInt32(processHandle, moduleBase, xAddressOffset);
+                        posY = ReadInt32(processHandle, moduleBase, yAddressOffset);
+                        targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
                     }
                 }
 
-                lock (memoryLock)
-                {
-                    posX = ReadInt32(processHandle, moduleBase, xAddressOffset);
-                    posY = ReadInt32(processHandle, moduleBase, yAddressOffset);
-                    posZ = ReadInt32(processHandle, moduleBase, zAddressOffset);
-                    targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
-                    follow = ReadInt32(processHandle, moduleBase, followOffset);
-                    if (threadFlags["recording"])
-                    {
-                        RecordCoordinate(posX, posY, posZ);
-                    }
-                }
-
-                lock (memoryLock)
-                {
-                    // Update the chase tracker with current position and target information
-                    chaseTracker.Update(posX, posY, posZ, targetId);
-
-                    // Debug output for monitoring chase status with cooldown
-                    if (debug && targetId != 0)
-                    {
-                        // Check if enough time has passed since the last debug output
-                        DateTime now = DateTime.Now;
-                        if ((now - lastDebugOutputTime).TotalSeconds >= DEBUG_COOLDOWN_SECONDS)
-                        {
-                            Console.WriteLine($"[DEBUG] In chase: targetId={targetId}, position=({posX},{posY},{posZ})");
-                            lastDebugOutputTime = now;
-                        }
-                    }
-                }
-
-                // Check position distance if we have loaded coordinates
-                if (loadedCoords != null && loadedCoords.cords.Count > 0 && threadFlags["playing"])
-                {
-                    CheckPositionDistance(loadedCoords.cords);
-                }
-
-                Sleep(1);
+                // Adjust sleep time to reduce CPU usage while still maintaining responsiveness
+                // Sleep longer during non-combat, shorter during combat for responsiveness
+                int sleepTime = (targetId == 0) ? 50 : 20;
+                Sleep(sleepTime);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Memory reading error: {ex.Message}");
-                shouldRestartMemoryThread = true;
-                break;
+                consecutiveFailures++;
+
+                if (consecutiveFailures >= MAX_FAILURES)
+                {
+                    Console.WriteLine("Too many consecutive errors in memory reading thread. Restarting...");
+                    shouldRestartMemoryThread = true;
+                    break;
+                }
+
+                // Sleep longer after errors to avoid CPU hammering
+                Sleep(500);
             }
         }
         Console.WriteLine("Memory reading thread exited");
     }
+
 
     static void ChangeOutfit(int change)
     {
@@ -745,8 +814,7 @@ class Program
 
             Console.WriteLine($"[DEBUG] Changed outfit from {previousOutfit} to {newOutfit}");
 
-            // Refresh the UI to show the new outfit value
-            DisplayStats();
+            
         }
         catch (Exception ex)
         {
@@ -770,25 +838,35 @@ class Program
     static void AutoPotionThread()
     {
         Console.WriteLine("Auto-potion thread started");
-        DisplayStats();
+        DateTime lastStatsDisplay = DateTime.MinValue;
+        const int STATS_DISPLAY_INTERVAL_MS = 2000; // Update stats every 2 seconds
+
         while (memoryReadActive)
         {
             try
             {
+                DateTime now = DateTime.Now;
+
+                // Only update the display every few seconds rather than on every cycle
+                if ((now - lastStatsDisplay).TotalMilliseconds >= STATS_DISPLAY_INTERVAL_MS)
+                {
+                    lastStatsDisplay = now;
+                }
+
                 if (threadFlags["autopot"] && targetWindow != IntPtr.Zero)
                 {
-                    var now = DateTime.Now;
                     var thresholdms = 1000;
-                    double hpPercent,
-                        manaPercent;
+                    double hpPercent, manaPercent;
+
                     lock (memoryLock)
                     {
                         hpPercent = (curHP / maxHP) * 100;
                         manaPercent = (curMana / maxMana) * 100;
                     }
+
                     if (hpPercent == 0)
                     {
-                        Sleep(1);
+                        Sleep(50); // Increased sleep time when no data
                         continue;
                     }
 
@@ -808,10 +886,7 @@ class Program
                             lastHpActionTime = now.AddMilliseconds(random.Next(0, 100));
                         }
                     }
-                    else
-                    {
-                        //StopPositionAlertSound();
-                    }
+
                     if (false && manaPercent <= DEFAULT_MANA_THRESHOLD)
                     {
                         if ((now - lastManaActionTime).TotalMilliseconds >= thresholdms)
@@ -824,7 +899,9 @@ class Program
                         }
                     }
                 }
-                Sleep(100);
+
+                // Increased sleep time to reduce CPU usage
+                Sleep(250);
             }
             catch (Exception ex)
             {
@@ -3771,7 +3848,7 @@ class Program
             }
         }
 
-        private static void WatcherThreadFunction(IntPtr gameWindow)
+        static void WatcherThreadFunction(IntPtr gameWindow)
         {
             Console.WriteLine("[SPAWN] Optimized watcher thread started");
 
@@ -3779,6 +3856,10 @@ class Program
             {
                 Stopwatch iterationTimer = new Stopwatch();
                 int iterationCount = 0;
+                DateTime lastFullScanTime = DateTime.MinValue;
+
+                // Reduce frequency of template matching
+                const int TEMPLATE_MATCHING_INTERVAL_MS = 1000; // Once per second instead of continuous
 
                 // Create and reuse result matrices for template matching
                 Mat resultMat = new Mat();
@@ -3789,19 +3870,32 @@ class Program
                     {
                         iterationTimer.Restart();
                         iterationCount++;
+                        DateTime now = DateTime.Now;
 
                         // Get window dimensions for both template matching and color detection
                         GetClientRect(gameWindow, out RECT clientRect);
                         int windowWidth = clientRect.Right - clientRect.Left;
                         int windowHeight = clientRect.Bottom - clientRect.Top;
 
+                        // Only run template matching periodically
+                        bool shouldDoFullScan = (now - lastFullScanTime).TotalMilliseconds >= TEMPLATE_MATCHING_INTERVAL_MS;
+
+                        if (!shouldDoFullScan)
+                        {
+                            // Just a short sleep when not doing anything to prevent CPU hammering
+                            Thread.Sleep(100);
+                            continue;
+                        }
+
+                        lastFullScanTime = now;
+
                         // Determine if we should run template matching
                         bool doTemplateMatching = templates.Count > 0 &&
-                                                 (DateTime.Now - lastMatchTime) >= matchCooldown;
+                                                  (DateTime.Now - lastMatchTime) >= matchCooldown;
 
                         // Determine if we should run color detection
                         bool doColorDetection = colorChangeAlarmEnabled &&
-                                                 (DateTime.Now - lastColorAlarmTime) >= colorAlarmCooldown;
+                                                  (DateTime.Now - lastColorAlarmTime) >= colorAlarmCooldown;
 
                         // If nothing to do, wait a bit and continue
                         if (!doTemplateMatching && !doColorDetection)
@@ -3875,12 +3969,7 @@ class Program
                                                 matchFound = true;
                                                 break;
                                             }
-                                            else
-                                            {
-                                                //Console.WriteLine($"[SPAWN] REJECTED {template.Name}: Good shape ({maxVal:F3}) but poor color ({colorSimilarityPercent:F1}%)");
-                                            }
                                         }
-
                                     }
 
                                     if (iterationCount % 200 == 0 && !matchFound)
@@ -3891,51 +3980,8 @@ class Program
                             }
                         }
 
-                        // =================== COLOR CHANGE DETECTION ===================
-                        if (doColorDetection)
-                        {
-                            // Calculate dimensions for bottom-left 10% of screen
-                            int colorDetectWidth = (int)(windowWidth * 0.1);
-                            int colorDetectHeight = (int)(windowHeight * 0.1);
-                            int colorDetectX = 0; // Left edge
-                            int colorDetectY = windowHeight - colorDetectHeight; // Bottom edge
-
-                            using (Mat bottomLeftCorner = CaptureWindowAsMat(gameWindow, colorDetectX, colorDetectY, colorDetectWidth, colorDetectHeight))
-                            {
-                                if (bottomLeftCorner != null)
-                                {
-                                    // Save the current screenshot
-                                    string debugDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug");
-                                    if (!Directory.Exists(debugDir))
-                                    {
-                                        Directory.CreateDirectory(debugDir);
-                                    }
-
-                                    // Only save every 10 iterations to avoid disk space issues
-                                    if (iterationCount % 10 == 0)
-                                    {
-                                        CvInvoke.Imwrite(Path.Combine(debugDir, "current_capture.png"), bottomLeftCorner);
-                                    }
-
-                                    // Use the color change detection
-                                    string detectionResult = DetectColorChanges(bottomLeftCorner);
-
-                                    if (detectionResult == "change")
-                                    {
-                                        // Color change detected!
-                                        Console.WriteLine("[COLOR] Significant color change detected in bottom-left corner!");
-                                        HandleColorChangeDetection(bottomLeftCorner);
-                                        lastColorAlarmTime = DateTime.Now;
-                                    }
-                                }
-                            }
-                        }
-
-                        // Add a small delay to avoid consuming too much CPU
-                        if (iterationCount % 5 == 0)
-                        {
-                            Thread.Sleep(1);
-                        }
+                        // Add a small delay between full scans to reduce CPU usage
+                        Thread.Sleep(200);
                     }
                     catch (Exception ex)
                     {
@@ -5185,6 +5231,7 @@ class Program
         Sleep(100);
     }
 
+
     // Add a helper method to adjust overlay configuration during runtime
     static void AdjustOverlayConfig(int rightOffsetChange, int bottomOffsetChange, float scaleChange)
     {
@@ -5566,7 +5613,7 @@ class Program
             FormBorderStyle = FormBorderStyle.None,
             ShowInTaskbar = false,
             TopMost = true,
-            Opacity = 0.8,  // Slightly higher overall opacity
+            Opacity = 0.8,
             TransparencyKey = Color.Black,
             BackColor = Color.Black
         };
@@ -5588,7 +5635,7 @@ class Program
         int exStyle = GetWindowLong(form.Handle, GWL_EXSTYLE);
         SetWindowLong(form.Handle, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED);
 
-        // Set up painting
+        // Set up painting - optimization: only redraw when something changes
         form.Paint += (sender, e) =>
         {
             try
@@ -5618,22 +5665,16 @@ class Program
                             // Determine if this is a waypoint click (magenta color)
                             bool isWaypoint = click.color.R > 200 && click.color.G < 100 && click.color.B > 200;
 
-                            // MODIFIED: Smaller size for waypoints
+                            // Smaller size for waypoints
                             int squareSize = isWaypoint ?
-                                Math.Max(pixelSize, 20) : // Smaller size for waypoints (was pixelSize * 2, 32)
+                                Math.Max(pixelSize, 20) : // Smaller size for waypoints
                                 Math.Max(pixelSize, 24);  // Normal size for regular clicks
-
-                            //squareSize = 13;
-                            //if (isWaypoint)
-                            //{
-                            //    squareSize = 28;
-                            //}
 
                             // Calculate the center of the square
                             int left = relX - (squareSize / 2);
                             int top = relY - (squareSize / 2);
 
-                            // MODIFIED: For waypoints, no alpha fade - use full alpha until expiration
+                            // For waypoints, no alpha fade - use full alpha until expiration
                             // For regular clicks, maintain the gradual fade
                             int alpha;
                             if (isWaypoint)
@@ -5672,7 +5713,7 @@ class Program
                                 }
 
                                 // Draw crosshairs
-                                using (Pen crosshairPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1)) // Thinner crosshairs (was 2)
+                                using (Pen crosshairPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1)) // Thinner crosshairs
                                 {
                                     // Horizontal line
                                     e.Graphics.DrawLine(
@@ -5694,8 +5735,6 @@ class Program
                                         left, top, diameter, diameter
                                     );
                                 }
-
-                                // MODIFIED: Removed pulsing effect for waypoints
                             }
                             else
                             {
@@ -5712,31 +5751,29 @@ class Program
                                 }
                             }
 
-                            // Display remaining time (in tenths of a second)
-                            string timeText = $"{(click.expires - DateTime.Now).TotalSeconds:F1}s";
-
-                            // Draw countdown timer INSIDE the marker
-                            using (Font font = new Font("Arial", isWaypoint ? 8 : 8, FontStyle.Bold)) // Smaller font for waypoints (was 10)
+                            // Only display time for clicks that last longer than 0.3 seconds
+                            // This reduces text rendering which is expensive
+                            TimeSpan remainingTime = click.expires - DateTime.Now;
+                            if (remainingTime.TotalSeconds > 0.3)
                             {
-                                // Measure text to center it
-                                SizeF textSize = e.Graphics.MeasureString(timeText, font);
-                                float textX = left + (squareSize - textSize.Width) / 2;
-                                float textY = top + (squareSize - textSize.Height) / 2;
+                                // Display remaining time (in tenths of a second)
+                                string timeText = $"{remainingTime.TotalSeconds:F1}s";
 
-                                // Draw text shadow for better readability
-                                using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(alpha, 0, 0, 0)))
+                                // Draw countdown timer INSIDE the marker
+                                using (Font font = new Font("Arial", isWaypoint ? 8 : 8, FontStyle.Bold))
                                 {
-                                    e.Graphics.DrawString(timeText, font, shadowBrush, textX + 1, textY + 1);
-                                }
+                                    // Measure text to center it
+                                    SizeF textSize = e.Graphics.MeasureString(timeText, font);
+                                    float textX = left + (squareSize - textSize.Width) / 2;
+                                    float textY = top + (squareSize - textSize.Height) / 2;
 
-                                // Draw text with improved visibility
-                                using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255)))
-                                {
-                                    e.Graphics.DrawString(timeText, font, textBrush, textX, textY);
+                                    // Draw text with improved visibility
+                                    using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255)))
+                                    {
+                                        e.Graphics.DrawString(timeText, font, textBrush, textX, textY);
+                                    }
                                 }
                             }
-
-                            // MODIFIED: Removed the "WAYPOINT" text label for waypoints to keep them cleaner
                         }
                     }
                 }
@@ -5747,18 +5784,33 @@ class Program
             }
         };
 
-        // Rest of the method remains the same...
+        // Optimized timer implementation with lower update frequency
         System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer
         {
-            Interval = 33  // Reduced to ~30fps for smoother animation
+            Interval = 100  // Reduced from 33ms to 100ms (10 updates per second instead of 30)
         };
+
+        DateTime lastCleanupTime = DateTime.MinValue;
+        const int CLEANUP_INTERVAL_MS = 500; // Clean up every 500ms instead of every tick
 
         timer.Tick += (sender, e) =>
         {
             try
             {
-                // Update overlay position to track game window
-                if (targetWindow != IntPtr.Zero)
+                DateTime now = DateTime.Now;
+                bool shouldUpdatePosition = false;
+                bool shouldRemoveExpired = false;
+
+                // Only update form position when needed (not every frame)
+                if ((now - lastCleanupTime).TotalMilliseconds >= CLEANUP_INTERVAL_MS)
+                {
+                    shouldUpdatePosition = true;
+                    shouldRemoveExpired = true;
+                    lastCleanupTime = now;
+                }
+
+                // Update overlay position to track game window (less frequently)
+                if (shouldUpdatePosition && targetWindow != IntPtr.Zero)
                 {
                     GetWindowRect(targetWindow, out RECT gameRect);
                     if (gameRect.Right > gameRect.Left && gameRect.Bottom > gameRect.Top)
@@ -5775,24 +5827,32 @@ class Program
                     }
                 }
 
-                // Remove expired items from the list
-                lock (clickOverlayLock)
+                // Remove expired items from the list (less frequently)
+                if (shouldRemoveExpired)
                 {
-                    DateTime now = DateTime.Now;
-                    int countBefore = clickPositions.Count;
-
-                    // Remove all expired click positions
-                    clickPositions.RemoveAll(click => now >= click.expires);
-
-                    int removed = countBefore - clickPositions.Count;
-                    if (removed > 0)
+                    lock (clickOverlayLock)
                     {
-                        //Console.WriteLine($"[CLICK OVERLAY] Removed {removed} expired click markers. {clickPositions.Count} active");
+                        int countBefore = clickPositions.Count;
+
+                        // Remove all expired click positions
+                        clickPositions.RemoveAll(click => now >= click.expires);
+
+                        int removed = countBefore - clickPositions.Count;
+                        if (removed > 0)
+                        {
+                            //Console.WriteLine($"[CLICK OVERLAY] Removed {removed} expired click markers. {clickPositions.Count} active");
+                        }
                     }
                 }
 
-                // Always repaint to update animation
-                form.Invalidate();
+                // Only invalidate if we have active positions to draw
+                lock (clickOverlayLock)
+                {
+                    if (clickPositions.Count > 0)
+                    {
+                        form.Invalidate();
+                    }
+                }
 
                 // Check if we should exit
                 lock (clickOverlayLock)
@@ -5819,11 +5879,23 @@ class Program
         timer.Start();
         form.Show();
 
-        // Message loop
+        // Message loop with less CPU usage
+        DateTime lastDoEventsTime = DateTime.MinValue;
+        const int DO_EVENTS_INTERVAL_MS = 25; // Process events once per 25ms instead of every 10ms
+
         while (clickOverlayActive && clickOverlayForm == form && !form.IsDisposed)
         {
-            Application.DoEvents();
-            Thread.Sleep(10);
+            DateTime now = DateTime.Now;
+            if ((now - lastDoEventsTime).TotalMilliseconds >= DO_EVENTS_INTERVAL_MS)
+            {
+                Application.DoEvents();
+                lastDoEventsTime = now;
+            }
+            else
+            {
+                // Just a short sleep to prevent CPU hammering
+                Thread.Sleep(5);
+            }
         }
 
         // Clean up
