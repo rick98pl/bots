@@ -2313,7 +2313,9 @@ class Program
         "Tarantula",
         "Poison Spider",
         "Frost Giant",
-        "Frost Giantess"
+        "Frost Giantess",
+        "Amazon",
+        "Valkryie"
     };
 
     //    static List<string> whitelistedMonsterNames = new List<string> {
@@ -2463,6 +2465,7 @@ class Program
     static readonly int MAX_MONSTER_DISTANCE = 2; // Maximum allowed distance in sqm
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
+        return;
         try
         {
             int currentTargetId;
@@ -4618,8 +4621,14 @@ class Program
 
                     // Make form click-through
                     int exStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
-                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED);
-
+                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE, exStyle | WS_EX_LAYERED);
+                    threadForm.Deactivate += (s, e) => {
+                        if (threadForm != null && !threadForm.IsDisposed)
+                        {
+                            threadForm.TopMost = false;
+                            threadForm.TopMost = true;
+                        }
+                    };
                     // Set up painting
                     threadForm.Paint += (sender, e) =>
                     {
@@ -4870,18 +4879,17 @@ class Program
                                 int baseWidth = (currentGameRect.Right - currentGameRect.Left) / 3;
                                 int newWidth = (int)(baseWidth * statsOverlaySizeScale);
 
-                                int contentLines = 14; // Increased for additional information
+                                int contentLines = 14;
                                 if (threadFlags["playing"] && currentTarget != null)
                                     contentLines += 3;
                                 if (targetId != 0)
-                                    contentLines += 4; // Extra lines for target info
+                                    contentLines += 4;
 
                                 int lineHeight = 18;
                                 int bottomMargin = 20;
                                 int baseHeight = contentLines * lineHeight + bottomMargin;
                                 int newHeight = (int)(baseHeight * statsOverlaySizeScale);
 
-                                // Use configurable right and bottom offsets
                                 int newX = Math.Max(0, currentGameRect.Right - newWidth - statsOverlayRightOffset);
                                 int newY = Math.Max(0, currentGameRect.Bottom - newHeight - statsOverlayBottomOffset);
 
@@ -4897,7 +4905,14 @@ class Program
                             // Always refresh display
                             threadForm.Invalidate();
 
+                            // IMPORTANT: Keep form on top regardless of focus state
+                            if (!threadForm.TopMost)
+                            {
+                                threadForm.TopMost = true;
+                            }
+
                             // If main program has stopped, stop timer and close form
+                            // Only check programRunning and memoryReadActive, not focus-related states
                             if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
                                 overlayForm != threadForm)
                             {
