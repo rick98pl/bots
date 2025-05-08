@@ -1031,7 +1031,7 @@ class Program
     // Variables to track F6 key state
     private static DateTime lastF6Press = DateTime.MinValue;
     private static bool canPressF6 = true;
-    private static readonly TimeSpan F6Cooldown = TimeSpan.FromSeconds(0.6);
+    private static readonly TimeSpan F6Cooldown = TimeSpan.FromSeconds(0.5);
 
     static void SendKeyPress(int key)
     {
@@ -1171,6 +1171,7 @@ class Program
     static void PlayCoordinates()
     {
         UpdateUIPositions();
+
         Console.WriteLine("Path playback starting...");
         string json = File.ReadAllText(cordsFilePath);
         loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
@@ -1265,7 +1266,6 @@ class Program
                 //    bool wasBlacklisted = CheckMonsterDistanceAndBlacklist();
                 //    if (wasBlacklisted)
                 //    {
-                //        // Target was blacklisted, move on to next loop iteration
                 //        continue;
                 //    }
                 //}
@@ -1287,6 +1287,7 @@ class Program
                 {
 
                     ToggleRing(targetWindow, true);
+                    
                     Sleep(1);
                     var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
                     Sleep(1);
@@ -2437,6 +2438,7 @@ class Program
     static int lastRingEquippedTargetId = 0;
     static bool isRingCurrentlyEquipped = false;
     static List<string> blacklistedRingMonsters = new List<string> { "Poison Spider", };
+    static readonly int MAX_MONSTER_DISTANCE = 2; // Maximum allowed distance in sqm
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
         try
@@ -2466,6 +2468,23 @@ class Program
                 if (!string.IsNullOrEmpty(monsterName) && blacklistedRingMonsters.Contains(monsterName))
                 {
                     Console.WriteLine($"[DEBUG] Monster '{monsterName}' is blacklisted for ring usage");
+                    return;
+                }
+
+                int currentX, currentY;
+                lock (memoryLock)
+                {
+                    currentX = posX;
+                    currentY = posY;
+                }
+
+                int distanceX = Math.Abs(monsterX - currentX);
+                int distanceY = Math.Abs(monsterY - currentY);
+                int totalDistance = distanceX + distanceY;
+
+                // If monster is too far away and we're not moving
+                if (totalDistance > MAX_MONSTER_DISTANCE)
+                {
                     return;
                 }
             }
@@ -3043,7 +3062,7 @@ class Program
     static int lastPositionY = 0;
     static bool isPlayerStuck = false;
     static readonly TimeSpan TARGET_BLACKLIST_DURATION = TimeSpan.FromSeconds(30);
-    static readonly int MAX_MONSTER_DISTANCE = 2; // Maximum allowed distance in sqm
+
     static readonly int STUCK_DETECTION_TIME_MS = 2300; // Time to consider player stuck
 
     // Add this method to check if a target ID is blacklisted
