@@ -1475,6 +1475,7 @@ class Program
                     Console.WriteLine("[DEBUG] Using arrow keys to return from chase");
                     // Move step by step with arrow keys instead of clicking
                     MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypoint.X, nextWaypoint.Y);
+                    SendKeyPress(VK_F6);
                     Sleep(100); // Give the game time to process the movement
                     continue;   // Skip the normal waypoint clicking
                 }
