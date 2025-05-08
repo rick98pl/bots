@@ -5501,7 +5501,7 @@ class Program
                                 Math.Max(pixelSize, 20) : // Smaller size for waypoints (was pixelSize * 2, 32)
                                 Math.Max(pixelSize, 24);  // Normal size for regular clicks
 
-                            squareSize = 5;
+                            squareSize = 13;
 
                             // Calculate the center of the square
                             int left = relX - (squareSize / 2);
