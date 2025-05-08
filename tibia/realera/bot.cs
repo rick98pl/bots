@@ -1867,6 +1867,8 @@ class Program
     static int equipmentY = 150;
     static int secondSlotBpX = smallWindow ? 850 : 1165;
     static int secondSLotBpY = 250;
+    static int closeCorpseX = smallWindow ? 944 : 1262;
+    static int closeCorpseY = smallWindow ? 320 : 400;
     static (int, int)[] normalCoordinates = new (int, int)[]
     {
         (1126, 325),
@@ -1914,6 +1916,8 @@ class Program
         equipmentY = 150;
         secondSlotBpX = smallWindow ? 850 : 1165;
         secondSLotBpY = 250;
+        closeCorpseX = smallWindow ? 944 : 1262;
+        closeCorpseY = smallWindow ? 320 : 400;
 
         {
             Console.WriteLine($"[DEBUG] Window size changed to: {(smallWindow ? "small (1080p)" : "large (1440p)")}");
@@ -1965,13 +1969,13 @@ class Program
             }
             int lParam = (targetY << 16) | (targetX & 0xFFFF);
             SendKeyPress(VK_ESCAPE);
-            Sleep(64);
+            Sleep(1);
             PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)lParam);
-            Sleep(64);
+            Sleep(1);
             PostMessage(targetWindow, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
-            Sleep(64);
+            Sleep(1);
             PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
-            Sleep(64);
+            Sleep(1);
             int centerLParam = (baseY << 16) | (baseX & 0xFFFF);
 
             // Record the waypoint click with special color
@@ -2047,7 +2051,7 @@ class Program
     static extern bool SetCursorPos(int X, int Y);
     static void CloseCorspe(IntPtr hWnd)
     {
-        (int x, int y)[] locations = new (int, int)[] { (1262, 320) };
+        (int x, int y)[] locations = new (int, int)[] { (closeCorpseX, closeCorpseY) };
         GetClientRect(hWnd, out RECT rect);
         foreach (var location in locations)
         {
@@ -5496,6 +5500,8 @@ class Program
                             int squareSize = isWaypoint ?
                                 Math.Max(pixelSize, 20) : // Smaller size for waypoints (was pixelSize * 2, 32)
                                 Math.Max(pixelSize, 24);  // Normal size for regular clicks
+
+                            squareSize = 5;
 
                             // Calculate the center of the square
                             int left = relX - (squareSize / 2);
