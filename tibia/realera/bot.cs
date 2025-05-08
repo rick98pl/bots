@@ -1530,6 +1530,23 @@ class Program
                             break;
                         }
 
+                        if (currentTargetId == 0)
+                        {
+                            SendKeyPress(VK_F6);
+                            // Keep the crucial Sleep(1) as you mentioned
+                            Sleep(1); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no monster
+                            lock (memoryLock)
+                            {
+                                currentTargetId = targetId;
+                            }
+                            if (currentTargetId != 0)
+                            {
+                                Console.WriteLine(
+                                    "[DEBUG] Target found during movement, switching to combat"
+                                );
+                                break;
+                            }
+                        }
                         // No Sleep here - just check as fast as possible
                     }
 
