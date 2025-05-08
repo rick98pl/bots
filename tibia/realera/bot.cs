@@ -1031,7 +1031,7 @@ class Program
     // Variables to track F6 key state
     private static DateTime lastF6Press = DateTime.MinValue;
     private static bool canPressF6 = true;
-    private static readonly TimeSpan F6Cooldown = TimeSpan.FromSeconds(0.5);
+    private static readonly TimeSpan F6Cooldown = TimeSpan.FromSeconds(0.7);
 
     static void SendKeyPress(int key)
     {
@@ -1053,7 +1053,7 @@ class Program
             cooldownTimer = new System.Threading.Timer((state) =>
             {
                 canPressF6 = true;
-                Console.WriteLine("F6 key cooldown finished");
+                //Console.WriteLine("F6 key cooldown finished");
                 cooldownTimer?.Dispose();
             }, null, F6Cooldown, TimeSpan.Zero);
         }
