@@ -4786,23 +4786,23 @@ class Program
                                 scaledWidth = threadForm.Width / statsOverlaySizeScale;
                                 float scaledHeight = threadForm.Height / statsOverlaySizeScale;
 
-                                string configText = $"R:{statsOverlayRightOffset} B:{statsOverlayBottomOffset} S:{statsOverlaySizeScale:F1}";
-                                using (Font configFont = new Font("Arial", 7.0f, FontStyle.Regular))
-                                {
-                                    SizeF configSize = e.Graphics.MeasureString(configText, configFont);
-                                    e.Graphics.DrawString(configText, configFont, whiteBrush,
-                                        5, scaledHeight - configSize.Height - 5);
-                                }
+                                //string configText = $"R:{statsOverlayRightOffset} B:{statsOverlayBottomOffset} S:{statsOverlaySizeScale:F1}";
+                                //using (Font configFont = new Font("Arial", 7.0f, FontStyle.Regular))
+                                //{
+                                //    SizeF configSize = e.Graphics.MeasureString(configText, configFont);
+                                //    e.Graphics.DrawString(configText, configFont, whiteBrush,
+                                //        5, scaledHeight - configSize.Height - 5);
+                                //}
 
-                                // Version and time info at bottom right
-                                string versionText = $"v1.2.0 | {DateTime.Now.ToString("HH:mm:ss")}";
-                                using (Font versionFont = new Font("Arial", 7.0f, FontStyle.Regular))
-                                {
-                                    SizeF versionSize = e.Graphics.MeasureString(versionText, versionFont);
-                                    e.Graphics.DrawString(versionText, versionFont, whiteBrush,
-                                        scaledWidth - versionSize.Width - rightPadding,
-                                        scaledHeight - versionSize.Height - 5);
-                                }
+                                //// Version and time info at bottom right
+                                //string versionText = $"v1.2.0 | {DateTime.Now.ToString("HH:mm:ss")}";
+                                //using (Font versionFont = new Font("Arial", 7.0f, FontStyle.Regular))
+                                //{
+                                //    SizeF versionSize = e.Graphics.MeasureString(versionText, versionFont);
+                                //    e.Graphics.DrawString(versionText, versionFont, whiteBrush,
+                                //        scaledWidth - versionSize.Width - rightPadding,
+                                //        scaledHeight - versionSize.Height - 5);
+                                //}
                             }
                         }
                         catch (Exception ex)
@@ -4829,7 +4829,7 @@ class Program
                                 int baseWidth = (currentGameRect.Right - currentGameRect.Left) / 3;
                                 int newWidth = (int)(baseWidth * statsOverlaySizeScale);
 
-                                int contentLines = 20; // Increased for additional information
+                                int contentLines = 14; // Increased for additional information
                                 if (threadFlags["playing"] && currentTarget != null)
                                     contentLines += 3;
                                 if (targetId != 0)
