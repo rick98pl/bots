@@ -13,7 +13,8 @@ using Emgu.CV;
 using Emgu.CV.CvEnum;
 using Emgu.CV.Structure;
 using Emgu.CV.Util;
-using System.Windows.Forms;  // For SendKeys
+using System.Windows.Forms;
+using System.Drawing;
 
 
 
@@ -147,6 +148,14 @@ class Program
         threadFlags["autopot"] = true;
         threadFlags["spawnwatch"] = true;
 
+        // Add overlay flag with default set to true
+        if (!threadFlags.ContainsKey("overlay"))
+        {
+            threadFlags.TryAdd("overlay", true);
+            // In your Main method after initializing other systems:
+            StartHighlightTimer();
+        }
+
         // Initialize the sound system
         InitializeSounds();
 
@@ -212,6 +221,7 @@ class Program
                     }
                 }
             }
+
             FindRealeraWindow(selectedProcess);
             const int PROCESS_ALL_ACCESS = 0x001F0FFF;
             processHandle = OpenProcess(PROCESS_ALL_ACCESS, false, selectedProcess.Id);
@@ -223,20 +233,50 @@ class Program
             smallWindow = windowHeight < 1200;
             Console.WriteLine($"[DEBUG] Using {(smallWindow ? "small window (1080p)" : "large window (1440p)")} settings");
 
+            // Start the overlay if enabled
+            if (threadFlags["overlay"])
+            {
+                StartOverlay();
+            }
+
             StartWorkerThreads();
+
+            DateTime lastOverlayCheck = DateTime.MinValue;
+
             while (memoryReadActive && !shouldRestartMemoryThread)
             {
+                // Handle user input
                 if (Console.KeyAvailable)
                 {
                     var key = Console.ReadKey(true).Key;
                     HandleUserInput(key);
                 }
-                Sleep(250);
+
+                // Periodically check overlay status (every 2 seconds)
+                DateTime now = DateTime.Now;
+                if ((now - lastOverlayCheck).TotalSeconds >= 2)
+                {
+                    lastOverlayCheck = now;
+
+                    // Check if overlay should be running
+                    if (threadFlags["overlay"] && (overlayForm == null || overlayForm.IsDisposed))
+                    {
+                        StartOverlay();
+                    }
+                    else if (!threadFlags["overlay"] && overlayForm != null && !overlayForm.IsDisposed)
+                    {
+                        StopOverlay();
+                    }
+                }
+
+                Sleep(100); // Reduced from 250ms for more responsive input
             }
+
             if (shouldRestartMemoryThread)
             {
                 shouldRestartMemoryThread = false;
                 StopWorkerThreads();
+                StopOverlay(); // Stop overlay if restarting memory thread
                 selectedProcess = null;
             }
         }
@@ -430,11 +470,26 @@ class Program
         memoryReadActive = false;
         threadFlags["recording"] = false;
         threadFlags["playing"] = false;
+        threadFlags["autopot"] = false;
+        threadFlags["overlay"] = false; // Also disable overlay
         SPAWNWATCHER.Stop();
         StopPositionAlertSound(); // Stop any playing alert sounds
+
+        // In your StopWorkerThreads method:
+        if (highlightTimer != null)
+        {
+            highlightTimer.Dispose();
+            highlightTimer = null;
+        }
+
+        // Explicitly stop the overlay
+        StopOverlay();
+
+
         Console.WriteLine("Worker threads stopping...");
         Sleep(1000);
     }
+
     static List<Variable> variables = new List<Variable>
     {
         new Variable
@@ -531,7 +586,7 @@ class Program
                         }
                         else if (variable.Type == "Double")
                         {
-                           
+
                             double value = BitConverter.ToDouble(buffer, 0);
                             lock (memoryLock)
                             {
@@ -544,14 +599,14 @@ class Program
                                 if (variable.Name.Contains("Max Mana"))
                                     maxMana = value;
                             }
-                        }                       
+                        }
                     }
                     catch (Exception ex)
                     {
                         Console.WriteLine($"[DEBUG] Error reading variable {variable.Name}: {ex.Message}");
                     }
                 }
-                
+
                 lock (memoryLock)
                 {
                     posX = ReadInt32(processHandle, moduleBase, xAddressOffset);
@@ -699,7 +754,7 @@ class Program
     }
 
     // Add method to explicitly set the desired outfit value
-    
+
 
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -934,6 +989,18 @@ class Program
                 // Increase outfit by 1
                 ChangeOutfit(10);
                 break;
+            case ConsoleKey.O: // Add a key to toggle overlay
+                threadFlags["overlay"] = !threadFlags["overlay"];
+                Console.WriteLine($"Overlay {(threadFlags["overlay"] ? "enabled" : "disabled")}");
+                if (threadFlags["overlay"])
+                {
+                    StartOverlay();
+                }
+                else
+                {
+                    StopOverlay();
+                }
+                break;
         }
     }
     static void StartPathPlayback()
@@ -1109,7 +1176,6 @@ class Program
 
     static void PlayCoordinates()
     {
-        //Thread.Sleep(1500);
         UpdateUIPositions();
         Console.WriteLine("Path playback starting...");
         string json = File.ReadAllText(cordsFilePath);
@@ -1740,7 +1806,7 @@ class Program
                 Z = result.Z // Keep the same Z coordinate (level)
             };
 
-            
+
 
             Console.WriteLine($"  RANDOMIZED WAYPOINT: Original({originalResult.X},{originalResult.Y}) → Random({result.X},{result.Y})");
         }
@@ -1776,7 +1842,7 @@ class Program
 
     static (int, int)[] smallCoordinates = new (int, int)[]
     {
-        (800, 340),  
+        (800, 340),
         (800+pixelSize, 340),
         (800+2*pixelSize, 340),
         (800+3*pixelSize, 340),
@@ -1839,7 +1905,7 @@ class Program
                 Console.WriteLine("[DEBUG] Clicking waypoint that is a chase return position");
             }
 
-            
+
             int currentX,
                 currentY;
             lock (memoryLock)
@@ -1853,7 +1919,7 @@ class Program
 
             //POINT screenPoint = new POINT { X = baseX, Y = baseY };
             //ClientToScreen(targetWindow, ref screenPoint);
-           // SetCursorPos(screenPoint.X, screenPoint.Y);
+            // SetCursorPos(screenPoint.X, screenPoint.Y);
 
             int diffX = target.X - currentX;
             int diffY = target.Y - currentY;
@@ -1945,12 +2011,6 @@ class Program
     {
         (int x, int y)[] locations = new (int, int)[] { (1262, 320) };
         GetClientRect(hWnd, out RECT rect);
-        if (rect.Right < 1237 || rect.Bottom < 319)
-        {
-            Console.WriteLine(
-                $"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates"
-            );
-        }
         foreach (var location in locations)
         {
             int x = location.x;
@@ -1967,33 +2027,24 @@ class Program
         (int x, int y)[] locations = GetCorspeFoodCoordinates();
         GetClientRect(hWnd, out RECT rect);
         if (rect.Right < 1237 || rect.Bottom < 319)
-        {
-            Console.WriteLine(
-                $"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates"
-            );
-        }
-        foreach (var location in locations)
-        {
-            int x = location.x;
-            int y = location.y;
-            POINT screenPoint = new POINT { X = x, Y = y };
-            ClientToScreen(hWnd, ref screenPoint);
-            Sleep(1);
-            VirtualRightClick(hWnd, x, y);
-            Sleep(1);
-        }
+            foreach (var location in locations)
+            {
+                int x = location.x;
+                int y = location.y;
+                POINT screenPoint = new POINT { X = x, Y = y };
+                ClientToScreen(hWnd, ref screenPoint);
+                Sleep(1);
+
+
+                VirtualRightClick(hWnd, x, y);
+                Sleep(1);
+            }
     }
     static void ClickSecondSlotInBackpack(IntPtr hWnd)
     {
         (int x, int y)[] locations = new (int, int)[] { (secondSlotBpX, secondSLotBpY) };
 
         GetClientRect(hWnd, out RECT rect);
-        if (rect.Right < 1237 || rect.Bottom < 319)
-        {
-            Console.WriteLine(
-                $"Warning: Window size ({rect.Right}x{rect.Bottom}) may be too small for target coordinates"
-            );
-        }
         foreach (var location in locations)
         {
             int x = location.x;
@@ -2001,7 +2052,7 @@ class Program
             POINT screenPoint = new POINT { X = x, Y = y };
             ClientToScreen(hWnd, ref screenPoint);
             Sleep(1);
-            //SetCursorPos(screenPoint.X, screenPoint.Y);
+
             VirtualRightClick(hWnd, x, y);
             Sleep(1);
             int currentTargetId = GetTargetId();
@@ -2057,14 +2108,14 @@ class Program
         //ClickSecondSlotInBackpack(hWnd);
         (int dx, int dy)[] directions = new (int, int)[]
         {
-            (0, -1),
-            (1, -1),
-            (1, 0),
-            (1, 1),
-            (0, 1),
-            (-1, 1),
-            (-1, 0),
-            (-1, -1)
+        (0, -1),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+        (0, 1),
+        (-1, 1),
+        (-1, 0),
+        (-1, -1)
         };
 
         Random random = new Random();
@@ -2073,25 +2124,40 @@ class Program
         GetClientRect(hWnd, out RECT rect);
         int centerX = (rect.Right - rect.Left) / 2 - 186;
         int centerY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
+
+        // Add a delay before clicking to allow overlays to initialize
+        Sleep(100);
+
         foreach (var direction in directions)
         {
             int dx = direction.dx;
             int dy = direction.dy;
             int clickX = centerX + (int)(dx * pixelSize);
             int clickY = centerY + (int)(dy * pixelSize);
+
+            Sleep(1); // Give time for highlight to appear
+
+            // Now perform the click
             VirtualRightClick(targetWindow, clickX, clickY);
+
+            // Add a small delay between clicks
+            Sleep(1);
+
             int currentTargetId = GetTargetId();
             if (currentTargetId != 0)
             {
                 Console.WriteLine(
                     $"Target acquired after clicking at ({clickX}, {clickY}). Target ID: {currentTargetId}"
                 );
+                break; // Exit the loop if target found
             }
         }
+
         //CorpseEatFood(targetWindow);
         //CloseCorspe(targetWindow);
         ClickSecondSlotInBackpack(hWnd);
     }
+
     const int WM_MOUSEMOVE = 0x0200;
     const int WM_RBUTTONDOWN = 0x0204;
     const int WM_RBUTTONUP = 0x0205;
@@ -2103,6 +2169,8 @@ class Program
     static void VirtualRightClick(IntPtr hWnd, int x, int y)
     {
         int lParam = (y << 16) | (x & 0xFFFF);
+
+
         SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
         SendMessage(hWnd, WM_RBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
         SendMessage(hWnd, WM_RBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
@@ -2110,6 +2178,9 @@ class Program
     static void VirtualLeftClick(IntPtr hWnd, int x, int y)
     {
         int lParam = (y << 16) | (x & 0xFFFF);
+
+
+
         PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
         Sleep(1);
         PostMessage(hWnd, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
@@ -2224,15 +2295,15 @@ class Program
         "Frost Giantess"
     };
 
-//    static List<string> whitelistedMonsterNames = new List<string> {
-//    "Tarantula",
-//    "Poison Spider",
-//    "Centipede",
-//    "Dworc Venomsniper",
-//    "Dworc Fleshhunter",
-//    "Dworc Voodoomaster",
-//    "Crypt Shambler"
-//};
+    //    static List<string> whitelistedMonsterNames = new List<string> {
+    //    "Tarantula",
+    //    "Poison Spider",
+    //    "Centipede",
+    //    "Dworc Venomsniper",
+    //    "Dworc Fleshhunter",
+    //    "Dworc Voodoomaster",
+    //    "Crypt Shambler"
+    //};
 
     static (int monsterX, int monsterY, int monsterZ, string monsterName) GetTargetMonsterInfo()
     {
@@ -2409,12 +2480,15 @@ class Program
 
             Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} ring");
 
+
             // Perform the drag-and-drop operation
             IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
             PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
             Sleep(25);
             PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
             Sleep(25);
+
+
             IntPtr destLParam = MakeLParam(destX, destY);
             PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
             Sleep(25);
@@ -4066,7 +4140,7 @@ class Program
             }
         }
 
-  
+
         private static void TriggerColorChangeAlert()
         {
             try
@@ -4420,7 +4494,728 @@ class Program
         }
     }
 
+    // Add these to your class-level declarations
+    static System.Windows.Forms.Form overlayForm = null;
+    static List<(int x, int y, int size, DateTime time, string label)> activeHighlights = new List<(int x, int y, int size, DateTime time, string label)>();
+    static System.Windows.Forms.Timer cleanupTimer = null;
+    static object highlightLock = new object();
+    static bool showDebugCenter = true;
 
+    const int GWL_EXSTYLE = -20;
+    const int WS_EX_TRANSPARENT = 0x00000020;
+    const int WS_EX_LAYERED = 0x00080000;
+
+    // Add these Win32 API imports
+    [DllImport("user32.dll")]
+    static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll")]
+    static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+    // This method initializes the overlay if it doesn't exist, positioned over the game window
+    static void EnsureOverlayExists()
+    {
+        // If overlay is already created and valid, just return
+        if (overlayForm != null && overlayForm.IsHandleCreated && !overlayForm.IsDisposed)
+            return;
+
+        // Reset overlay reference
+        overlayForm = null;
+
+        // Create new overlay thread
+        Thread overlayThread = new Thread(() =>
+        {
+            try
+            {
+                System.Windows.Forms.Form threadForm = null;
+
+                try
+                {
+                    threadForm = new System.Windows.Forms.Form();
+
+                    // Configure form properties
+                    threadForm.FormBorderStyle = System.Windows.Forms.FormBorderStyle.None;
+                    threadForm.ShowInTaskbar = false;
+                    threadForm.TopMost = true;
+                    threadForm.Opacity = 0.85;
+                    threadForm.TransparencyKey = Color.Black;
+                    threadForm.BackColor = Color.Black;
+
+                    // Initial size and position - will be updated by timer
+                    threadForm.Width = 300;
+                    threadForm.Height = 200;
+                    threadForm.StartPosition = System.Windows.Forms.FormStartPosition.Manual;
+
+                    try
+                    {
+                        GetWindowRect(targetWindow, out RECT gameWindowRect);
+                        threadForm.Location = new Point(gameWindowRect.Right - threadForm.Width - 10,
+                                                  gameWindowRect.Bottom - threadForm.Height - 40);
+                    }
+                    catch
+                    {
+                        threadForm.Location = new Point(Screen.PrimaryScreen.WorkingArea.Right - threadForm.Width - 10,
+                                                  Screen.PrimaryScreen.WorkingArea.Bottom - threadForm.Height - 40);
+                    }
+
+                    // Make form click-through
+                    int exStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
+                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED);
+
+                    // Set up painting
+                    threadForm.Paint += (sender, e) =>
+                    {
+                        try
+                        {
+                            // Fill background with semi-transparent dark color (no border)
+                            using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(180, 0, 0, 0)))
+                            {
+                                e.Graphics.FillRectangle(bgBrush, 0, 0, threadForm.Width, threadForm.Height);
+                            }
+
+                            // Increased font sizes
+                            using (Font titleFont = new Font("Arial", 10.0f, FontStyle.Bold))
+                            using (Font statsFont = new Font("Arial", 9.0f, FontStyle.Regular))
+                            using (Brush whiteBrush = new SolidBrush(Color.White))
+                            using (Brush greenBrush = new SolidBrush(Color.LightGreen))
+                            using (Brush blueBrush = new SolidBrush(Color.LightBlue))  // Blue for mana
+                            using (Brush yellowBrush = new SolidBrush(Color.Yellow))
+                            using (Brush orangeBrush = new SolidBrush(Color.Orange))
+                            {
+                                int y = 5;  // Start position
+                                int rightPadding = 20;  // Padding from right edge
+                                int lineSpacing = 18;   // Increased spacing between lines (was 14)
+
+                                // Get current stats
+                                double hpPercent, manaPercent;
+                                int currentX, currentY, currentZ;
+                                lock (memoryLock)
+                                {
+                                    hpPercent = (curHP / maxHP) * 100;
+                                    manaPercent = (curMana / maxMana) * 100;
+                                    currentX = posX;
+                                    currentY = posY;
+                                    currentZ = posZ;
+                                }
+
+                                // Title
+                                string titleText = "RealeraDX - Live Stats";
+                                SizeF titleSize = e.Graphics.MeasureString(titleText, titleFont);
+                                e.Graphics.DrawString(titleText, titleFont, whiteBrush,
+                                    threadForm.Width - titleSize.Width - rightPadding, y);
+                                y += lineSpacing + 2; // Extra spacing after title
+
+                                // Format right-aligned stats 
+                                DrawRightAlignedStat(e, "HP:", $"{curHP:F0}/{maxHP:F0} ({hpPercent:F1}%)",
+                                    statsFont, hpPercent < 50 ? orangeBrush : greenBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+
+                                DrawRightAlignedStat(e, "Mana:", $"{curMana:F0}/{maxMana:F0} ({manaPercent:F1}%)",
+                                    statsFont, blueBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+
+                                // Position coordinates - each on separate line
+                                DrawRightAlignedStat(e, "X:", $"{currentX}", statsFont, whiteBrush,
+                                    threadForm.Width - rightPadding, ref y, lineSpacing);
+
+                                DrawRightAlignedStat(e, "Y:", $"{currentY}", statsFont, whiteBrush,
+                                    threadForm.Width - rightPadding, ref y, lineSpacing);
+
+                                DrawRightAlignedStat(e, "Z:", $"{currentZ}", statsFont, whiteBrush,
+                                    threadForm.Width - rightPadding, ref y, lineSpacing);
+
+                                DrawRightAlignedStat(e, "Target ID:", $"{targetId}",
+                                    statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+
+                                DrawRightAlignedStat(e, "Outfit:", $"{currentOutfit}",
+                                    statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+
+                                y += 2; // Small extra gap
+
+                                // Features heading in yellow
+                                string featuresText = "Active Features:";
+                                SizeF featuresSize = e.Graphics.MeasureString(featuresText, statsFont);
+                                e.Graphics.DrawString(featuresText, statsFont, yellowBrush,
+                                    threadForm.Width - featuresSize.Width - rightPadding, y);
+                                y += lineSpacing;
+
+                                // Format features
+                                DrawRightAlignedFeature(e, "Auto-Potions:", threadFlags["autopot"],
+                                    statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+
+                                DrawRightAlignedFeature(e, "Recording:", threadFlags["recording"],
+                                    statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+
+                                DrawRightAlignedFeature(e, "Playback:", threadFlags["playing"],
+                                    statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+
+                                // If we're playing a path, show progress
+                                if (threadFlags["playing"] && currentTarget != null)
+                                {
+                                    y += 2; // Small extra gap
+
+                                    // Target distance
+                                    int distanceX = Math.Abs(currentTarget.X - currentX);
+                                    int distanceY = Math.Abs(currentTarget.Y - currentY);
+                                    DrawRightAlignedStat(e, "Distance:", $"{distanceX + distanceY} steps",
+                                        statsFont, whiteBrush, threadForm.Width - rightPadding, ref y, lineSpacing);
+
+                                    float progress = (float)(currentCoordIndex + 1) / totalCoords;
+
+                                    // Progress text
+                                    string progressText = $"Path: {(progress * 100):F1}% ({currentCoordIndex + 1}/{totalCoords})";
+                                    SizeF progressSize = e.Graphics.MeasureString(progressText, statsFont);
+                                    e.Graphics.DrawString(progressText, statsFont, whiteBrush,
+                                        threadForm.Width - progressSize.Width - rightPadding, y);
+                                    y += lineSpacing;
+
+                                    // Progress bar
+                                    int progressWidth = threadForm.Width - 40 - rightPadding; // with margins
+                                    int barHeight = 6; // Slightly taller bar
+                                    int barX = 20; // Left margin
+                                    int filledWidth = (int)(progressWidth * progress);
+
+                                    e.Graphics.FillRectangle(new SolidBrush(Color.DarkGray), barX, y, progressWidth, barHeight);
+                                    e.Graphics.FillRectangle(new SolidBrush(Color.LimeGreen), barX, y, filledWidth, barHeight);
+
+                                    // Add minimal spacing after bar
+                                    y += barHeight + 2;
+                                }
+                            }
+
+                            // Draw each active highlight
+                            lock (highlightLock)
+                            {
+                                foreach (var highlight in activeHighlights)
+                                {
+                                    // Get position of highlight in screen coordinates
+                                    int screenX = highlight.x;
+                                    int screenY = highlight.y;
+
+                                    // Get game window position
+                                    GetWindowRect(targetWindow, out RECT gameRect);
+
+                                    // Convert to relative position within game window (0 to 1)
+                                    float relX = (float)(screenX - gameRect.Left) / (gameRect.Right - gameRect.Left);
+                                    float relY = (float)(screenY - gameRect.Top) / (gameRect.Bottom - gameRect.Top);
+
+                                    // Convert relative position to position within minimap
+                                    int miniX = (int)(relX * threadForm.Width);
+                                    int miniY = (int)(relY * threadForm.Height);
+
+                                    using (Pen redPen = new Pen(Color.Red, 2))
+                                    {
+                                        // Draw small dot at position
+                                        e.Graphics.DrawEllipse(redPen, miniX - 2, miniY - 2, 4, 4);
+                                        e.Graphics.DrawLine(redPen, miniX - 3, miniY, miniX + 3, miniY);
+                                        e.Graphics.DrawLine(redPen, miniX, miniY - 3, miniX, miniY + 3);
+                                    }
+                                }
+
+                                // Draw debug text messages
+                                int textY = 10;
+                                using (Font debugFont = new Font("Arial", 9.0f, FontStyle.Bold))
+                                using (Brush textBrush = new SolidBrush(Color.Yellow))
+                                using (Brush bgBrush = new SolidBrush(Color.FromArgb(150, 0, 0, 0)))
+                                {
+                                    foreach (var item in activeHighlights)
+                                    {
+                                        // Only handle items with non-empty labels and no coordinates
+                                        if (item.x == 0 && item.y == 0 && !string.IsNullOrEmpty(item.label))
+                                        {
+                                            SizeF textSize = e.Graphics.MeasureString(item.label, debugFont);
+
+                                            // Draw background behind text
+                                            e.Graphics.FillRectangle(bgBrush, 10, textY, textSize.Width + 10, textSize.Height + 2);
+
+                                            // Draw text
+                                            e.Graphics.DrawString(item.label, debugFont, textBrush, 15, textY);
+                                            textY += (int)textSize.Height + 5;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[OVERLAY] Paint error: {ex.Message}");
+                        }
+                    };
+
+                    // Set up timer for cleanup and window position update
+                    System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer { Interval = 100 };
+
+                    updateTimer.Tick += (sender, e) =>
+                    {
+                        try
+                        {
+                            // Update overlay position to track the game window
+                            GetWindowRect(targetWindow, out RECT currentGameRect);
+
+                            // Only calculate new size if game window is valid
+                            if (currentGameRect.Right > currentGameRect.Left &&
+                                currentGameRect.Bottom > currentGameRect.Top)
+                            {
+                                int newWidth = (currentGameRect.Right - currentGameRect.Left) / 3;
+                                int contentLines = 13;
+                                if (threadFlags["playing"] && currentTarget != null)
+                                    contentLines += 3;
+                                int lineHeight = 18;
+                                int bottomMargin = 20;
+                                int newHeight = contentLines * lineHeight + bottomMargin;
+
+                                int newX = currentGameRect.Right - newWidth;
+                                int newY = currentGameRect.Bottom - newHeight - bottomMargin;
+
+                                // Only update if dimensions actually changed
+                                if (newX != threadForm.Left || newY != threadForm.Top ||
+                                    newWidth != threadForm.Width || newHeight != threadForm.Height)
+                                {
+                                    threadForm.Location = new Point(newX, newY);
+                                    threadForm.Size = new Size(newWidth, newHeight);
+                                }
+                            }
+
+                            // Update highlights
+                            lock (highlightLock)
+                            {
+                                var now = DateTime.Now;
+
+                                // First list what we're about to remove (for debugging)
+                                var toRemove = activeHighlights.Where(h => now >= h.time).ToList();
+                                if (toRemove.Count > 0)
+                                {
+                                    Console.WriteLine($"[DEBUG] Removing {toRemove.Count} expired highlights:");
+                                    foreach (var h in toRemove)
+                                    {
+                                        Console.WriteLine($"  - Highlight at ({h.x},{h.y}) expired at {h.time:HH:mm:ss.fff}");
+                                    }
+                                }
+
+                                // Now do the actual removal based on the expiration time
+                                int beforeCount = activeHighlights.Count;
+                                activeHighlights.RemoveAll(h => now >= h.time);
+                                int afterCount = activeHighlights.Count;
+
+                                if (beforeCount != afterCount)
+                                {
+                                    Console.WriteLine($"[DEBUG] Removed {beforeCount - afterCount} highlights, {afterCount} remaining");
+                                }
+                            }
+
+                            // Always refresh display
+                            threadForm.Invalidate();
+
+                            // If main program has stopped, stop timer and close form
+                            if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
+                                overlayForm != threadForm)
+                            {
+                                updateTimer.Stop();
+                                threadForm.Close();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[OVERLAY] Update error: {ex.Message}");
+                        }
+                    };
+
+                    // Make the new form available for other threads
+                    overlayForm = threadForm;
+
+                    // Start the timer
+                    updateTimer.Start();
+
+                    // Show the form
+                    threadForm.Show();
+
+                    // Message loop using DoEvents
+                    DateTime lastCheckTime = DateTime.MinValue;
+                    while (!threadForm.IsDisposed && programRunning && memoryReadActive &&
+                           threadFlags["overlay"] && overlayForm == threadForm)
+                    {
+                        System.Windows.Forms.Application.DoEvents();
+                        Thread.Sleep(10);
+
+                        // Periodically check if we should exit
+                        DateTime now = DateTime.Now;
+                        if ((now - lastCheckTime).TotalSeconds >= 1)
+                        {
+                            lastCheckTime = now;
+                            if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
+                                overlayForm != threadForm)
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    // When we exit the loop, stop the timer
+                    updateTimer.Stop();
+                    updateTimer.Dispose();
+
+                    // Clear reference if this is still the active form
+                    if (overlayForm == threadForm)
+                    {
+                        overlayForm = null;
+                    }
+
+                    // Close the form if it's not already disposed
+                    if (!threadForm.IsDisposed)
+                    {
+                        threadForm.Close();
+                        threadForm.Dispose();
+                    }
+                }
+                finally
+                {
+                    // Ensure resources are cleaned up even on exception
+                    if (threadForm != null && !threadForm.IsDisposed)
+                    {
+                        try
+                        {
+                            threadForm.Close();
+                            threadForm.Dispose();
+                        }
+                        catch { }
+                    }
+
+                    // Final check to clear overlay reference
+                    if (overlayForm == threadForm)
+                    {
+                        overlayForm = null;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[OVERLAY] Overlay thread error: {ex.Message}");
+                overlayForm = null;
+            }
+        });
+
+        // Configure and start the thread
+        overlayThread.IsBackground = true;
+        overlayThread.SetApartmentState(ApartmentState.STA);
+        overlayThread.Start();
+
+        // Give the overlay a moment to initialize
+        Sleep(100);
+    }
+
+    // Helper method to draw a right-aligned stat line
+    // Updated helper methods with line spacing parameter
+    static void DrawRightAlignedStat(PaintEventArgs e, string label, string value, Font font,
+        Brush brush, int rightEdge, ref int y, int lineSpacing)
+    {
+        string fullText = $"{label} {value}";
+        SizeF textSize = e.Graphics.MeasureString(fullText, font);
+        e.Graphics.DrawString(fullText, font, brush, rightEdge - textSize.Width, y);
+        y += lineSpacing; // Use the provided line spacing
+    }
+
+    static void DrawRightAlignedFeature(PaintEventArgs e, string label, bool enabled, Font font,
+        Brush brush, int rightEdge, ref int y, int lineSpacing)
+    {
+        string status = enabled ? "✅" : "❌";
+        string fullText = $"{label} {status}";
+        SizeF textSize = e.Graphics.MeasureString(fullText, font);
+        e.Graphics.DrawString(fullText, font, brush, rightEdge - textSize.Width, y);
+        y += lineSpacing; // Use the provided line spacing
+    }
+
+
+    class ClickHighlight
+    {
+        public int GameX { get; set; }        // X coordinate in game client space
+        public int GameY { get; set; }        // Y coordinate in game client space
+        public int Size { get; set; }         // Size of highlight square
+        public DateTime ExpireTime { get; set; } // When this highlight should disappear
+        public string Label { get; set; }     // Optional label to display
+
+        // Calculate how much time is remaining before expiration (0-1)
+        public float GetRemainingTimePercentage()
+        {
+            double msRemaining = (ExpireTime - DateTime.Now).TotalMilliseconds;
+            return Math.Max(0f, Math.Min(1f, (float)(msRemaining / 1000.0)));
+        }
+
+        // Is this highlight still valid?
+        public bool IsExpired()
+        {
+            return DateTime.Now >= ExpireTime;
+        }
+    }
+
+    static System.Threading.Timer highlightTimer = null;
+
+    static void StartHighlightTimer()
+    {
+        if (highlightTimer != null)
+            return;
+
+        highlightTimer = new System.Threading.Timer(
+         (state) =>
+         {
+             try
+             {
+                 // Clean up expired highlights
+                 lock (highlightLock)
+                 {
+                     var now = DateTime.Now;
+
+                     // Log details about all highlights before removal
+                     if (activeHighlights.Count > 0)
+                     {
+                         Console.WriteLine($"[DEBUG] Current highlights before cleanup: {activeHighlights.Count}");
+                         foreach (var h in activeHighlights)
+                         {
+                             TimeSpan timeRemaining = h.time - now;
+                             bool isExpired = now >= h.time;
+                             Console.WriteLine($"[DEBUG] Highlight at ({h.x},{h.y}) size={h.size}, " +
+                                 $"expires at {h.time:HH:mm:ss.fff}, " +
+                                 $"remaining time: {timeRemaining.TotalMilliseconds:F0}ms, " +
+                                 $"expired: {isExpired}");
+                         }
+                     }
+
+                     // Create a list of what will be removed for logging
+                     var toRemove = activeHighlights.Where(h => now >= h.time).ToList();
+
+                     if (toRemove.Count > 0)
+                     {
+                         Console.WriteLine($"[DEBUG] Removing {toRemove.Count} expired highlights:");
+                         foreach (var h in toRemove)
+                         {
+                             Console.WriteLine($"[DEBUG] Removing highlight at ({h.x},{h.y}) " +
+                                 $"which expired at {h.time:HH:mm:ss.fff} " +
+                                 $"(current time: {now:HH:mm:ss.fff})");
+                         }
+
+                         // Perform the actual removal
+                         activeHighlights.RemoveAll(h => now >= h.time);
+
+                         Console.WriteLine($"[DEBUG] After removal: {activeHighlights.Count} highlights remaining");
+                     }
+                 }
+
+                 // Draw current highlights
+                 DrawGameWindowHighlights();
+             }
+             catch (Exception ex)
+             {
+                 Console.WriteLine($"[DEBUG] Highlight timer error: {ex.Message}");
+             }
+         },
+         null,
+         0,
+         50); // Update every 50ms
+    }
+
+    static void DrawGameWindowHighlights()
+    {
+        if (targetWindow == IntPtr.Zero || activeHighlights.Count == 0)
+            return;
+
+        try
+        {
+            Console.WriteLine($"[DEBUG] Drawing {activeHighlights.Count} highlights on game window");
+
+            // Get window DC
+            IntPtr hdc = GetDC(targetWindow);
+            if (hdc == IntPtr.Zero)
+            {
+                Console.WriteLine("[DEBUG] Failed to get window DC");
+                return;
+            }
+
+            try
+            {
+                // Create pens and brushes - use a bright color that stands out
+                uint highlightColor = MakeRGB(255, 50, 50);  // Bright red
+                IntPtr pen = CreatePen(PS_SOLID, 3, highlightColor);  // Thicker line
+                IntPtr nullBrush = GetStockObject(HOLLOW_BRUSH);
+
+                if (pen == IntPtr.Zero || nullBrush == IntPtr.Zero)
+                {
+                    Console.WriteLine("[DEBUG] Failed to create pen or brush");
+                    return;
+                }
+
+                // Select them into DC
+                IntPtr oldPen = SelectObject(hdc, pen);
+                IntPtr oldBrush = SelectObject(hdc, nullBrush);
+
+                // Use normal drawing mode instead of XOR
+                // SetROP2(hdc, R2_XORPEN);
+
+                lock (highlightLock)
+                {
+                    foreach (var highlight in activeHighlights.Where(h => DateTime.Now < h.time))
+                    {
+                        // Calculate rectangle
+                        int halfSize = highlight.size / 2;
+
+                        // Log the exact coordinates we're drawing
+                        Console.WriteLine($"[DEBUG] Drawing highlight at ({highlight.x}, {highlight.y}) with size {highlight.size}");
+
+                        // Draw filled rectangle for better visibility
+                        Rectangle(hdc,
+                            highlight.x - halfSize,
+                            highlight.y - halfSize,
+                            highlight.x + halfSize,
+                            highlight.y + halfSize);
+
+                        // Draw crosshairs with thicker lines
+                        MoveToEx(hdc, highlight.x - halfSize, highlight.y, IntPtr.Zero);
+                        LineTo(hdc, highlight.x + halfSize, highlight.y);
+
+                        MoveToEx(hdc, highlight.x, highlight.y - halfSize, IntPtr.Zero);
+                        LineTo(hdc, highlight.x + halfSize * 2, highlight.y + halfSize);  // Make lines more noticeable
+                    }
+                }
+
+                // Clean up
+                SelectObject(hdc, oldPen);
+                SelectObject(hdc, oldBrush);
+                DeleteObject(pen);
+
+                Console.WriteLine("[DEBUG] Highlights drawing completed");
+            }
+            finally
+            {
+                ReleaseDC(targetWindow, hdc);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DEBUG] Error drawing game window highlights: {ex.Message}");
+        }
+    }
+
+
+    // Add this to manage overlay start/stop cleanly
+    static void StartOverlay()
+    {
+        if (overlayForm != null && !overlayForm.IsDisposed)
+            return;
+
+        Console.WriteLine("[OVERLAY] Starting overlay display");
+        EnsureOverlayExists();
+    }
+
+    static void StopOverlay()
+    {
+        if (overlayForm == null || overlayForm.IsDisposed)
+            return;
+
+        Console.WriteLine("[OVERLAY] Stopping overlay display");
+        var form = overlayForm;
+        overlayForm = null; // Clear reference first
+
+        try
+        {
+            if (form.InvokeRequired)
+            {
+                form.BeginInvoke(new Action(() =>
+                {
+                    try
+                    {
+                        form.Close();
+                        form.Dispose();
+                    }
+                    catch { }
+                }));
+            }
+            else
+            {
+                form.Close();
+                form.Dispose();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[OVERLAY] Error closing overlay: {ex.Message}");
+        }
+    }
+
+    // Make sure you have this function to get the window rectangle
+    [DllImport("user32.dll")]
+    static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    // Add this constant
+    const int NULL_PEN = 8;
+
+    [DllImport("gdi32.dll")]
+    static extern bool Rectangle(IntPtr hdc, int left, int top, int right, int bottom);
+
+    static extern bool Ellipse(IntPtr hdc, int left, int top, int right, int bottom);
+    [DllImport("user32.dll")]
+    static extern bool FillRect(IntPtr hDC, [In] ref RECT lprc, IntPtr hbr);
+    [DllImport("user32.dll")]
+    static extern IntPtr CreateIconIndirect([In] ref ICONINFO piconinfo);
+    [StructLayout(LayoutKind.Sequential)]
+    struct ICONINFO
+    {
+        public bool fIcon;
+        public int xHotspot;
+        public int yHotspot;
+        public IntPtr hbmMask;
+        public IntPtr hbmColor;
+    }
+    const int WHITE_BRUSH = 0;
+
+    // Add these required imports/constants
+    [DllImport("gdi32.dll")]
+    static extern int SetROP2(IntPtr hdc, int fnDrawMode);
+
+    const int R2_XORPEN = 7;
+    const int PS_SOLID = 0;
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreatePen(int fnPenStyle, int nWidth, uint crColor);
+
+    [DllImport("gdi32.dll")]
+    static extern bool MoveToEx(IntPtr hdc, int x, int y, IntPtr lpPoint);
+
+    [DllImport("gdi32.dll")]
+    static extern bool LineTo(IntPtr hdc, int x, int y);
+
+    // Add these required Win32 API declarations
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreateSolidBrush(uint colorRef);
+
+    [DllImport("gdi32.dll")]
+    static extern uint RGB(int r, int g, int b);
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr GetStockObject(int fnObject);
+
+    [DllImport("user32.dll")]
+    static extern bool InvalidateRect(IntPtr hWnd, IntPtr lpRect, bool bErase);
+
+    // Constants
+    const int HOLLOW_BRUSH = 5;
+
+    [DllImport("user32.dll")]
+    static extern IntPtr GetDC(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
+
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteObject(IntPtr hObject);
+
+    // Replace or add this declaration
+    [DllImport("gdi32.dll", EntryPoint = "RGB")]
+    static extern uint RGB(byte r, byte g, byte b);
+
+    // Add this helper method
+    static uint MakeRGB(byte r, byte g, byte b)
+    {
+        return ((uint)r) | (((uint)g) << 8) | (((uint)b) << 16);
+    }
 
 
 }
