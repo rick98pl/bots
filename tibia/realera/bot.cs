@@ -1539,6 +1539,12 @@ class Program
 
                         if (currentTargetId == 0)
                         {
+                            firstFound = false;
+                            Thread.Sleep(300);
+                        }
+                        if (!firstFound && currentTargetId == 0)
+                        {
+                            firstFound = true;
                             SendKeyPress(VK_F6);
                             // Keep the crucial Sleep(1) as you mentioned
                             Sleep(10); //CRUCIAL YOU CANT SPAM F6 because targetId is getting weird!!! even if no monster
@@ -1575,7 +1581,7 @@ class Program
                     if(currentTargetId == 0)
                     {
                         firstFound = false;
-                        Thread.Sleep(150);
+                        Thread.Sleep(300);
                     }
 
                     if (!firstFound && currentTargetId == 0)
@@ -2125,26 +2131,115 @@ class Program
     {
         try
         {
-            //CloseCorpse(targetWindow);
             // Set flag to indicate click around is in progress
             isClickAroundInProgress = true;
             Console.WriteLine("[DEBUG] Click around character operation started");
 
-            // Your existing ClickAroundCharacter code here...
-            (int dx, int dy)[] directions = new (int, int)[]
+            // Get last known target coordinates
+            int currentX, currentY, currentZ;
+            int lastMonsterX = 0, lastMonsterY = 0, lastMonsterZ = 0;
+
+            lock (memoryLock)
             {
-            (0, -1),
-            (1, -1),
-            (1, 0),
-            (1, 1),
-            (0, 1),
-            (-1, 1),
-            (-1, 0),
-            (-1, -1)
+                currentX = posX;
+                currentY = posY;
+                currentZ = posZ;
+
+                // Get the last known target position if we have it
+                if (previousTargetId != 0)
+                {
+                    var (mX, mY, mZ) = GetTargetMonsterCoordinates();
+                    lastMonsterX = mX;
+                    lastMonsterY = mY;
+                    lastMonsterZ = mZ;
+                }
+            }
+
+            // Create ordered list of directions, prioritizing the monster's last known position
+            List<(int dx, int dy)> orderedDirections = new List<(int dx, int dy)>();
+
+            // First, check if we have valid monster coordinates
+            if (lastMonsterX != 0 || lastMonsterY != 0)
+            {
+                // Calculate offset from player to last monster position
+                int offsetX = Math.Sign(lastMonsterX - currentX);
+                int offsetY = Math.Sign(lastMonsterY - currentY);
+
+                Console.WriteLine($"[DEBUG] Last monster position: X={lastMonsterX}, Y={lastMonsterY}, Z={lastMonsterZ}");
+                Console.WriteLine($"[DEBUG] Direction to monster: ({offsetX}, {offsetY})");
+
+                // First priority: Add the exact direction to the monster
+                if (offsetX != 0 || offsetY != 0)
+                {
+                    orderedDirections.Add((offsetX, offsetY));
+                }
+
+                // Second priority: Add adjacent directions (keeping one coordinate same as the monster direction)
+                if (offsetX != 0)
+                {
+                    orderedDirections.Add((offsetX, 1));
+                    orderedDirections.Add((offsetX, -1));
+                }
+                if (offsetY != 0)
+                {
+                    orderedDirections.Add((1, offsetY));
+                    orderedDirections.Add((-1, offsetY));
+                }
+            }
+
+            // Add all standard directions that haven't been added yet
+            (int dx, int dy)[] standardDirections = new (int, int)[]
+            {
+            (0, -1),  // North
+            (1, -1),  // Northeast
+            (1, 0),   // East
+            (1, 1),   // Southeast
+            (0, 1),   // South
+            (-1, 1),  // Southwest
+            (-1, 0),  // West
+            (-1, -1)  // Northwest
             };
 
+            // Add any standard directions not already in our list
+            foreach (var direction in standardDirections)
+            {
+                if (!orderedDirections.Contains(direction))
+                {
+                    orderedDirections.Add(direction);
+                }
+            }
+
+            // Shuffle just the remaining directions to maintain some randomness
             Random random = new Random();
-            ShuffleArray(directions, random);
+            int priorityCount = orderedDirections.Count;
+            if (lastMonsterX != 0 || lastMonsterY != 0)
+            {
+                // Keep the first 3 (or fewer) prioritized directions
+                priorityCount = Math.Min(3, orderedDirections.Count);
+            }
+
+            // Shuffle only the non-priority part of the list
+            if (priorityCount < orderedDirections.Count)
+            {
+                var priorityDirections = orderedDirections.Take(priorityCount).ToList();
+                var remainingDirections = orderedDirections.Skip(priorityCount).ToList();
+
+                // Shuffle the remaining directions
+                for (int i = remainingDirections.Count - 1; i > 0; i--)
+                {
+                    int j = random.Next(0, i + 1);
+                    (remainingDirections[i], remainingDirections[j]) = (remainingDirections[j], remainingDirections[i]);
+                }
+
+                // Recombine the lists
+                orderedDirections = priorityDirections.Concat(remainingDirections).ToList();
+            }
+
+            Console.WriteLine("[DEBUG] Ordered click directions:");
+            for (int i = 0; i < orderedDirections.Count; i++)
+            {
+                Console.WriteLine($"[DEBUG]   {i + 1}: ({orderedDirections[i].dx}, {orderedDirections[i].dy})");
+            }
 
             GetClientRect(hWnd, out RECT rect);
             int centerX = (rect.Right - rect.Left) / 2 - 186;
@@ -2152,8 +2247,9 @@ class Program
 
             // Add a delay before clicking to allow overlays to initialize
             Sleep(1);
-            //int currentTargetId = GetTargetId();
-            foreach (var direction in directions)
+
+            // Click in each direction in the prioritized order
+            foreach (var direction in orderedDirections)
             {
                 int dx = direction.dx;
                 int dy = direction.dy;
@@ -2164,25 +2260,37 @@ class Program
                 VirtualRightClick(targetWindow, clickX, clickY);
                 Sleep(1); // Allow game time to process click
 
-                
-                //if (currentTargetId != 0)
-                //{
-                //    Console.WriteLine($"[DEBUG] Target acquired during click around. Target ID: {currentTargetId}");
-                //    lastClickAroundTargetId = currentTargetId; // Track the target ID we found
-                //    lastClickAroundCompleted = DateTime.Now;
-                //    return true; // Found target
-                //}
+                // Check if we found a target
+                int currentTargetId;
+                lock (memoryLock)
+                {
+                    currentTargetId = targetId;
+                }
+
+                if (currentTargetId != 0)
+                {
+                    Console.WriteLine($"[DEBUG] Target acquired during click around. Target ID: {currentTargetId}");
+                    lastClickAroundTargetId = currentTargetId; // Track the target ID we found
+                    lastClickAroundCompleted = DateTime.Now;
+
+                    // Additional looting operations since we found a target
+                    CorpseEatFood(targetWindow);
+                    Sleep(1);
+                    ClickSecondSlotInBackpack(hWnd);
+                    Sleep(1);
+
+                    isClickAroundInProgress = false;
+                    return true; // Found target
+                }
             }
 
             // Additional looting operations
             CorpseEatFood(targetWindow);
             Sleep(1); // Allow time for food looting
-            //CloseCorpse(targetWindow);
-            Sleep(1); // Allow time for corpse closing
             ClickSecondSlotInBackpack(hWnd);
             Sleep(1); // Allow time for backpack operation
 
-            // Play a sound to indicate click around is complete (if you have this function)
+            // Play a sound to indicate click around is complete
             if (typeof(Program).GetMethod("PlayClickCompletedSound") != null)
             {
                 PlayClickCompletedSound();
@@ -2190,17 +2298,14 @@ class Program
 
             Console.WriteLine("[DEBUG] Click around character operation completed");
             lastClickAroundCompleted = DateTime.Now;
+            isClickAroundInProgress = false;
             return false; // No target found
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[ERROR] Error in ClickAroundCharacter: {ex.Message}");
-            return false;
-        }
-        finally
-        {
-            // Always reset the in-progress flag when done, even if there was an error
             isClickAroundInProgress = false;
+            return false;
         }
     }
 
