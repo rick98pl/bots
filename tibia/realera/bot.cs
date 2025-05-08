@@ -105,6 +105,13 @@ class Program
     static bool isRecording = false;
     static bool isPlaying = false;
     static bool shouldRestartMemoryThread = false;
+
+    // First, add these variables at the class level where your other state variables are defined
+    private static int lastKnownMonsterX = 0;
+    private static int lastKnownMonsterY = 0;
+    private static int lastKnownMonsterZ = 0;
+    private static int lastKnownMonsterId = 0;
+
     static ConcurrentDictionary<string, bool> threadFlags = new ConcurrentDictionary<
         string,
         bool
@@ -2128,7 +2135,6 @@ class Program
     static DateTime lastClickAroundCompleted = DateTime.MinValue;
     static int lastClickAroundTargetId = 0;
 
-    // Modify your ClickAroundCharacter function to set flags when it starts and finishes
     static bool ClickAroundCharacter(IntPtr hWnd)
     {
         try
@@ -2137,9 +2143,9 @@ class Program
             isClickAroundInProgress = true;
             Console.WriteLine("[DEBUG] Click around character operation started");
 
-            // Get last known target coordinates
+            // Get last known target coordinates and player position
             int currentX, currentY, currentZ;
-            int lastMonsterX = 0, lastMonsterY = 0, lastMonsterZ = 0;
+            int monsterX = 0, monsterY = 0, monsterZ = 0;
 
             lock (memoryLock)
             {
@@ -2147,51 +2153,26 @@ class Program
                 currentY = posY;
                 currentZ = posZ;
 
-                // Get the last known target position if we have it
-                if (previousTargetId != 0)
-                {
-                    var (mX, mY, mZ) = GetTargetMonsterCoordinates();
-                    lastMonsterX = mX;
-                    lastMonsterY = mY;
-                    lastMonsterZ = mZ;
-                }
+                // Get the last known target position
+                monsterX = lastKnownMonsterX;
+                monsterY = lastKnownMonsterY;
+                monsterZ = lastKnownMonsterZ;
             }
 
-            // Create ordered list of directions, prioritizing the monster's last known position
-            List<(int dx, int dy)> orderedDirections = new List<(int dx, int dy)>();
+            Console.WriteLine($"[DEBUG] Player position: X={currentX}, Y={currentY}, Z={currentZ}");
+            Console.WriteLine($"[DEBUG] Last monster position: X={monsterX}, Y={monsterY}, Z={monsterZ}");
 
-            // First, check if we have valid monster coordinates
-            if (lastMonsterX != 0 || lastMonsterY != 0)
+            // Get window dimensions for center calculation
+            GetClientRect(hWnd, out RECT rect);
+            int screenCenterX = (rect.Right - rect.Left) / 2 - 186;
+            int screenCenterY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
+
+            Console.WriteLine($"[DEBUG] Screen center: X={screenCenterX}, Y={screenCenterY}");
+
+            // Define all directions for clicking in exact clockwise order
+            (int dx, int dy)[] clickPattern = new[]
             {
-                // Calculate offset from player to last monster position
-                int offsetX = Math.Sign(lastMonsterX - currentX);
-                int offsetY = Math.Sign(lastMonsterY - currentY);
-
-                Console.WriteLine($"[DEBUG] Last monster position: X={lastMonsterX}, Y={lastMonsterY}, Z={lastMonsterZ}");
-                Console.WriteLine($"[DEBUG] Direction to monster: ({offsetX}, {offsetY})");
-
-                // First priority: Add the exact direction to the monster
-                if (offsetX != 0 || offsetY != 0)
-                {
-                    orderedDirections.Add((offsetX, offsetY));
-                }
-
-                // Second priority: Add adjacent directions (keeping one coordinate same as the monster direction)
-                if (offsetX != 0)
-                {
-                    orderedDirections.Add((offsetX, 1));
-                    orderedDirections.Add((offsetX, -1));
-                }
-                if (offsetY != 0)
-                {
-                    orderedDirections.Add((1, offsetY));
-                    orderedDirections.Add((-1, offsetY));
-                }
-            }
-
-            // Add all standard directions that haven't been added yet
-            (int dx, int dy)[] standardDirections = new (int, int)[]
-            {
+            (0, 0),   // Center (where the player is standing)
             (0, -1),  // North
             (1, -1),  // Northeast
             (1, 0),   // East
@@ -2200,63 +2181,72 @@ class Program
             (-1, 1),  // Southwest
             (-1, 0),  // West
             (-1, -1)  // Northwest
-            };
+        };
 
-            // Add any standard directions not already in our list
-            foreach (var direction in standardDirections)
+            // Calculate relative position of monster to player
+            // If monster is directly on a specific direction, we'll move that direction to the front
+            (int dx, int dy) monsterRelativePos = (0, 0);
+            if (monsterX != 0 || monsterY != 0)
             {
-                if (!orderedDirections.Contains(direction))
+                // Calculate relative direction (simple subtraction)
+                int relX = monsterX - currentX;
+                int relY = monsterY - currentY;
+
+                Console.WriteLine($"[DEBUG] Relative monster position: ({relX}, {relY})");
+
+                // Find closest direction in our click pattern
+                if (relX != 0 || relY != 0)
                 {
-                    orderedDirections.Add(direction);
+                    // Normalize to -1, 0, or 1 values
+                    monsterRelativePos = (
+                        Math.Max(-1, Math.Min(1, relX)),
+                        Math.Max(-1, Math.Min(1, relY))
+                    );
+
+                    Console.WriteLine($"[DEBUG] Normalized monster direction: ({monsterRelativePos.dx}, {monsterRelativePos.dy})");
                 }
             }
 
-            // Shuffle just the remaining directions to maintain some randomness
-            Random random = new Random();
-            int priorityCount = orderedDirections.Count;
-            if (lastMonsterX != 0 || lastMonsterY != 0)
+            // Reorder click pattern to start at monster's position if we have one
+            List<(int dx, int dy)> orderedClickPattern = new List<(int dx, int dy)>();
+
+            // First add monster position if valid
+            if (monsterRelativePos.dx != 0 || monsterRelativePos.dy != 0)
             {
-                // Keep the first 3 (or fewer) prioritized directions
-                priorityCount = Math.Min(3, orderedDirections.Count);
+                orderedClickPattern.Add(monsterRelativePos);
+                Console.WriteLine($"[DEBUG] First click will be at monster position: ({monsterRelativePos.dx}, {monsterRelativePos.dy})");
             }
 
-            // Shuffle only the non-priority part of the list
-            if (priorityCount < orderedDirections.Count)
+            // Then add all other positions in clockwise order
+            foreach (var pos in clickPattern)
             {
-                var priorityDirections = orderedDirections.Take(priorityCount).ToList();
-                var remainingDirections = orderedDirections.Skip(priorityCount).ToList();
-
-                // Shuffle the remaining directions
-                for (int i = remainingDirections.Count - 1; i > 0; i--)
+                // Skip the monster position since we already added it
+                if (pos != monsterRelativePos)
                 {
-                    int j = random.Next(0, i + 1);
-                    (remainingDirections[i], remainingDirections[j]) = (remainingDirections[j], remainingDirections[i]);
+                    orderedClickPattern.Add(pos);
                 }
-
-                // Recombine the lists
-                orderedDirections = priorityDirections.Concat(remainingDirections).ToList();
             }
 
-            Console.WriteLine("[DEBUG] Ordered click directions:");
-            for (int i = 0; i < orderedDirections.Count; i++)
+            Console.WriteLine("[DEBUG] Final click pattern:");
+            for (int i = 0; i < orderedClickPattern.Count; i++)
             {
-                Console.WriteLine($"[DEBUG]   {i + 1}: ({orderedDirections[i].dx}, {orderedDirections[i].dy})");
+                Console.WriteLine($"[DEBUG]   {i + 1}: ({orderedClickPattern[i].dx}, {orderedClickPattern[i].dy})");
             }
-
-            GetClientRect(hWnd, out RECT rect);
-            int centerX = (rect.Right - rect.Left) / 2 - 186;
-            int centerY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
 
             // Add a delay before clicking to allow overlays to initialize
             Sleep(1);
 
-            // Click in each direction in the prioritized order
-            foreach (var direction in orderedDirections)
+            // Click in each direction according to our pattern
+            foreach (var direction in orderedClickPattern)
             {
                 int dx = direction.dx;
                 int dy = direction.dy;
-                int clickX = centerX + (int)(dx * pixelSize);
-                int clickY = centerY + (int)(dy * pixelSize);
+
+                // Calculate absolute screen coordinates
+                int clickX = screenCenterX + (dx * pixelSize);
+                int clickY = screenCenterY + (dy * pixelSize);
+
+                Console.WriteLine($"[DEBUG] Clicking at screen position: X={clickX}, Y={clickY} (offset: {dx}, {dy})");
 
                 Sleep(1); // Give time for highlight to appear
                 VirtualRightClick(targetWindow, clickX, clickY);
@@ -2353,6 +2343,8 @@ class Program
             return targetId;
         }
     }
+
+
     static (int monsterX, int monsterY, int monsterZ) GetTargetMonsterCoordinates()
     {
         int targetId = 0;
@@ -2415,7 +2407,13 @@ class Program
                     }
                 }
             }
+            if (monsterX != 0) lastKnownMonsterX = monsterX;
+            if (monsterY != 0)  lastKnownMonsterY = monsterY;
+            if (monsterZ != 0)  lastKnownMonsterZ = monsterZ;
+            if (targetId != 0)  lastKnownMonsterId = targetId;
         }
+       
+
         return (monsterX, monsterY, monsterZ);
     }
     static string ReadStringFromMemory(IntPtr handle, IntPtr address, int maxLength = 128)
@@ -2536,6 +2534,10 @@ class Program
                     }
                 }
             }
+            if (monsterX != 0) lastKnownMonsterX = monsterX;
+            if (monsterY != 0) lastKnownMonsterY = monsterY;
+            if (monsterZ != 0) lastKnownMonsterZ = monsterZ;
+            if (targetId != 0) lastKnownMonsterId = targetId;
         }
 
         if (!string.IsNullOrEmpty(monsterName) && monsterName != "" && !whitelistedMonsterNames.Contains(monsterName))
@@ -2554,6 +2556,7 @@ class Program
             // Consider adding this to force the program to exit completely after the alert
             Environment.Exit(1);
         }
+
 
         return (monsterX, monsterY, monsterZ, monsterName);
     }
