@@ -2187,6 +2187,7 @@ class Program
     }
     static void ClickSecondSlotInBackpack(IntPtr hWnd)
     {
+        return;
         (int x, int y)[] locations = new (int, int)[] { (secondSlotBpX, secondSLotBpY) };
 
         GetClientRect(hWnd, out RECT rect);
