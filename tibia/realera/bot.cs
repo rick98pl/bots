@@ -1577,6 +1577,7 @@ class Program
                         Console.WriteLine("[DEBUG] No need to return to chase start position");
                     }
 
+
                     ToggleRing(targetWindow, false);
                     Sleep(1);
 
