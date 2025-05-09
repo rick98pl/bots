@@ -154,6 +154,7 @@ class Program
         threadFlags["playing"] = false;
         threadFlags["autopot"] = true;
         threadFlags["spawnwatch"] = true;
+        threadFlags["lootrecognizer"] = true; // Add this line
 
         threadFlags.TryAdd("overlay", true);
         // Add overlay flag with default set to true but CHANGE TO FALSE to reduce CPU
@@ -488,6 +489,12 @@ class Program
         outfitThread.Name = "OutfitMaintenance";
         outfitThread.Start();
 
+        // Add loot recognizer thread
+        Thread lootRecognizerThread = new Thread(LootRecognizerThread);
+        lootRecognizerThread.IsBackground = true;
+        lootRecognizerThread.Name = "LootRecognizer";
+        lootRecognizerThread.Start();
+
         StartClickOverlay();
 
         // Start SPAWNWATCHER if enabled
@@ -498,6 +505,8 @@ class Program
 
         Console.WriteLine("Worker threads started successfully");
     }
+
+
     static void StopWorkerThreads()
     {
         memoryReadActive = false;
@@ -505,6 +514,7 @@ class Program
         threadFlags["playing"] = false;
         threadFlags["autopot"] = false;
         threadFlags["overlay"] = false; // Also disable overlay
+        lootRecognizerActive = false;   // Stop loot recognizer
         SPAWNWATCHER.Stop();
         StopPositionAlertSound(); // Stop any playing alert sounds
 
@@ -512,10 +522,10 @@ class Program
         StopOverlay();
         StopClickOverlay();
 
-
         Console.WriteLine("Worker threads stopping...");
         Sleep(1000);
     }
+
 
     static List<Variable> variables = new List<Variable>
     {
@@ -1949,6 +1959,8 @@ class Program
     static int inventoryY;
     static int equipmentX;
     static int equipmentY;
+    static int firstSlotBpX;
+    static int firstSlotBpY;
     static int secondSlotBpX;
     static int secondSLotBpY;
     static int closeCorpseX;
@@ -2000,6 +2012,8 @@ class Program
         equipmentY = 150;
         secondSlotBpX = smallWindow ? 840 : 1165;
         secondSLotBpY = 250;
+        firstSlotBpX = smallWindow ? 840 - pixelSize : 1165 - pixelSize;
+        firstSlotBpY = 250;
         closeCorpseX = smallWindow ? 944 : 1262;
         closeCorpseY = smallWindow ? 320 : 400;
 
@@ -2682,7 +2696,7 @@ class Program
     static readonly int MAX_MONSTER_DISTANCE = 4; // Maximum allowed distance in sqm
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
-        return;
+        
         try
         {
             int currentTargetId;
@@ -5970,6 +5984,540 @@ class Program
             ));
 
             //Console.WriteLine($"[CLICK OVERLAY] Recorded {(isLeftClick ? "left" : "right")} click at ({screenPoint.X}, {screenPoint.Y}) - expires in {CLICK_MARKER_LIFESPAN.TotalMilliseconds}ms");
+        }
+    }
+
+    static bool lootRecognizerActive = true;
+    static Thread lootRecognizerThread = null;
+    static readonly object lootRecognizerLock = new object();
+    static Dictionary<string, Mat> lootTemplates = new Dictionary<string, Mat>();
+    static string dropsDirectoryPath = "drops";
+    static readonly TimeSpan LOOT_SCAN_INTERVAL = TimeSpan.FromSeconds(2); // Scan for loot every 2 seconds
+    static readonly TimeSpan DRAG_OPERATION_COOLDOWN = TimeSpan.FromSeconds(3); // Minimum time between drag operations
+    static DateTime lastDragOperationTime = DateTime.MinValue;
+    static double lootMatchThreshold = 0.92; // Similarity threshold for matching loot items
+
+    static void LootRecognizerThread()
+    {
+        Console.WriteLine("[LOOT] Loot recognizer thread started");
+
+        try
+        {
+            // Create drops directory if it doesn't exist
+            if (!Directory.Exists(dropsDirectoryPath))
+            {
+                Directory.CreateDirectory(dropsDirectoryPath);
+                Console.WriteLine($"[LOOT] Created drops directory: {Path.GetFullPath(dropsDirectoryPath)}");
+                Console.WriteLine("[LOOT] Place PNG or JPG images of items in this directory to recognize them");
+            }
+
+            // Load all item templates
+            LoadLootTemplates();
+
+            if (lootTemplates.Count == 0)
+            {
+                Console.WriteLine($"[LOOT] No loot item templates found in {dropsDirectoryPath}");
+                Console.WriteLine("[LOOT] Add .png or .jpg item images to detect them");
+            }
+            else
+            {
+                Console.WriteLine($"[LOOT] Loaded {lootTemplates.Count} item templates to recognize:");
+                foreach (var template in lootTemplates.Keys)
+                {
+                    Console.WriteLine($"[LOOT] - {template}");
+                }
+            }
+
+            // Using fewer time checks to reduce CPU usage
+            DateTime lastScanTime = DateTime.MinValue;
+
+            while (memoryReadActive && lootRecognizerActive)
+            {
+                try
+                {
+                    // Only scan at regular intervals to reduce CPU usage
+                    DateTime now = DateTime.Now;
+                    if ((now - lastScanTime) >= LOOT_SCAN_INTERVAL)
+                    {
+                        lastScanTime = now;
+
+                        // Only scan if we have templates and the game window
+                        if (lootTemplates.Count > 0 && targetWindow != IntPtr.Zero)
+                        {
+                            ScanBackpackForLoot();
+                        }
+                    }
+
+                    // Sleep to reduce CPU usage
+                    Sleep(200);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[LOOT] Error in loot recognizer: {ex.Message}");
+                    Sleep(1000); // Sleep longer after an error
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[LOOT] Error initializing loot recognizer: {ex.Message}");
+        }
+
+        Console.WriteLine("[LOOT] Loot recognizer thread exited");
+    }
+
+    static void LoadLootTemplates()
+    {
+        try
+        {
+            // Clear any existing templates
+            foreach (var template in lootTemplates.Values)
+            {
+                template.Dispose();
+            }
+            lootTemplates.Clear();
+
+            // Get all image files from the drops directory
+            string[] imageFiles = Directory.GetFiles(dropsDirectoryPath, "*.*", SearchOption.TopDirectoryOnly)
+                .Where(f => IsImageFile(f))
+                .ToArray();
+
+            foreach (string filePath in imageFiles)
+            {
+                try
+                {
+                    string fileName = Path.GetFileNameWithoutExtension(filePath);
+                    Console.WriteLine($"[LOOT] Loading item template: {Path.GetFileName(filePath)}");
+
+                    // Load template image
+                    Mat template = CvInvoke.Imread(filePath, ImreadModes.Color);
+
+                    if (template.IsEmpty)
+                    {
+                        Console.WriteLine($"[LOOT] Failed to load template: {Path.GetFileName(filePath)}");
+                        continue;
+                    }
+
+                    // Store in dictionary with filename as key
+                    lootTemplates[fileName] = template;
+
+                    Console.WriteLine($"[LOOT] Loaded {fileName}: {template.Width}x{template.Height}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[LOOT] Error loading template {filePath}: {ex.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[LOOT] Error loading loot templates: {ex.Message}");
+        }
+    }
+
+    // Check if a file is an image
+    static bool IsImageFile(string filePath)
+    {
+        string ext = Path.GetExtension(filePath).ToLower();
+        return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp";
+    }
+
+    // Scan the backpack slots for recognizable loot
+    // Add this static flag at the class level, outside any functions
+    private static bool hasDebugImageBeenSaved = false;
+
+    static void ScanBackpackForLoot()
+    {
+        bool debugMode = false; // Set to true to enable debugging, false to disablewww
+        try
+        {
+            UpdateUIPositions();
+            // Skip if we had a recent drag operation (avoid too frequent operations)
+            if ((DateTime.Now - lastDragOperationTime) < DRAG_OPERATION_COOLDOWN)
+            {
+                return;
+            }
+
+            Console.WriteLine("[LOOT] Starting backpack scan");
+
+            // Debug directory and path variables
+            string debugDir = string.Empty;
+            if (debugMode)
+            {
+                // Output current values for debugging
+                Console.WriteLine($"[LOOT DEBUG] secondSlotBpX = {secondSlotBpX}, secondSLotBpY = {secondSLotBpY}");
+                Console.WriteLine($"[LOOT DEBUG] pixelSize = {pixelSize}");
+
+                // Create timestamped debug directory to save all matches
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                debugDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug", $"scan_{timestamp}");
+                if (!Directory.Exists(debugDir)) Directory.CreateDirectory(debugDir);
+                Console.WriteLine($"[LOOT DEBUG] Debug images will be saved to: {debugDir}");
+            }
+
+            // Get window dimensions
+            GetClientRect(targetWindow, out RECT windowRect);
+            int windowWidth = windowRect.Right - windowRect.Left;
+            int windowHeight = windowRect.Bottom - windowRect.Top;
+
+            if (debugMode)
+                Console.WriteLine($"[LOOT DEBUG] Window dimensions: {windowWidth}x{windowHeight}");
+
+            // Calculate scan area
+            int backpackScanLeft = firstSlotBpX - (pixelSize / 2);
+            int backpackScanTop = firstSlotBpY - (pixelSize / 2);
+            int backpackScanWidth = pixelSize * 4;
+            int backpackScanHeight = pixelSize * 2;
+
+            if (debugMode)
+                Console.WriteLine($"[LOOT DEBUG] Backpack scan area: X={backpackScanLeft}, Y={backpackScanTop}, Width={backpackScanWidth}, Height={backpackScanHeight}");
+
+            // Ensure we're not capturing outside the window
+            if (backpackScanLeft < 0) backpackScanLeft = 0;
+            if (backpackScanTop < 0) backpackScanTop = 0;
+            if (backpackScanLeft + backpackScanWidth > windowWidth) backpackScanWidth = windowWidth - backpackScanLeft;
+            if (backpackScanTop + backpackScanHeight > windowHeight) backpackScanHeight = windowHeight - backpackScanTop;
+
+            if (debugMode)
+                Console.WriteLine($"[LOOT DEBUG] Adjusted backpack scan area: X={backpackScanLeft}, Y={backpackScanTop}, Width={backpackScanWidth}, Height={backpackScanHeight}");
+
+            // Take a screenshot of the scan area
+            using (Mat backpackArea = CaptureGameAreaAsMat(targetWindow, backpackScanLeft, backpackScanTop, backpackScanWidth, backpackScanHeight))
+            {
+                if (backpackArea == null || backpackArea.IsEmpty)
+                {
+                    Console.WriteLine("[LOOT ERROR] Failed to capture backpack area");
+                    return;
+                }
+
+                // Save debug images only if debug mode is enabled
+                if (debugMode)
+                {
+                    // Always save the current scan area
+                    string scanAreaPath = Path.Combine(debugDir, "backpack_scan_area.png");
+                    CvInvoke.Imwrite(scanAreaPath, backpackArea);
+                    Console.WriteLine($"[LOOT DEBUG] Saved current backpack scan image to {scanAreaPath}");
+
+                    // Get image dimensions
+                    Console.WriteLine($"[LOOT DEBUG] Captured image dimensions: {backpackArea.Width}x{backpackArea.Height}");
+
+                    // Save all templates for reference
+                    string templatesDir = Path.Combine(debugDir, "templates");
+                    if (!Directory.Exists(templatesDir)) Directory.CreateDirectory(templatesDir);
+                    foreach (var template in lootTemplates)
+                    {
+                        string templatePath = Path.Combine(templatesDir, $"{template.Key}.png");
+                        CvInvoke.Imwrite(templatePath, template.Value);
+                    }
+                    Console.WriteLine($"[LOOT DEBUG] Saved all {lootTemplates.Count} templates to {templatesDir}");
+                }
+
+                // Create a visualization image if in debug mode
+                Mat visualizationImage = debugMode ? backpackArea.Clone() : null;
+
+                try
+                {
+                    // Try to match each template
+                    foreach (var template in lootTemplates)
+                    {
+                        string itemName = template.Key;
+                        Mat itemTemplate = template.Value;
+
+                        // Log template details if debugging
+                        if (debugMode)
+                            Console.WriteLine($"[LOOT DEBUG] Trying to match template: {itemName} ({itemTemplate.Width}x{itemTemplate.Height})");
+
+                        using (Mat result = new Mat())
+                        {
+                            // Perform template matching
+                            CvInvoke.MatchTemplate(backpackArea, itemTemplate, result, TemplateMatchingType.CcoeffNormed);
+
+                            double minVal = 0, maxVal = 0;
+                            Point minLoc = new Point(), maxLoc = new Point();
+                            CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
+
+                            // Log the best match value if debugging
+                            if (debugMode)
+                                Console.WriteLine($"[LOOT DEBUG] Template {itemName} best match: {maxVal:F3} at ({maxLoc.X}, {maxLoc.Y})");
+
+                            // Save debug images and visualization only if debug mode is on
+                            if (debugMode)
+                            {
+                                // Save the result matrix to visualize correlation scores
+                                using (Mat normalizedResult = new Mat())
+                                {
+                                    CvInvoke.Normalize(result, normalizedResult, 0, 255, NormType.MinMax);
+                                    // Fixed version with proper parameters
+                                    CvInvoke.ConvertScaleAbs(normalizedResult, normalizedResult, 1.0, 0.0);
+                                    string resultPath = Path.Combine(debugDir, $"match_result_{itemName}.png");
+                                    CvInvoke.Imwrite(resultPath, normalizedResult);
+                                }
+
+                                // Draw rectangle on visualization image (red for below threshold, green for match)
+                                Rectangle matchRect = new Rectangle(maxLoc, new Size(itemTemplate.Width, itemTemplate.Height));
+                                MCvScalar color = (maxVal >= lootMatchThreshold) ?
+                                                new MCvScalar(0, 255, 0) :  // Green for good match
+                                                new MCvScalar(0, 0, 255);   // Red for below threshold
+
+                                CvInvoke.Rectangle(visualizationImage, matchRect, color, 2);
+
+                                // Add text with match score
+                                string matchText = $"{itemName}: {maxVal:F3}";
+                                Point textPoint = new Point(matchRect.X, Math.Max(0, matchRect.Y - 5));
+                                CvInvoke.PutText(visualizationImage, matchText, textPoint,
+                                                FontFace.HersheyComplex, 0.5, color, 1);
+
+                                // For good matches, save the matched region
+                                if (maxVal >= 0.5) // Lower threshold for debugging
+                                {
+                                    // Extract matched region
+                                    using (Mat matchedRegion = new Mat(backpackArea, matchRect))
+                                    {
+                                        string matchedRegionPath = Path.Combine(debugDir, $"matched_region_{itemName}_{maxVal:F3}.png");
+                                        CvInvoke.Imwrite(matchedRegionPath, matchedRegion);
+                                    }
+                                }
+                            }
+
+                            // If we found a good match
+                            if (maxVal >= lootMatchThreshold)
+                            {
+                                Console.WriteLine($"[LOOT] Recognized item '{itemName}' in backpack (match: {maxVal:F3})");
+
+                                // Debug visualization if enabled
+                                if (debugMode)
+                                {
+                                    // Save final visualization before performing action
+                                    string visualizationPath = Path.Combine(debugDir, "all_matches_visualization.png");
+                                    CvInvoke.Imwrite(visualizationPath, visualizationImage);
+
+                                    // Save a full screenshot with source and destination points marked
+                                    using (Mat fullScreenshot = CaptureGameAreaAsMat(targetWindow, 0, 0, windowWidth, windowHeight))
+                                    {
+                                        if (fullScreenshot != null && !fullScreenshot.IsEmpty)
+                                        {
+                                            // Calculate the loot item coordinates in full screen space
+                                            int itemX = backpackScanLeft + maxLoc.X + (itemTemplate.Width / 2);
+                                            int itemY = backpackScanTop + maxLoc.Y + (itemTemplate.Height / 2);
+
+                                            // Calculate inventory slot destination
+                                            int invX = inventoryX;
+                                            int invY = inventoryY + pixelSize;
+
+                                            // Draw source and destination points
+                                            CvInvoke.Circle(fullScreenshot, new Point(itemX, itemY), 10, new MCvScalar(0, 0, 255), 2);
+                                            CvInvoke.Circle(fullScreenshot, new Point(invX, invY), 10, new MCvScalar(0, 255, 0), 2);
+                                            CvInvoke.Line(fullScreenshot, new Point(itemX, itemY), new Point(invX, invY),
+                                                        new MCvScalar(255, 255, 0), 2, LineType.AntiAlias);
+
+                                            string dragPath = Path.Combine(debugDir, "drag_visualization.png");
+                                            CvInvoke.Imwrite(dragPath, fullScreenshot);
+                                        }
+                                    }
+                                }
+
+                                // Wait a moment to ensure the game is ready
+                                Sleep(500);
+
+                                // Calculate where in the slot the match occurred
+                                int lootItemX = backpackScanLeft + maxLoc.X + (itemTemplate.Width / 2);
+                                int lootItemY = backpackScanTop + maxLoc.Y + (itemTemplate.Height / 2);
+
+                                // Log exact match coordinates if debugging
+                                if (debugMode)
+                                    Console.WriteLine($"[LOOT DEBUG] Loot item center at screen coordinates: ({lootItemX}, {lootItemY})");
+
+                                // Calculate inventory slot destination
+                                int inventorySlotX = inventoryX;
+                                int inventorySlotY = inventoryY + pixelSize + 30;
+
+                                if (debugMode)
+                                    Console.WriteLine($"[LOOT DEBUG] Inventory slot coordinates: ({inventorySlotX}, {inventorySlotY})");
+
+                                // Drag the item to the destination
+                                DragItemToDestination(lootItemX, lootItemY, inventorySlotX, inventorySlotY, itemName);
+
+                                // Update the last drag operation time
+                                lastDragOperationTime = DateTime.Now;
+
+                                // Only process one item at a time
+                                break;
+                            }
+                        }
+                    }
+
+                    // Save final visualization with all matches if in debug mode
+                    if (debugMode && visualizationImage != null)
+                    {
+                        string allMatchesPath = Path.Combine(debugDir, "all_matches_visualization.png");
+                        CvInvoke.Imwrite(allMatchesPath, visualizationImage);
+                        Console.WriteLine($"[LOOT DEBUG] Saved visualization with all matches to {allMatchesPath}");
+                    }
+                }
+                finally
+                {
+                    // Clean up visualization image if created
+                    if (visualizationImage != null)
+                    {
+                        visualizationImage.Dispose();
+                    }
+                }
+            }
+
+            Console.WriteLine("[LOOT] Scan complete");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[LOOT ERROR] Error scanning backpack: {ex.Message}");
+            Console.WriteLine($"[LOOT ERROR] Stack trace: {ex.StackTrace}");
+        }
+    }
+
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteDC(IntPtr hdc);
+
+    [DllImport("gdi32.dll")]
+    static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight,
+    IntPtr hdcSrc, int nXSrc, int nYSrc, uint dwRop);
+
+    const uint SRCCOPY = 0x00CC0020;
+
+    // Capture a specific area of the game window as a Mat object
+    static Mat CaptureGameAreaAsMat(IntPtr hWnd, int x, int y, int width, int height)
+    {
+        IntPtr hdcWindow = IntPtr.Zero;
+        IntPtr hdcMemDC = IntPtr.Zero;
+        IntPtr hBitmap = IntPtr.Zero;
+        IntPtr hOld = IntPtr.Zero;
+        Mat result = null;
+
+        try
+        {
+            hdcWindow = GetDC(hWnd);
+            if (hdcWindow == IntPtr.Zero)
+            {
+                Console.WriteLine("[LOOT] GetDC failed");
+                return null;
+            }
+
+            hdcMemDC = CreateCompatibleDC(hdcWindow);
+            if (hdcMemDC == IntPtr.Zero)
+            {
+                Console.WriteLine("[LOOT] CreateCompatibleDC failed");
+                return null;
+            }
+
+            hBitmap = CreateCompatibleBitmap(hdcWindow, width, height);
+            if (hBitmap == IntPtr.Zero)
+            {
+                Console.WriteLine("[LOOT] CreateCompatibleBitmap failed");
+                return null;
+            }
+
+            hOld = SelectObject(hdcMemDC, hBitmap);
+
+            bool success = BitBlt(hdcMemDC, 0, 0, width, height, hdcWindow, x, y, SRCCOPY);
+            if (!success)
+            {
+                Console.WriteLine("[LOOT] BitBlt failed");
+                return null;
+            }
+
+            SelectObject(hdcMemDC, hOld);
+
+            // Convert the bitmap to a Mat
+            using (Bitmap bmp = Bitmap.FromHbitmap(hBitmap))
+            {
+                // Convert Bitmap to Mat
+                Rectangle rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
+                BitmapData bmpData = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+
+                try
+                {
+                    // Create a Mat directly from the bitmap data
+                    result = new Mat(bmp.Height, bmp.Width, DepthType.Cv8U, 3, bmpData.Scan0, bmpData.Stride);
+                    // Create a deep copy to keep the Mat alive after unlocking the bitmap
+                    result = result.Clone();
+                }
+                finally
+                {
+                    bmp.UnlockBits(bmpData);
+                }
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[LOOT] Screenshot error: {ex.Message}");
+            result?.Dispose();
+            return null;
+        }
+        finally
+        {
+            if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
+            if (hdcMemDC != IntPtr.Zero) DeleteDC(hdcMemDC);
+            if (hdcWindow != IntPtr.Zero) ReleaseDC(hWnd, hdcWindow);
+        }
+    }
+
+    // Drag an item from source to destination
+    static void DragItemToDestination(int sourceX, int sourceY, int destX, int destY, string itemName)
+    {
+        try
+        {
+            Console.WriteLine($"[LOOT] Dragging '{itemName}' from ({sourceX}, {sourceY}) to ({destX}, {destY})");
+
+            // Create IntPtr lParam values for source and destination
+            IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
+            IntPtr destLParam = MakeLParam(destX, destY);
+
+            // Log the lParam values for debugging
+            Console.WriteLine($"[LOOT DEBUG] Source lParam: 0x{sourceLParam.ToInt64():X}, dest lParam: 0x{destLParam.ToInt64():X}");
+
+            // Move mouse to source position
+            Console.WriteLine($"[LOOT DEBUG] Moving mouse to source position");
+            PostMessage(targetWindow, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
+            Sleep(50);  // Short delay between operations
+
+            // Left button down at source
+            Console.WriteLine($"[LOOT DEBUG] Mouse button down at source");
+            PostMessage(targetWindow, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
+            Sleep(50);  // Short delay
+
+            // Record the source click for overlay visualization
+            RecordClickPosition(sourceX, sourceY, true);
+
+            // Move mouse to destination with button held down
+            Console.WriteLine($"[LOOT DEBUG] Moving to destination with button held");
+            PostMessage(targetWindow, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
+            Sleep(50);  // Short delay
+
+            // Release button at destination
+            Console.WriteLine($"[LOOT DEBUG] Releasing button at destination");
+            PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, destLParam);
+            Sleep(50);  // Short delay
+
+            // Record the destination click for overlay visualization
+            RecordClickPosition(destX, destY, true);
+
+            // Add a significant delay to allow game to process the action
+            Console.WriteLine($"[LOOT DEBUG] Drag operation completed, waiting for game to process...");
+            Sleep(1000);  // This delay is important for the game to process the action
+
+            Console.WriteLine($"[LOOT] Successfully moved item '{itemName}' to inventory");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[LOOT ERROR] Error dragging item: {ex.Message}");
+            Console.WriteLine($"[LOOT ERROR] Stack trace: {ex.StackTrace}");
         }
     }
 }
