@@ -6350,8 +6350,28 @@ class Program
                                 if (debugMode)
                                     Console.WriteLine($"[LOOT DEBUG] Inventory slot coordinates: ({inventorySlotX}, {inventorySlotY})");
 
-                                // Drag the item to the destination
-                                DragItemToDestination(lootItemX, lootItemY, inventorySlotX, inventorySlotY, itemName);
+                                // Check if the recognized template is "100gold"
+                                if (itemName.Equals("100gold", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // If it's gold, just right-click it instead of dragging
+                                    Console.WriteLine($"[LOOT] Found gold! Right-clicking instead of dragging");
+                                    VirtualRightClick(targetWindow, lootItemX, lootItemY);
+
+                                    // Update the last operation time
+                                    lastDragOperationTime = DateTime.Now;
+                                }
+                                else
+                                {
+                                    // Calculate inventory slot destination for other items
+                                    int invX = inventoryX;
+                                    int invY = inventoryY + pixelSize + 30;
+
+                                    // Drag the item to the destination
+                                    DragItemToDestination(lootItemX, lootItemY, invX, invY, itemName);
+
+                                    // Update the last drag operation time
+                                    lastDragOperationTime = DateTime.Now;
+                                }
 
                                 // Update the last drag operation time
                                 lastDragOperationTime = DateTime.Now;
