@@ -897,7 +897,7 @@ class Program
                         }
                     }
 
-                    if (false && manaPercent <= DEFAULT_MANA_THRESHOLD)
+                    if (manaPercent <= DEFAULT_MANA_THRESHOLD)
                     {
                         if ((now - lastManaActionTime).TotalMilliseconds >= thresholdms)
                         {
@@ -2905,13 +2905,16 @@ class Program
         alertThread.Join();
     }
 
+    static bool withLifeRing = true;
+    static bool onceLifeRing = true;
+
     static int lastRingEquippedTargetId = 0;
     static bool isRingCurrentlyEquipped = false;
     static List<string> blacklistedRingMonsters = new List<string> { "Poison Spider", };
     static readonly int MAX_MONSTER_DISTANCE = 4; // Maximum allowed distance in sqm
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
-
+        Sleep(256);
         try
         {
             int currentTargetId;
@@ -2930,6 +2933,37 @@ class Program
             if ((equip && isRingEquipped) || (!equip && !isRingEquipped))
             {
                 return;
+            }
+
+            if (equip && isRingEquipped == false && withLifeRing && currentTargetId != 0)
+            {
+                int lifeRingX = inventoryX;
+                int lifeRingY = inventoryY + 3 * pixelSize + 15;
+
+                Console.WriteLine("[DEBUG] Moving life ring back to inventory");
+
+                // Perform drag-and-drop to move life ring back to inventory
+                IntPtr lifeRingSourceLParam = MakeLParam(equipmentX, equipmentY);
+                PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lifeRingSourceLParam);
+                Sleep(25);
+                PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lifeRingSourceLParam);
+                Sleep(25);
+                // Record the source click for our overlay
+                RecordClickPosition(equipmentX, equipmentY, true);
+
+                // Destination is life ring inventory slot
+                IntPtr lifeRingDestLParam = MakeLParam(lifeRingX, lifeRingY);
+                PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lifeRingDestLParam);
+                Sleep(25);
+                PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
+                Sleep(1);
+                // Record the destination click for our overlay
+                RecordClickPosition(lifeRingX, lifeRingY, true);
+
+                Console.WriteLine("[DEBUG] Successfully moved life ring back to inventory");
+                //Sleep(100); // Add a small delay before continuing with normal ring
+                //Sleep(4000);
+                Sleep(256);
             }
 
             // Check blacklisted monsters if trying to equip
@@ -2987,6 +3021,44 @@ class Program
             // *** Record the destination click for our overlay ***
             RecordClickPosition(destX, destY, true);
 
+            onceLifeRing = true;
+
+            if (!equip && withLifeRing && onceLifeRing && currentTargetId == 0)
+            {
+                Sleep(128);
+                onceLifeRing = false;
+                // Calculate life ring position - same X as inventory ring but 2 pixels down
+                int lifeRingX = inventoryX;
+                int lifeRingY = inventoryY + 3 * pixelSize + 15;
+
+                Console.WriteLine("[DEBUG] Equipping life ring");
+                double xd = 9999999;
+                lock (memoryLock)
+                {
+                    xd = curMana;
+                }
+                if(xd < 845)
+                {
+                    IntPtr lifeRingSourceLParam = MakeLParam(lifeRingX, lifeRingY);
+                    PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lifeRingSourceLParam);
+                    Sleep(25);
+                    PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lifeRingSourceLParam);
+                    Sleep(25);
+                    // Record the source click for our overlay
+                    RecordClickPosition(lifeRingX, lifeRingY, true);
+
+                    // Destination is equipment slot
+                    IntPtr lifeRingDestLParam = MakeLParam(equipmentX, equipmentY);
+                    PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lifeRingDestLParam);
+                    Sleep(25);
+                    PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
+                    Sleep(1);
+                    // Record the destination click for our overlay
+                    RecordClickPosition(equipmentX, equipmentY, true);
+                }
+                Console.WriteLine("[DEBUG] Successfully equipped life ring");
+            }
+
             // Log the result of the operation
             if (equip)
             {
@@ -3002,6 +3074,7 @@ class Program
             Console.WriteLine($"[DEBUG] Error toggling ring: {ex.Message}");
         }
     }
+
 
     static void Sleep(int miliseconds)
     {
