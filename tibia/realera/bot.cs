@@ -6028,6 +6028,16 @@ class Program
                 }
             }
 
+            // Check if the platinum template is available
+            if (lootTemplates.ContainsKey(PLATINUM_TEMPLATE_NAME))
+            {
+                Console.WriteLine($"[LOOT] Platinum template found - will enable right-click after dragging");
+            }
+            else
+            {
+                Console.WriteLine($"[LOOT] WARNING: Platinum template '{PLATINUM_TEMPLATE_NAME}' not found");
+            }
+
             // Using fewer time checks to reduce CPU usage
             DateTime lastScanTime = DateTime.MinValue;
 
@@ -6035,8 +6045,15 @@ class Program
             {
                 try
                 {
-                    // Only scan at regular intervals to reduce CPU usage
                     DateTime now = DateTime.Now;
+
+                    // Check if we need to scan inventory for platinum
+                    if (shouldScanInventoryForPlatinum && now >= lastInventoryScanTime)
+                    {
+                        ScanInventoryForPlatinum();
+                    }
+
+                    // Only scan backpack at regular intervals to reduce CPU usage
                     if ((now - lastScanTime) >= LOOT_SCAN_INTERVAL)
                     {
                         lastScanTime = now;
@@ -6125,10 +6142,9 @@ class Program
     // Scan the backpack slots for recognizable loot
     // Add this static flag at the class level, outside any functions
     private static bool hasDebugImageBeenSaved = false;
-
     static void ScanBackpackForLoot()
     {
-        bool debugMode = false; // Set to true to enable debugging, false to disablewww
+        bool debugMode = false; // Set to true to enable debugging, false to disable
         try
         {
             UpdateUIPositions();
@@ -6468,7 +6484,11 @@ class Program
         }
     }
 
-    // Drag an item from source to destination
+    static bool shouldScanInventoryForPlatinum = false;
+    static readonly string PLATINUM_TEMPLATE_NAME = "100platinum";
+    static readonly TimeSpan PLATINUM_SCAN_DELAY = TimeSpan.FromMilliseconds(1500); // Delay before scanning inventory for platinum
+    static DateTime lastInventoryScanTime = DateTime.MinValue;
+
     static void DragItemToDestination(int sourceX, int sourceY, int destX, int destY, string itemName)
     {
         try
@@ -6512,12 +6532,107 @@ class Program
             Console.WriteLine($"[LOOT DEBUG] Drag operation completed, waiting for game to process...");
             Sleep(1000);  // This delay is important for the game to process the action
 
+            // NEW: Flag for inventory scanning if this was a platinum item
+            if (itemName.Equals(PLATINUM_TEMPLATE_NAME, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"[LOOT] Detected platinum move to inventory. Will scan inventory for right-click.");
+                shouldScanInventoryForPlatinum = true;
+                lastInventoryScanTime = DateTime.Now.Add(PLATINUM_SCAN_DELAY); // Set time for future scan
+            }
+
             Console.WriteLine($"[LOOT] Successfully moved item '{itemName}' to inventory");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[LOOT ERROR] Error dragging item: {ex.Message}");
             Console.WriteLine($"[LOOT ERROR] Stack trace: {ex.StackTrace}");
+        }
+    }
+
+    static void ScanInventoryForPlatinum()
+    {
+        try
+        {
+            Console.WriteLine("[LOOT] Scanning inventory for platinum coins");
+
+            // Calculate scan area - focused on inventory area where the coins were dropped
+            int invScanLeft = inventoryX - (pixelSize / 2);
+            int invScanTop = inventoryY - (pixelSize / 2);
+            int invScanWidth = pixelSize * 2;  // Adjusted width to cover inventory area
+            int invScanHeight = pixelSize * 3; // Taller height to cover more inventory slots
+
+            Console.WriteLine($"[LOOT] Inventory scan area: X={invScanLeft}, Y={invScanTop}, Width={invScanWidth}, Height={invScanHeight}");
+
+            // Ensure we're not capturing outside the window
+            GetClientRect(targetWindow, out RECT windowRect);
+            int windowWidth = windowRect.Right - windowRect.Left;
+            int windowHeight = windowRect.Bottom - windowRect.Top;
+
+            if (invScanLeft < 0) invScanLeft = 0;
+            if (invScanTop < 0) invScanTop = 0;
+            if (invScanLeft + invScanWidth > windowWidth) invScanWidth = windowWidth - invScanLeft;
+            if (invScanTop + invScanHeight > windowHeight) invScanHeight = windowHeight - invScanTop;
+
+            // Take a screenshot of the inventory area
+            using (Mat inventoryArea = CaptureGameAreaAsMat(targetWindow, invScanLeft, invScanTop, invScanWidth, invScanHeight))
+            {
+                if (inventoryArea == null || inventoryArea.IsEmpty)
+                {
+                    Console.WriteLine("[LOOT ERROR] Failed to capture inventory area");
+                    return;
+                }
+
+                // Find the platinum template
+                if (lootTemplates.TryGetValue(PLATINUM_TEMPLATE_NAME, out Mat platinumTemplate))
+                {
+                    using (Mat result = new Mat())
+                    {
+                        // Perform template matching
+                        CvInvoke.MatchTemplate(inventoryArea, platinumTemplate, result, TemplateMatchingType.CcoeffNormed);
+
+                        double minVal = 0, maxVal = 0;
+                        Point minLoc = new Point(), maxLoc = new Point();
+                        CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
+
+                        Console.WriteLine($"[LOOT] Platinum match in inventory: {maxVal:F3} at ({maxLoc.X}, {maxLoc.Y})");
+
+                        // If we found a good match for platinum in the inventory
+                        if (maxVal >= lootMatchThreshold)
+                        {
+                            // Calculate where in the inventory the match occurred
+                            int platinumX = invScanLeft + maxLoc.X + (platinumTemplate.Width / 2);
+                            int platinumY = invScanTop + maxLoc.Y + (platinumTemplate.Height / 2);
+
+                            Console.WriteLine($"[LOOT] Found platinum in inventory at ({platinumX}, {platinumY}) - right-clicking");
+
+                            // Right click on the platinum coins
+                            VirtualRightClick(targetWindow, platinumX, platinumY);
+
+                            // Reset the flag since we've processed the platinum
+                            shouldScanInventoryForPlatinum = false;
+
+                            Console.WriteLine("[LOOT] Successfully right-clicked on platinum coins in inventory");
+                        }
+                        else
+                        {
+                            Console.WriteLine("[LOOT] Could not find platinum in inventory with sufficient confidence");
+                        }
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"[LOOT ERROR] Platinum template '{PLATINUM_TEMPLATE_NAME}' not found in loaded templates");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[LOOT ERROR] Error scanning inventory for platinum: {ex.Message}");
+        }
+        finally
+        {
+            // Always reset the flag to prevent infinite retries
+            shouldScanInventoryForPlatinum = false;
         }
     }
 }
