@@ -6580,6 +6580,10 @@ class Program
                                     // Calculate inventory slot destination for other items
                                     int invX = inventoryX;
                                     int invY = inventoryY + pixelSize + 30;
+                                    if (itemName.Equals("stealthring", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        invY = inventoryY;
+                                    }
 
                                     // Drag the item to the destination
                                     DragItemToDestination(lootItemX, lootItemY, invX, invY, itemName);
