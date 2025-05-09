@@ -1263,6 +1263,94 @@ class Program
 
     static bool firstFound = true;
 
+
+    // Add these variables at the class level with your other state variables
+    private static DateTime lastWaypointClickTime = DateTime.MinValue;
+    private static bool waypointStuckDetectionEnabled = true;
+    private static TimeSpan waypointStuckTimeout = TimeSpan.FromSeconds(2); // Time to wait before considering player stuck
+    private static int consecutiveStuckCount = 0;
+    private static int maxConsecutiveStuckCount = 3; // After this many stuck attempts, disable randomization temporarily
+    private static Coordinate lastClickedWaypoint = null;
+    private static List<Point> failedClickPoints = new List<Point>(); // Store points where clicks failed
+    private static int waypointRetryCount = 0;
+    private static readonly int MAX_WAYPOINT_RETRIES = 3;
+    private static DateTime lastFailedClickPointsCleanupTime = DateTime.MinValue;
+    private static readonly TimeSpan FAILED_CLICK_POINTS_CLEANUP_INTERVAL = TimeSpan.FromMinutes(5); // Clean failed points list every 5 minutes
+
+    // Update the ClickWaypoint method to include timestamp tracking
+    static bool ClickWaypoint(Coordinate target)
+    {
+        try
+        {
+            bool isChaseReturnPoint = chaseTracker.ShouldReturnToStart() &&
+                                 target.X == chaseTracker.GetReturnPosition().X &&
+                                 target.Y == chaseTracker.GetReturnPosition().Y;
+
+            if (isChaseReturnPoint)
+            {
+                Console.WriteLine("[DEBUG] Clicking waypoint that is a chase return position");
+            }
+
+            int currentX, currentY;
+            lock (memoryLock)
+            {
+                currentX = posX;
+                currentY = posY;
+            }
+            GetClientRect(targetWindow, out RECT rect);
+            int baseX = (rect.Right - rect.Left) / 2 - 186;
+            int baseY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
+
+            int diffX = target.X - currentX;
+            int diffY = target.Y - currentY;
+            int targetX = baseX + (diffX * pixelSize);
+            int targetY = baseY + (diffY * pixelSize);
+
+            if (GetTargetId() != 0)
+            {
+                Console.WriteLine("[DEBUG] Combat detected, canceling movement");
+                return false;
+            }
+
+            // Check if this click point has previously failed
+            Point clickPoint = new Point(targetX, targetY);
+            if (failedClickPoints.Any(p => Math.Abs(p.X - clickPoint.X) < 5 && Math.Abs(p.Y - clickPoint.Y) < 5))
+            {
+                Console.WriteLine("[DEBUG] This click point previously failed, trying a different location");
+                return false;
+            }
+
+            int lParam = (targetY << 16) | (targetX & 0xFFFF);
+            SendKeyPress(VK_ESCAPE);
+            Sleep(25);
+            PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)lParam);
+            Sleep(1);
+            PostMessage(targetWindow, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
+            Sleep(1);
+            PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
+            Sleep(1);
+            int centerLParam = (baseY << 16) | (baseX & 0xFFFF);
+
+            // Record the waypoint click with special color
+            RecordWaypointClick(targetX, targetY);
+
+            // Store the clicked waypoint and timestamp
+            lastClickedWaypoint = new Coordinate { X = target.X, Y = target.Y, Z = target.Z };
+            lastWaypointClickTime = DateTime.Now;
+
+            Console.WriteLine(
+                $"[DEBUG] Clicked: X={diffX}, Y={diffY} (Screen: {targetX}, {targetY}, Pixel Size: {pixelSize})"
+            );
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DEBUG] Click Error: {ex.Message}");
+            return false;
+        }
+    }
+
+    // Modify the PlayCoordinates method to check for stuck player
     static void PlayCoordinates()
     {
         UpdateUIPositions();
@@ -1292,6 +1380,12 @@ class Program
         }
         currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
         Console.WriteLine($"[DEBUG] Starting at closest waypoint: index {currentCoordIndex}");
+
+        // Reset stuck detection variables
+        consecutiveStuckCount = 0;
+        failedClickPoints.Clear();
+        waypointRetryCount = 0;
+
         while (threadFlags["playing"])
         {
             try
@@ -1304,6 +1398,168 @@ class Program
                     currentZ = posZ;
                     currentTargetId = targetId;
                 }
+
+                // Check for stuck player if we have a recent waypoint click
+                if (waypointStuckDetectionEnabled &&
+                    lastWaypointClickTime != DateTime.MinValue &&
+                    lastClickedWaypoint != null)
+                {
+                    // Check how long it's been since the click
+                    TimeSpan timeSinceClick = DateTime.Now - lastWaypointClickTime;
+
+                    // If enough time has passed to check for stuck state
+                    if (timeSinceClick > waypointStuckTimeout)
+                    {
+                        // Calculate distance moved since the click
+                        int distanceMovedX = Math.Abs(lastClickedWaypoint.X - currentX);
+                        int distanceMovedY = Math.Abs(lastClickedWaypoint.Y - currentY);
+                        int totalDistanceMoved = distanceMovedX + distanceMovedY;
+
+                        // If player hasn't moved significantly since clicking
+                        if (totalDistanceMoved <= 1) // Threshold for "hasn't moved"
+                        {
+                            Console.WriteLine($"[STUCK DETECTION] Player appears to be stuck! Hasn't moved in {timeSinceClick.TotalSeconds:F1} seconds");
+
+                            // Add the failed click point to our list
+                            GetClientRect(targetWindow, out RECT rect);
+                            int baseX = (rect.Right - rect.Left) / 2 - 186;
+                            int baseY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
+                            int diffX = lastClickedWaypoint.X - currentX;
+                            int diffY = lastClickedWaypoint.Y - currentY;
+                            int clickX = baseX + (diffX * pixelSize);
+                            int clickY = baseY + (diffY * pixelSize);
+                            failedClickPoints.Add(new Point(clickX, clickY));
+                            Console.WriteLine($"[STUCK DETECTION] Added failed click point at screen coordinates ({clickX}, {clickY})");
+                            Console.WriteLine($"[STUCK DETECTION] Total failed click points: {failedClickPoints.Count}");
+
+                            // Increment stuck counter
+                            consecutiveStuckCount++;
+                            waypointRetryCount++;
+
+                            // If we've been stuck too many times, temporarily disable randomization
+                            if (consecutiveStuckCount >= maxConsecutiveStuckCount)
+                            {
+                                Console.WriteLine("[STUCK DETECTION] Too many consecutive stuck instances. Temporarily disabling waypoint randomization.");
+                                waypointRandomizationEnabled = false;
+                            }
+
+                            // Reset the click time to prevent repeated detections
+                            lastWaypointClickTime = DateTime.MinValue;
+                            lastClickedWaypoint = null;
+
+                            // Try to handle the stuck situation based on retry count
+                            if (waypointRetryCount >= MAX_WAYPOINT_RETRIES)
+                            {
+                                Console.WriteLine($"[STUCK DETECTION] Max retries reached ({MAX_WAYPOINT_RETRIES}). Switching to arrow key movement.");
+
+                                // First try pressing escape to clear any potential UI elements
+                                Console.WriteLine("[STUCK DETECTION] Pressing Escape to clear any UI elements");
+                                SendKeyPress(VK_ESCAPE);
+                                Sleep(100);
+
+                                // Get next waypoint and use arrow key movement instead
+                                Coordinate nextWaypointy = FindNextWaypoint(
+                                    ref waypoints,
+                                    currentX,
+                                    currentY,
+                                    currentZ,
+                                    ref currentCoordIndex
+                                );
+
+                                // Move with arrow keys
+                                Console.WriteLine($"[STUCK DETECTION] Trying arrow key movement to ({nextWaypointy.X}, {nextWaypointy.Y})");
+                                MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypointy.X, nextWaypointy.Y);
+                                SendKeyPress(VK_F6);
+                                Sleep(300);
+
+                                // Try a second arrow movement in a different direction
+                                lock (memoryLock)
+                                {
+                                    currentX = posX;
+                                    currentY = posY;
+                                }
+
+                                Console.WriteLine($"[STUCK DETECTION] Trying a second arrow movement in a different direction");
+                                // Pick a different direction - try perpendicular movement
+                                int theX = nextWaypointy.X - currentX;
+                                int theY = nextWaypointy.Y - currentY;
+
+                                // If moving more in X, try moving in Y instead, and vice versa
+                                if (Math.Abs(theX) >= Math.Abs(theY))
+                                {
+                                    // Move in Y direction
+                                    if (theY > 0)
+                                        SendKeyPress(VK_DOWN);
+                                    else
+                                        SendKeyPress(VK_UP);
+                                }
+                                else
+                                {
+                                    // Move in X direction
+                                    if (theX > 0)
+                                        SendKeyPress(VK_RIGHT);
+                                    else
+                                        SendKeyPress(VK_LEFT);
+                                }
+
+                                SendKeyPress(VK_F6);
+                                Sleep(300);
+
+                                waypointRetryCount = 0; // Reset retry count after arrow key movement
+                            }
+                            else
+                            {
+                                // Skip to find a new waypoint
+                                currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+                                Console.WriteLine($"[STUCK DETECTION] Resetting to closest waypoint: index {currentCoordIndex}");
+                            }
+
+                            // Continue to next iteration to find a new waypoint
+                            continue;
+                        }
+                        else
+                        {
+                            // Player has moved, reset stuck counter
+                            if (consecutiveStuckCount > 0)
+                            {
+                                Console.WriteLine($"[STUCK DETECTION] Player is moving normally again. Resetting stuck counter.");
+                                consecutiveStuckCount = 0;
+                                waypointRetryCount = 0;
+
+                                // Re-enable randomization if it was disabled
+                                if (!waypointRandomizationEnabled)
+                                {
+                                    Console.WriteLine("[STUCK DETECTION] Re-enabling waypoint randomization.");
+                                    waypointRandomizationEnabled = true;
+                                }
+                            }
+
+                            // Reset click time since player is moving
+                            lastWaypointClickTime = DateTime.MinValue;
+                            lastClickedWaypoint = null;
+                        }
+                    }
+                }
+
+                // Periodically clean up the failed click points list to prevent it from growing too large
+                DateTime now = DateTime.Now;
+                if (failedClickPoints.Count > 0 &&
+                    (now - lastFailedClickPointsCleanupTime) > FAILED_CLICK_POINTS_CLEANUP_INTERVAL)
+                {
+                    int oldCount = failedClickPoints.Count;
+                    // Keep only the 20 most recent failed points
+                    if (failedClickPoints.Count > 20)
+                    {
+                        failedClickPoints = failedClickPoints.Skip(failedClickPoints.Count - 20).ToList();
+                    }
+
+                    Console.WriteLine($"[STUCK DETECTION] Cleaned up failed click points list: {oldCount} -> {failedClickPoints.Count}");
+                    lastFailedClickPointsCleanupTime = now;
+                }
+
+                // The rest of your PlayCoordinates method continues here...
+                // (Existing combat detection, waypoint finding, etc.)
+
                 if (previousTargetId != 0 && currentTargetId == 0)
                 {
                     lock (memoryLock)
@@ -1330,7 +1586,7 @@ class Program
                         clickedAroundTargets.Add(previousTargetId); // Track that we've clicked for this target
 
                         // Perform click around and wait for it to complete
-                        bool targetFoundDuringClickAround = ClickAroundCharacter(targetWindow);                       
+                        bool targetFoundDuringClickAround = ClickAroundCharacter(targetWindow);
                     }
 
 
@@ -1340,34 +1596,12 @@ class Program
                     }
                 }
 
-                
+
                 previousTargetId = currentTargetId;
                 lock (memoryLock)
                 {
                     currentTargetId = targetId;
                 }
-
-                //if (currentTargetId != 0 && IsTargetBlacklisted(currentTargetId))
-                //{
-                //    Console.WriteLine($"[DEBUG] Skipping blacklisted target ID: {currentTargetId}");
-                //    InstantSendKeyPress(VK_F6);
-                //    Sleep(1);
-                //    continue;
-                //}
-
-                //if (currentTargetId != 0)
-                //{
-                //    bool wasBlacklisted = CheckMonsterDistanceAndBlacklist();
-                //    if (wasBlacklisted)
-                //    {
-                //        continue;
-                //    }
-                //}
-
-                //if (DateTime.Now.Second % 5 == 0)
-                //{
-                //    CleanBlacklistedTargets();
-                //}
 
                 if (currentTargetId != 0 && currentTargetId != lastTrackedTargetId)
                 {
@@ -1381,7 +1615,7 @@ class Program
                 {
 
                     ToggleRing(targetWindow, true);
-                    
+
                     Sleep(1);
                     var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
                     Sleep(1);
@@ -1398,7 +1632,6 @@ class Program
                         Console.WriteLine(
                             $"[DEBUG] Skipping blacklisted target ID: {currentTargetId}"
                         );
-                        SendKeyPress(VK_ESCAPE);
                         Sleep(1);
                         continue;
                     }
@@ -1411,7 +1644,6 @@ class Program
                         Console.WriteLine(
                             $"[DEBUG] Skipping blacklisted monster: {monsterName}"
                         );
-                        SendKeyPress(VK_ESCAPE);
                         Sleep(1);
                         continue;
                     }
@@ -1577,7 +1809,6 @@ class Program
                     $"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
                 );
                 bool clickSuccess = ClickWaypoint(nextWaypoint);
-                //Sleep(2500);
                 Console.WriteLine(
                     $"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
                 );
@@ -1586,7 +1817,7 @@ class Program
                 if (clickSuccess)
                 {
                     const int wp_DISTANCE_THRESHOLD = 1; // 2 sqm threshold
-                    const int wp_MAX_WAIT_TIME_MS = 4000; // 10 seconds max wait time
+                    const int wp_MAX_WAIT_TIME_MS = 1000; // 10 seconds max wait time
 
                     DateTime wp_startTime = DateTime.Now;
                     bool wp_reachedDestination = false;
@@ -1674,7 +1905,7 @@ class Program
 
                         currentTargetId = targetId;
                     }
-                    if(currentTargetId == 0)
+                    if (currentTargetId == 0)
                     {
                         firstFound = false;
                         Thread.Sleep(300);
@@ -1708,41 +1939,15 @@ class Program
         }
         Console.WriteLine("Path playback ended");
     }
-    static int FindClosestWaypointIndex(
-        List<Coordinate> waypoints,
+
+    // Updated FindNextWaypoint method with improved randomization handling
+    static Coordinate FindNextWaypoint(
+        ref List<Coordinate> waypoints,
         int currentX,
         int currentY,
-        int currentZ
+        int currentZ,
+        ref int currentIndex
     )
-    {
-        int closestIndex = 0;
-        int minDistance = int.MaxValue;
-        for (int i = 0; i < waypoints.Count; i++)
-        {
-            var waypoint = waypoints[i];
-            int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-            if (distance < minDistance)
-            {
-                minDistance = distance;
-                closestIndex = i;
-            }
-        }
-        return closestIndex;
-    }
-
-    // Add these variables at the top of the class with other settings
-    static bool waypointRandomizationEnabled = true; // Flag to enable/disable waypoint randomization
-    static int randomizationRange = 1; // Maximum squares to randomize in each direction
-
-    // Then return the result (which might be randomized)
-
-    static Coordinate FindNextWaypoint(
-    ref List<Coordinate> waypoints,
-    int currentX,
-    int currentY,
-    int currentZ,
-    ref int currentIndex
-)
     {
         Console.WriteLine("\n=== FIND NEXT WAYPOINT DEBUG ===");
 
@@ -1908,40 +2113,74 @@ class Program
         {
             Coordinate originalResult = result;
 
-            // Add random variation between -randomizationRange and +randomizationRange
-            int randomX = result.X + random.Next(-randomizationRange, randomizationRange + 1);
-            int randomY = result.Y + random.Next(-randomizationRange, randomizationRange + 1);
+            // Create a list of potential randomized positions to try
+            List<Coordinate> potentialRandomPositions = new List<Coordinate>();
 
-            int deltaX = Math.Abs(randomX - currentX);
-            int deltaY = Math.Abs(randomY - currentY);
-
-            if (deltaX <= 5 && deltaY <= 5)
+            // Try up to 5 different random variations
+            for (int i = 0; i < 5; i++)
             {
-                result = new Coordinate
-                {
-                    X = randomX,
-                    Y = randomY,
-                    Z = result.Z // Keep the same Z coordinate (level)
-                };
+                // Add random variation between -randomizationRange and +randomizationRange
+                int randomX = result.X + random.Next(-randomizationRange, randomizationRange + 1);
+                int randomY = result.Y + random.Next(-randomizationRange, randomizationRange + 1);
 
-                //Console.WriteLine($"  RANDOMIZED WAYPOINT: Original({originalResult.X},{originalResult.Y}) → Random({result.X},{result.Y})");
+                int deltaX = Math.Abs(randomX - currentX);
+                int deltaY = Math.Abs(randomY - currentY);
+
+                // Check that the randomized position is:
+                // 1. Within clickable range (5 units)
+                // 2. Not a previously failed position
+                if (deltaX <= 5 && deltaY <= 5)
+                {
+                    // Get client rect for screen coordinates
+                    GetClientRect(targetWindow, out RECT rect);
+                    int baseX = (rect.Right - rect.Left) / 2 - 186;
+                    int baseY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
+
+                    // Calculate screen coordinates for this potential point
+                    int diffX = randomX - currentX;
+                    int diffY = randomY - currentY;
+                    int screenX = baseX + (diffX * pixelSize);
+                    int screenY = baseY + (diffY * pixelSize);
+
+                    // Check if this point is in the failed points list
+                    Point screenPoint = new Point(screenX, screenY);
+                    bool isFailedPoint = false;
+
+                    foreach (var failedPoint in failedClickPoints)
+                    {
+                        if (Math.Abs(failedPoint.X - screenX) < 5 && Math.Abs(failedPoint.Y - screenY) < 5)
+                        {
+                            isFailedPoint = true;
+                            break;
+                        }
+                    }
+
+                    // If it's not a failed point, add it to our potential positions
+                    if (!isFailedPoint)
+                    {
+                        potentialRandomPositions.Add(new Coordinate
+                        {
+                            X = randomX,
+                            Y = randomY,
+                            Z = result.Z // Keep the same Z coordinate (level)
+                        });
+                    }
+                }
+            }
+
+            // If we have any valid random positions, pick one randomly
+            if (potentialRandomPositions.Count > 0)
+            {
+                // Choose a random position from our valid options
+                int randomIndex = random.Next(potentialRandomPositions.Count);
+                result = potentialRandomPositions[randomIndex];
+                Console.WriteLine($"  RANDOMIZED WAYPOINT: Original({originalResult.X},{originalResult.Y}) → Random({result.X},{result.Y})");
             }
             else
             {
-                //Console.WriteLine($"  RANDOMIZATION REJECTED: Random({randomX},{randomY}) exceeds 5-unit limit from current position({currentX},{currentY})");
-                // Keep the original result
+                // If no valid random positions found, use the original waypoint
+                Console.WriteLine($"  No valid randomized positions found, using original waypoint ({result.X},{result.Y})");
             }
-
-            result = new Coordinate
-            {
-                X = randomX,
-                Y = randomY,
-                Z = result.Z // Keep the same Z coordinate (level)
-            };
-
-
-
-            Console.WriteLine($"  RANDOMIZED WAYPOINT: Original({originalResult.X},{originalResult.Y}) → Random({result.X},{result.Y})");
         }
 
         Console.WriteLine(
@@ -1950,6 +2189,36 @@ class Program
         Console.WriteLine("=== END FIND NEXT WAYPOINT DEBUG ===\n");
         return result;
     }
+
+        static int FindClosestWaypointIndex(
+        List<Coordinate> waypoints,
+        int currentX,
+        int currentY,
+        int currentZ
+    )
+    {
+        int closestIndex = 0;
+        int minDistance = int.MaxValue;
+        for (int i = 0; i < waypoints.Count; i++)
+        {
+            var waypoint = waypoints[i];
+            int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+            if (distance < minDistance)
+            {
+                minDistance = distance;
+                closestIndex = i;
+            }
+        }
+        return closestIndex;
+    }
+
+    // Add these variables at the top of the class with other settings
+    static bool waypointRandomizationEnabled = true; // Flag to enable/disable waypoint randomization
+    static int randomizationRange = 1; // Maximum squares to randomize in each direction
+
+    // Then return the result (which might be randomized)
+
+   
     static bool smallWindow = true;
     static bool previousSmallWindowValue = true; // Track the previous state
 
@@ -2033,63 +2302,7 @@ class Program
         }
     }
 
-    static bool ClickWaypoint(Coordinate target)
-    {
-        try
-        {
-            bool isChaseReturnPoint = chaseTracker.ShouldReturnToStart() &&
-                                 target.X == chaseTracker.GetReturnPosition().X &&
-                                 target.Y == chaseTracker.GetReturnPosition().Y;
-
-            if (isChaseReturnPoint)
-            {
-                Console.WriteLine("[DEBUG] Clicking waypoint that is a chase return position");
-            }
-
-            int currentX, currentY;
-            lock (memoryLock)
-            {
-                currentX = posX;
-                currentY = posY;
-            }
-            GetClientRect(targetWindow, out RECT rect);
-            int baseX = (rect.Right - rect.Left) / 2 - 186;
-            int baseY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
-
-            int diffX = target.X - currentX;
-            int diffY = target.Y - currentY;
-            int targetX = baseX + (diffX * pixelSize);
-            int targetY = baseY + (diffY * pixelSize);
-            if (GetTargetId() != 0)
-            {
-                Console.WriteLine("[DEBUG] Combat detected, canceling movement");
-                return false;
-            }
-            int lParam = (targetY << 16) | (targetX & 0xFFFF);
-            SendKeyPress(VK_ESCAPE);
-            Sleep(1);
-            PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)lParam);
-            Sleep(1);
-            PostMessage(targetWindow, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
-            Sleep(1);
-            PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
-            Sleep(1);
-            int centerLParam = (baseY << 16) | (baseX & 0xFFFF);
-
-            // Record the waypoint click with special color
-            RecordWaypointClick(targetX, targetY);
-
-            Console.WriteLine(
-                $"[DEBUG] Clicked: X={diffX}, Y={diffY} (Screen: {targetX}, {targetY}, Pixel Size: {pixelSize})"
-            );
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[DEBUG] Click Error: {ex.Message}");
-            return false;
-        }
-    }
+ 
 
 
     const byte VK_ESCAPE = 0x1B;
