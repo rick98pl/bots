@@ -2379,6 +2379,7 @@ class Program
     static int maxItemsToEat = 2;
     static void CorpseEatFood(IntPtr hWnd)
     {
+        return;
         (int x, int y)[] locations = GetCorspeFoodCoordinates();
         GetClientRect(hWnd, out RECT rect);
         if (rect.Right < 1237 || rect.Bottom < 319)
