@@ -824,7 +824,7 @@ class Program
 
             Console.WriteLine($"[DEBUG] Changed outfit from {previousOutfit} to {newOutfit}");
 
-            
+
         }
         catch (Exception ex)
         {
@@ -2190,12 +2190,12 @@ class Program
         return result;
     }
 
-        static int FindClosestWaypointIndex(
-        List<Coordinate> waypoints,
-        int currentX,
-        int currentY,
-        int currentZ
-    )
+    static int FindClosestWaypointIndex(
+    List<Coordinate> waypoints,
+    int currentX,
+    int currentY,
+    int currentZ
+)
     {
         int closestIndex = 0;
         int minDistance = int.MaxValue;
@@ -2218,7 +2218,7 @@ class Program
 
     // Then return the result (which might be randomized)
 
-   
+
     static bool smallWindow = true;
     static bool previousSmallWindowValue = true; // Track the previous state
 
@@ -2302,7 +2302,7 @@ class Program
         }
     }
 
- 
+
 
 
     const byte VK_ESCAPE = 0x1B;
@@ -2714,11 +2714,11 @@ class Program
                 }
             }
             if (monsterX != 0) lastKnownMonsterX = monsterX;
-            if (monsterY != 0)  lastKnownMonsterY = monsterY;
-            if (monsterZ != 0)  lastKnownMonsterZ = monsterZ;
-            if (targetId != 0)  lastKnownMonsterId = targetId;
+            if (monsterY != 0) lastKnownMonsterY = monsterY;
+            if (monsterZ != 0) lastKnownMonsterZ = monsterZ;
+            if (targetId != 0) lastKnownMonsterId = targetId;
         }
-       
+
 
         return (monsterX, monsterY, monsterZ);
     }
@@ -2911,7 +2911,7 @@ class Program
     static readonly int MAX_MONSTER_DISTANCE = 4; // Maximum allowed distance in sqm
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
-        
+
         try
         {
             int currentTargetId;
@@ -4837,22 +4837,22 @@ class Program
                 {
                     // Send question mark - in SendKeys, shift+/ is represented as "?"
                     SendKeys.SendWait("?");
-                    Thread.Sleep(1);
+                    Thread.Sleep(50);
                 }
 
                 SendKeys.SendWait("{ENTER}");
-                Thread.Sleep(1);
+                Thread.Sleep(50);
 
                 for (int i = 0; i < questionMarkCount; i++)
                 {
                     // Send question mark - in SendKeys, shift+/ is represented as "?"
                     SendKeys.SendWait("?");
-                    Thread.Sleep(1);
+                    Thread.Sleep(50);
                 }
 
                 // Send ENTER key again
                 SendKeys.SendWait("{ENTER}");
-                Thread.Sleep(1);
+                Thread.Sleep(50);
 
                 // Prepare for arrow sequence with CTRL
                 Console.WriteLine("[ALARM] Starting CTRL+Arrow key sequence...");
