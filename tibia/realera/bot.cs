@@ -6657,10 +6657,13 @@ class Program
                                     if (itemName.Equals("stealthring", StringComparison.OrdinalIgnoreCase))
                                     {
                                         invY = inventoryY;
+                                    }else if (itemName.Equals("lifering", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        invY = inventoryY + 3 * pixelSize + 15;
                                     }
 
-                                    // Drag the item to the destination
-                                    DragItemToDestination(lootItemX, lootItemY, invX, invY, itemName);
+                                        // Drag the item to the destination
+                                     DragItemToDestination(lootItemX, lootItemY, invX, invY, itemName);
 
                                     // Update the last drag operation time
                                     lastDragOperationTime = DateTime.Now;
