@@ -59,8 +59,8 @@ class Program
         public static int GetKeyCode(string keyName) =>
             KeyMap.ContainsKey(keyName) ? KeyMap[keyName] : -1;
     }
-    const int DEFAULT_HP_THRESHOLD = 50;
-    const int DEFAULT_BEEP_HP_THRESHOLD = 1;
+    const int DEFAULT_HP_THRESHOLD = 80;
+    const int DEFAULT_BEEP_HP_THRESHOLD = 60;
     const int DEFAULT_MANA_THRESHOLD = 70;
     const string DEFAULT_HP_KEY_NAME = "F1";
     const string DEFAULT_MANA_KEY_NAME = "F2";
@@ -2179,6 +2179,7 @@ class Program
         {
             int currentTargetId;
             int invisiblityCodeVar;
+            Thread.Sleep(256);
             lock (memoryLock)
             {
                 currentTargetId = targetId;
@@ -2205,7 +2206,7 @@ class Program
                 Sleep(1);
                 Sleep(1);
             }
-            Sleep(512);
+            Sleep(256);
             if (equip && currentTargetId != 0)
             {
                 var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
