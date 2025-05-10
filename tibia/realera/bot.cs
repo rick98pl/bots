@@ -4914,7 +4914,7 @@ class Program
             if (hdcWindow != IntPtr.Zero) ReleaseDC(hWnd, hdcWindow);
         }
     }
-    static bool shouldScanInventoryForPlatinum = false;
+    static bool shouldScanInventoryForPlatinum = true;
     static readonly string PLATINUM_TEMPLATE_NAME = "100platinum";
     static readonly TimeSpan PLATINUM_SCAN_DELAY = TimeSpan.FromMilliseconds(1500);
     static DateTime lastInventoryScanTime = DateTime.MinValue;
@@ -4951,9 +4951,11 @@ class Program
     {
         try
         {
+            Sleep(1024);
+            UpdateUIPositions();
             int invScanLeft = inventoryX - (pixelSize / 2);
             int invScanTop = inventoryY - (pixelSize / 2);
-            int invScanWidth = pixelSize * 2;
+            int invScanWidth = pixelSize * 4;
             int invScanHeight = pixelSize * 3;
             GetClientRect(targetWindow, out RECT windowRect);
             int windowWidth = windowRect.Right - windowRect.Left;
@@ -4980,8 +4982,10 @@ class Program
                         {
                             int platinumX = invScanLeft + maxLoc.X + (platinumTemplate.Width / 2);
                             int platinumY = invScanTop + maxLoc.Y + (platinumTemplate.Height / 2);
+                            Console.WriteLine(platinumX);
+                            Console.WriteLine(platinumY);
                             VirtualRightClick(targetWindow, platinumX, platinumY);
-                            shouldScanInventoryForPlatinum = false;
+                            shouldScanInventoryForPlatinum = true;
                         }
                         else
                         {
@@ -4999,7 +5003,7 @@ class Program
         }
         finally
         {
-            shouldScanInventoryForPlatinum = false;
+            shouldScanInventoryForPlatinum = true;
         }
     }
     static readonly TimeSpan RING_OPERATION_COOLDOWN = TimeSpan.FromSeconds(2);
