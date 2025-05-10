@@ -1941,7 +1941,7 @@ class Program
         SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lParam);
         SendMessage(hWnd, WM_RBUTTONDOWN, 1, lParam);
         SendMessage(hWnd, WM_RBUTTONUP, IntPtr.Zero, lParam);
-        RecordClickPosition(x, y, false);
+        //RecordClickPosition(x, y, false);
     }
     static int GetTargetId()
     {
