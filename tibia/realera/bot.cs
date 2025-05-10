@@ -7,6 +7,7 @@ using System.Text.Json;
 using Emgu.CV;
 using Emgu.CV.CvEnum;
 using Emgu.CV.Structure;
+using Emgu.CV.Util;
 class Program
 {
     [DllImport("kernel32.dll")]
@@ -2243,8 +2244,6 @@ class Program
                 onceLifeRing = false;
                 int lifeRingX = inventoryX;
                 int lifeRingY = inventoryY + 3 * pixelSize + 15;
-
-                // Modified section
                 double manaPercent = 0;
                 lock (memoryLock)
                 {
@@ -3162,11 +3161,39 @@ class Program
                                 }
                             }
                         }
+                        if (doColorDetection)
+                        {
+                            int colorDetectWidth = (int)(windowWidth * 0.1);
+                            int colorDetectHeight = (int)(windowHeight * 0.1);
+                            int colorDetectX = 0;
+                            int colorDetectY = windowHeight - colorDetectHeight;
+                            using (Mat bottomLeftCorner = CaptureWindowAsMat(gameWindow, colorDetectX, colorDetectY, colorDetectWidth, colorDetectHeight))
+                            {
+                                if (bottomLeftCorner != null)
+                                {
+                                    string debugDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug");
+                                    if (!Directory.Exists(debugDir))
+                                    {
+                                        Directory.CreateDirectory(debugDir);
+                                    }
+                                    if (iterationCount % 10 == 0)
+                                    {
+                                        CvInvoke.Imwrite(Path.Combine(debugDir, "current_capture.png"), bottomLeftCorner);
+                                    }
+                                    string detectionResult = DetectColorChanges(bottomLeftCorner);
+                                    if (detectionResult == "change")
+                                    {
+                                        Console.WriteLine("[COLOR] Significant color change detected in bottom-left corner!");
+                                        HandleColorChangeDetection(bottomLeftCorner);
+                                        lastColorAlarmTime = DateTime.Now;
+                                    }
+                                }
+                            }
+                        }
                         Thread.Sleep(200);
                     }
                     catch (Exception ex)
                     {
-                        //Console.WriteLine($"[SPAWN] Scan error: {ex.Message}");
                         Thread.Sleep(500);
                     }
                 }
@@ -3253,6 +3280,240 @@ class Program
         private static double changedPixelPercentageThreshold = 2.0;
         private static bool colorChangeAlarmEnabled = true;
         private static readonly object colorDetectionLock = new object();
+        private static string DetectColorChanges(Mat currentImage)
+        {
+            try
+            {
+                string debugDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug");
+                if (!Directory.Exists(debugDir))
+                {
+                    Directory.CreateDirectory(debugDir);
+                }
+                CvInvoke.Imwrite(Path.Combine(debugDir, "original_input.png"), currentImage);
+                lock (colorDetectionLock)
+                {
+                    if (isFirstCapture || referenceImage == null)
+                    {
+                        if (referenceImage != null)
+                        {
+                            referenceImage.Dispose();
+                        }
+                        referenceImage = currentImage.Clone();
+                        referenceImageTime = DateTime.Now;
+                        isFirstCapture = false;
+                        Console.WriteLine("[COLOR] First capture - saved as reference image");
+                        CvInvoke.Imwrite(Path.Combine(debugDir, "reference_image.png"), referenceImage);
+                        return null;
+                    }
+                    if (DateTime.Now - referenceImageTime > referenceUpdateInterval)
+                    {
+                        bool hasSignificantChanges = CheckForColorChanges(currentImage, referenceImage, debugDir, "reference_update_check");
+                        if (!hasSignificantChanges)
+                        {
+                            Console.WriteLine("[COLOR] Updating reference image (scheduled update)");
+                            referenceImage.Dispose();
+                            referenceImage = currentImage.Clone();
+                            referenceImageTime = DateTime.Now;
+                            CvInvoke.Imwrite(Path.Combine(debugDir, "updated_reference_image.png"), referenceImage);
+                        }
+                        else
+                        {
+                            Console.WriteLine("[COLOR] Skipping reference update because significant changes detected");
+                        }
+                    }
+                    bool changeDetected = CheckForColorChanges(currentImage, referenceImage, debugDir, "current_diff");
+                    if (changeDetected)
+                    {
+                        Console.WriteLine("[COLOR] Significant color change detected!");
+                        CvInvoke.Imwrite(Path.Combine(debugDir, "triggered_current.png"), currentImage);
+                        return "change"; 
+                    }
+                }
+                return null; 
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[COLOR] Error in color change detection: {ex.Message}");
+                return null;
+            }
+        }
+        private static bool CheckForColorChanges(Mat currentImage, Mat referenceImage, string debugDir, string debugPrefix)
+        {
+            using (Mat diffImage = new Mat(currentImage.Size, DepthType.Cv8U, 3))
+            {
+                using (VectorOfMat currentChannels = new VectorOfMat())
+                using (VectorOfMat referenceChannels = new VectorOfMat())
+                {
+                    CvInvoke.Split(currentImage, currentChannels);
+                    CvInvoke.Split(referenceImage, referenceChannels);
+                    using (Mat bDiff = new Mat())
+                    using (Mat gDiff = new Mat())
+                    using (Mat rDiff = new Mat())
+                    using (Mat combinedMask = new Mat(currentImage.Rows, currentImage.Cols, DepthType.Cv8U, 1))
+                    {
+                        CvInvoke.AbsDiff(currentChannels[0], referenceChannels[0], bDiff);
+                        CvInvoke.AbsDiff(currentChannels[1], referenceChannels[1], gDiff);
+                        CvInvoke.AbsDiff(currentChannels[2], referenceChannels[2], rDiff);
+                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_b_diff.png"), bDiff);
+                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_g_diff.png"), gDiff);
+                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_r_diff.png"), rDiff);
+                        using (Mat bMask = new Mat())
+                        using (Mat gMask = new Mat())
+                        using (Mat rMask = new Mat())
+                        {
+                            CvInvoke.Threshold(bDiff, bMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
+                            CvInvoke.Threshold(gDiff, gMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
+                            CvInvoke.Threshold(rDiff, rMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
+                            CvInvoke.BitwiseOr(bMask, gMask, combinedMask);
+                            CvInvoke.BitwiseOr(combinedMask, rMask, combinedMask);
+                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_combined_mask.png"), combinedMask);
+                            double totalPixels = combinedMask.Rows * combinedMask.Cols;
+                            double changedPixels = CvInvoke.CountNonZero(combinedMask);
+                            double percentChanged = (changedPixels / totalPixels) * 100.0;
+                            currentImage.CopyTo(diffImage);
+                            using (Mat redLayer = new Mat(diffImage.Size, DepthType.Cv8U, 1))
+                            {
+                                CvInvoke.BitwiseNot(combinedMask, redLayer);
+                                using (VectorOfMat diffChannels = new VectorOfMat())
+                                {
+                                    CvInvoke.Split(diffImage, diffChannels);
+                                    CvInvoke.BitwiseAnd(diffChannels[0], redLayer, diffChannels[0]);
+                                    CvInvoke.BitwiseAnd(diffChannels[1], redLayer, diffChannels[1]);
+                                    CvInvoke.BitwiseOr(diffChannels[2], combinedMask, diffChannels[2]);
+                                    CvInvoke.Merge(diffChannels, diffImage);
+                                }
+                            }
+                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_visualization.png"), diffImage);
+                            bool isSignificantChange = percentChanged >= changedPixelPercentageThreshold;
+                            string percentText = $"Changed: {percentChanged:F1}% ({(isSignificantChange ? "ALERT" : "normal")})";
+                            CvInvoke.PutText(
+                                diffImage,
+                                percentText,
+                                new System.Drawing.Point(10, 20),
+                                FontFace.HersheyComplex,
+                                0.5,
+                                isSignificantChange ? new MCvScalar(0, 0, 255) : new MCvScalar(0, 255, 0),
+                                1
+                            );
+                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_visualization_with_text.png"), diffImage);
+                            return isSignificantChange;
+                        }
+                    }
+                }
+            }
+        }
+        private static void SaveColorDistributionInfoSimple(Mat image, string outputPath)
+        {
+            try
+            {
+                using (StreamWriter writer = new StreamWriter(outputPath))
+                {
+                    writer.WriteLine("COLOR DETECTION INFORMATION");
+                    writer.WriteLine("===========================");
+                    writer.WriteLine($"Image size: {image.Width}x{image.Height}");
+                    writer.WriteLine();
+                    writer.WriteLine("COLOR DETECTION THRESHOLDS (HSV):");
+                    writer.WriteLine("Cyan/Teal: H(75-95), S(50-255), V(50-255)");
+                    writer.WriteLine("Green: H(45-75), S(50-255), V(50-255)");
+                    writer.WriteLine("Yellow: H(15-45), S(50-255), V(50-255)");
+                    writer.WriteLine("Red: H(0-10 or 160-180), S(50-255), V(50-255)");
+                    writer.WriteLine("Blue: H(100-130), S(50-255), V(50-255)");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[COLOR] Error saving color detection info: {ex.Message}");
+            }
+        }
+        private static bool HasSignificantColor(Mat mask)
+        {
+            double nonZeroPixels = CvInvoke.CountNonZero(mask);
+            double totalPixels = mask.Rows * mask.Cols;
+            double percentage = (nonZeroPixels / totalPixels) * 100;
+            bool isSignificant = percentage >= 2.0;
+            return isSignificant;
+        }
+        private static void HandleColorChangeDetection(Mat image)
+        {
+            try
+            {
+                string matchesDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "matches");
+                if (!Directory.Exists(matchesDir))
+                {
+                    Directory.CreateDirectory(matchesDir);
+                }
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string matchFileName = $"color_change_{timestamp}.png";
+                string matchPath = Path.Combine(matchesDir, matchFileName);
+                CvInvoke.Imwrite(matchPath, image);
+                Console.WriteLine($"[COLOR] Color change detection screenshot saved to: {matchPath}");
+                TriggerColorChangeAlert();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[COLOR] Error handling color change detection: {ex.Message}");
+            }
+        }
+        private static void TriggerColorChangeAlert()
+        {
+            try
+            {
+                Console.WriteLine("\n[!!!] COLOR CHANGE ALERT - UNUSUAL COLOR DETECTED [!!!]");
+                Console.WriteLine("[!!!] Stopping all threads and sounding alarm [!!!]\n");
+                IntPtr copyWindow = Program.targetWindow;
+                Program.threadFlags["recording"] = false;
+                Program.threadFlags["playing"] = false;
+                Program.threadFlags["autopot"] = false;
+                Program.threadFlags["spawnwatch"] = false;
+                Program.memoryReadActive = false;
+                Program.programRunning = false;
+                Program.StopPositionAlertSound();  
+                Thread alarmSoundThread = new Thread(() =>
+                {
+                    try
+                    {
+                        while (true)
+                        {
+                            Beep(1400, 200);
+                            Thread.Sleep(150);
+                            Beep(1800, 200);
+                            Thread.Sleep(150);
+                            Beep(1400, 200);
+                            Thread.Sleep(500);
+                            Console.WriteLine("[COLOR ALARM] Unusual color detected in game interface!");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[COLOR ALARM] Error in alarm sound: {ex.Message}");
+                    }
+                });
+                alarmSoundThread.IsBackground = true;
+                alarmSoundThread.Start();
+                Thread focusWindowThread = new Thread(() =>
+                {
+                    try
+                    {
+                        FocusGameWindow(copyWindow);
+                        Console.WriteLine("[COLOR ALARM] Color change alert: Window focused, press ESC to exit");
+                        Thread.Sleep(60000); 
+                        Environment.Exit(1);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[COLOR ALARM] Error in window focus: {ex.Message}");
+                        Environment.Exit(1);
+                    }
+                });
+                focusWindowThread.IsBackground = false;
+                focusWindowThread.Start();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[COLOR ALARM] Error triggering color change alert: {ex.Message}");
+                Environment.Exit(1);
+            }
+        }
         private static void TriggerAlarm(string templateName)
         {
             try
@@ -3779,18 +4040,6 @@ class Program
         overlayThread.SetApartmentState(ApartmentState.STA);
         overlayThread.Start();
         Sleep(100);
-    }
-    static void AdjustOverlayConfig(int rightOffsetChange, int bottomOffsetChange, float scaleChange)
-    {
-        statsOverlayRightOffset = Math.Max(10, statsOverlayRightOffset + rightOffsetChange);
-        statsOverlayBottomOffset = Math.Max(10, statsOverlayBottomOffset + bottomOffsetChange);
-        statsOverlaySizeScale = Math.Max(0.5f, Math.Min(2.0f, statsOverlaySizeScale + scaleChange));
-        if (overlayForm != null)
-        {
-            StopOverlay();
-            Sleep(200);
-            StartOverlay();
-        }
     }
     static void DrawRightAlignedStat(PaintEventArgs e, string label, string value, Font font,
        Brush brush, float rightEdge, ref int y, int lineSpacing)
