@@ -37,7 +37,7 @@ class Program
     [DllImport("user32.dll")]
     static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
     [DllImport("user32.dll")]
-    static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    static extern bool SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
     delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     const int PROCESS_VM_READ = 0x0010;
     const int PROCESS_VM_WRITE = 0x0020;
@@ -148,8 +148,8 @@ class Program
 
     static void Main()
     {
-        Console.WriteLine($"Default HP Key: {DEFAULT_HP_KEY_NAME}");
-        Console.WriteLine($"Default Mana Key: {DEFAULT_MANA_KEY_NAME}");
+        //Console.WriteLine($"Default HP Key: {DEFAULT_HP_KEY_NAME}");
+        //Console.WriteLine($"Default Mana Key: {DEFAULT_MANA_KEY_NAME}");
         threadFlags["recording"] = false;
         threadFlags["playing"] = false;
         threadFlags["autopot"] = true;
@@ -196,9 +196,7 @@ class Program
                     else if (processes.Length == 1)
                     {
                         selectedProcess = processes[0];
-                        Console.WriteLine(
-                            $"One process found: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})"
-                        );
+                        Console.WriteLine($"One process found: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
                         Console.WriteLine($"Window Title: {selectedProcess.MainWindowTitle}");
                     }
                     else
@@ -206,13 +204,9 @@ class Program
                         Console.WriteLine($"Multiple processes found with name '{processName}':");
                         for (int i = 0; i < processes.Length; i++)
                         {
-                            Console.WriteLine(
-                                $"{i + 1}: ID={processes[i].Id}, Name={processes[i].ProcessName}, Window Title={processes[i].MainWindowTitle}, StartTime={(processes[i].StartTime)}"
-                            );
+                            Console.WriteLine($"{i + 1}: ID={processes[i].Id}, Name={processes[i].ProcessName}, Window Title={processes[i].MainWindowTitle}, StartTime={(processes[i].StartTime)}");
                         }
-                        Console.WriteLine(
-                            "Enter the number of the process you want to select (1-9):"
-                        );
+                        Console.WriteLine("Enter the number of the process you want to select (1-9):");
                         string input = Console.ReadLine();
                         if (
                             int.TryParse(input, out int choice)
@@ -221,9 +215,7 @@ class Program
                         )
                         {
                             selectedProcess = processes[choice - 1];
-                            Console.WriteLine(
-                                $"Selected process: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})"
-                            );
+                            Console.WriteLine($"Selected process: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
                             Console.WriteLine($"Window Title: {selectedProcess.MainWindowTitle}");
                         }
                         else
@@ -241,12 +233,12 @@ class Program
 
             GetClientRect(targetWindow, out RECT windowRect);
             int windowHeight = windowRect.Bottom - windowRect.Top;
-            Console.WriteLine($"[DEBUG] Detected window height: {windowHeight}px");
+            //Console.WriteLine($"[DEBUG] Detected window height: {windowHeight}px");
             smallWindow = windowHeight < 1200;
-            Console.WriteLine($"[DEBUG] Using {(smallWindow ? "small window (1080p)" : "large window (1440p)")} settings");
+            //Console.WriteLine($"[DEBUG] Using {(smallWindow ? "small window (1080p)" : "large window (1440p)")} settings");
 
             StartWorkerThreads();
-
+            DisplayStats();
             DateTime lastOverlayCheck = DateTime.MinValue;
             DateTime lastInputCheck = DateTime.MinValue; // Add tracking for input checking
             const int INPUT_CHECK_INTERVAL = 50; // Check for input every 50ms
@@ -307,7 +299,7 @@ class Program
     // This function maintains the desired outfit, setting it initially and keeping it if game changes it
     static void MaintainOutfitThread()
     {
-        Console.WriteLine($"[OUTFIT] Maintenance thread started. Maintaining outfit {desiredOutfit}");
+        //Console.WriteLine($"[OUTFIT] Maintenance thread started. Maintaining outfit {desiredOutfit}");
 
         // Reduce frequency of checks - save CPU
         const int CHECK_INTERVAL_MS = 500; // Only check every 500ms instead of 100ms
@@ -324,7 +316,7 @@ class Program
 
             if (currentOutfitValue != desiredOutfit)
             {
-                Console.WriteLine($"[OUTFIT] Initial setting from {currentOutfitValue} to {desiredOutfit}");
+                //Console.WriteLine($"[OUTFIT] Initial setting from {currentOutfitValue} to {desiredOutfit}");
 
                 // Find the outfit variable address
                 IntPtr outfitAddress = IntPtr.Zero;
@@ -338,7 +330,7 @@ class Program
 
                         if (!ReadProcessMemory(processHandle, baseAddress, buffer, buffer.Length, out _))
                         {
-                            Console.WriteLine("[DEBUG] Failed to read outfit base address");
+                            //Console.WriteLine("[DEBUG] Failed to read outfit base address");
                             return;
                         }
 
@@ -350,7 +342,7 @@ class Program
 
                 if (outfitAddress == IntPtr.Zero)
                 {
-                    Console.WriteLine("[DEBUG] Could not find outfit address");
+                    //Console.WriteLine("[DEBUG] Could not find outfit address");
                     return;
                 }
 
@@ -362,13 +354,13 @@ class Program
                 if (!WriteProcessMemory(processHandle, outfitAddress, exactOutfitBuffer, exactOutfitBuffer.Length, out bytesWritten))
                 {
                     int errorCode = Marshal.GetLastWin32Error();
-                    Console.WriteLine($"[DEBUG] Failed to write initial outfit value. Error code: {errorCode}");
+                    //Console.WriteLine($"[DEBUG] Failed to write initial outfit value. Error code: {errorCode}");
                     return;
                 }
 
                 // Update the local variable
                 currentOutfit = desiredOutfit;
-                Console.WriteLine($"[OUTFIT] Successfully set initial outfit to {desiredOutfit}");
+                //Console.WriteLine($"[OUTFIT] Successfully set initial outfit to {desiredOutfit}");
 
                 Sleep(250); // Delay to allow change to register
             }
@@ -405,7 +397,7 @@ class Program
                 {
                     if (currentOutfitValue != desiredOutfit)
                     {
-                        Console.WriteLine($"[OUTFIT] Detected outfit change from {desiredOutfit} to {currentOutfitValue}. Resetting...");
+                        //Console.WriteLine($"[OUTFIT] Detected outfit change from {desiredOutfit} to {currentOutfitValue}. Resetting...");
 
                         // Find the outfit variable address
                         IntPtr outfitAddress = IntPtr.Zero;
@@ -419,7 +411,7 @@ class Program
 
                                 if (!ReadProcessMemory(processHandle, baseAddress, buffer, buffer.Length, out _))
                                 {
-                                    Console.WriteLine("[DEBUG] Failed to read outfit base address");
+                                    //Console.WriteLine("[DEBUG] Failed to read outfit base address");
                                     break;
                                 }
 
@@ -431,7 +423,7 @@ class Program
 
                         if (outfitAddress == IntPtr.Zero)
                         {
-                            Console.WriteLine("[DEBUG] Could not find outfit address");
+                            //Console.WriteLine("[DEBUG] Could not find outfit address");
                             Sleep(1000);
                             continue;
                         }
@@ -444,14 +436,14 @@ class Program
                         if (!WriteProcessMemory(processHandle, outfitAddress, exactOutfitBuffer, exactOutfitBuffer.Length, out bytesWritten))
                         {
                             int errorCode = Marshal.GetLastWin32Error();
-                            Console.WriteLine($"[DEBUG] Failed to write outfit value. Error code: {errorCode}");
+                            //Console.WriteLine($"[DEBUG] Failed to write outfit value. Error code: {errorCode}");
                             Sleep(1000);
                             continue;
                         }
 
                         // Update the local variable
                         currentOutfit = desiredOutfit;
-                        Console.WriteLine($"[OUTFIT] Successfully reset outfit to {desiredOutfit}");
+                        //Console.WriteLine($"[OUTFIT] Successfully reset outfit to {desiredOutfit}");
 
                         Sleep(50); // Small delay after changing outfit
                     }
@@ -467,7 +459,7 @@ class Program
             }
         }
 
-        Console.WriteLine("[OUTFIT] Maintenance thread stopped");
+        //Console.WriteLine("[OUTFIT] Maintenance thread stopped");
     }
 
     static void StartWorkerThreads()
@@ -503,7 +495,7 @@ class Program
             SPAWNWATCHER.Start(targetWindow, pixelSize);
         }
 
-        Console.WriteLine("Worker threads started successfully");
+        //Console.WriteLine("Worker threads started successfully");
     }
 
 
@@ -522,7 +514,7 @@ class Program
         StopOverlay();
         StopClickOverlay();
 
-        Console.WriteLine("Worker threads stopping...");
+        //Console.WriteLine("Worker threads stopping...");
         Sleep(1000);
     }
 
@@ -578,7 +570,7 @@ class Program
         DateTime lastFullScanTime = DateTime.MinValue;
         const double DEBUG_COOLDOWN_SECONDS = 1.5;
         const double FULL_SCAN_INTERVAL_MS = 100; // Only do full scan every 100ms
-        Console.WriteLine("Memory reading thread started");
+        //Console.WriteLine("Memory reading thread started");
 
         int consecutiveFailures = 0;
         const int MAX_FAILURES = 5;
@@ -685,7 +677,7 @@ class Program
                             DateTime debugNow = DateTime.Now;
                             if ((debugNow - lastDebugOutputTime).TotalSeconds >= DEBUG_COOLDOWN_SECONDS)
                             {
-                                Console.WriteLine($"[DEBUG] In chase: targetId={targetId}, position=({posX},{posY},{posZ})");
+                                //Console.WriteLine($"[DEBUG] In chase: targetId={targetId}, position=({posX},{posY},{posZ})");
                                 lastDebugOutputTime = debugNow;
                             }
                         }
@@ -723,7 +715,7 @@ class Program
 
                 if (consecutiveFailures >= MAX_FAILURES)
                 {
-                    Console.WriteLine("Too many consecutive errors in memory reading thread. Restarting...");
+                    //Console.WriteLine("Too many consecutive errors in memory reading thread. Restarting...");
                     shouldRestartMemoryThread = true;
                     break;
                 }
@@ -732,7 +724,7 @@ class Program
                 Sleep(500);
             }
         }
-        Console.WriteLine("Memory reading thread exited");
+        //Console.WriteLine("Memory reading thread exited");
     }
 
 
@@ -755,8 +747,8 @@ class Program
             const int MIN_OUTFIT = 0;
             const int MAX_OUTFIT = 99999;
 
-            Console.WriteLine($"[DEBUG] CurrenntOutfit: {previousOutfit}");
-            Console.WriteLine($"[DEBUG] Changing to: {newOutfit}");
+            //Console.WriteLine($"[DEBUG] CurrenntOutfit: {previousOutfit}");
+            //Console.WriteLine($"[DEBUG] Changing to: {newOutfit}");
 
             if (newOutfit < MIN_OUTFIT)
                 newOutfit = MIN_OUTFIT;
@@ -766,7 +758,7 @@ class Program
             // Skip operation if no change
             if (newOutfit == previousOutfit)
             {
-                Console.WriteLine($"[DEBUG] Outfit already at {(change > 0 ? "maximum" : "minimum")} value: {previousOutfit}");
+                //Console.WriteLine($"[DEBUG] Outfit already at {(change > 0 ? "maximum" : "minimum")} value: {previousOutfit}");
                 return;
             }
 
@@ -784,7 +776,7 @@ class Program
 
                     if (!ReadProcessMemory(processHandle, baseAddress, buffer, buffer.Length, out _))
                     {
-                        Console.WriteLine("[DEBUG] Failed to read outfit base address");
+                        //Console.WriteLine("[DEBUG] Failed to read outfit base address");
                         return;
                     }
 
@@ -796,7 +788,7 @@ class Program
 
             if (outfitAddress == IntPtr.Zero)
             {
-                Console.WriteLine("[DEBUG] Could not find outfit address");
+                //Console.WriteLine("[DEBUG] Could not find outfit address");
                 return;
             }
 
@@ -808,7 +800,7 @@ class Program
             if (!WriteProcessMemory(processHandle, outfitAddress, newOutfitBuffer, newOutfitBuffer.Length, out bytesWritten))
             {
                 int errorCode = Marshal.GetLastWin32Error();
-                Console.WriteLine($"[DEBUG] Failed to write new outfit value. Error code: {errorCode}");
+                //Console.WriteLine($"[DEBUG] Failed to write new outfit value. Error code: {errorCode}");
                 return;
             }
 
@@ -819,10 +811,10 @@ class Program
             lock (outfitLock)
             {
                 desiredOutfit = newOutfit;
-                Console.WriteLine($"[OUTFIT] Updated desired outfit to: {desiredOutfit}");
+                //Console.WriteLine($"[OUTFIT] Updated desired outfit to: {desiredOutfit}");
             }
 
-            Console.WriteLine($"[DEBUG] Changed outfit from {previousOutfit} to {newOutfit}");
+            //Console.WriteLine($"[DEBUG] Changed outfit from {previousOutfit} to {newOutfit}");
 
 
         }
@@ -847,7 +839,7 @@ class Program
 
     static void AutoPotionThread()
     {
-        Console.WriteLine("Auto-potion thread started");
+        //Console.WriteLine("Auto-potion thread started");
         DateTime lastStatsDisplay = DateTime.MinValue;
         const int STATS_DISPLAY_INTERVAL_MS = 2000; // Update stats every 2 seconds
 
@@ -889,9 +881,9 @@ class Program
                     {
                         if ((now - lastHpActionTime).TotalMilliseconds >= thresholdms)
                         {
-                            Console.WriteLine(
-                                $"⚠ HP below threshold ({DEFAULT_HP_THRESHOLD}%), current HP: {curHP}/{maxHP} ({hpPercent:F1}%), sending {DEFAULT_HP_KEY_NAME}"
-                            );
+                            //Console.WriteLine(
+                            ////$"⚠ HP below threshold ({DEFAULT_HP_THRESHOLD}%), current HP: {curHP}/{maxHP} ({hpPercent:F1}%), sending {DEFAULT_HP_KEY_NAME}"
+                            ////);
                             SendKeyPress(DEFAULT_HP_KEY);
                             lastHpActionTime = now.AddMilliseconds(random.Next(0, 100));
                         }
@@ -901,9 +893,9 @@ class Program
                     {
                         if ((now - lastManaActionTime).TotalMilliseconds >= thresholdms)
                         {
-                            Console.WriteLine(
-                                $"⚠ Mana below threshold ({DEFAULT_MANA_THRESHOLD}%), sending {DEFAULT_MANA_KEY_NAME}"
-                            );
+                            //Console.WriteLine(
+                            ////$"⚠ Mana below threshold ({DEFAULT_MANA_THRESHOLD}%), sending {DEFAULT_MANA_KEY_NAME}"
+                            ////);
                             SendKeyPress(DEFAULT_MANA_KEY);
                             lastManaActionTime = now.AddMilliseconds(random.Next(0, 100));
                         }
@@ -919,11 +911,11 @@ class Program
                 Sleep(1000);
             }
         }
-        Console.WriteLine("Auto-potion thread exited");
+        //Console.WriteLine("Auto-potion thread exited");
     }
     static void DisplayStats()
     {
-        Console.Clear();
+
         double hpPercent;
         double manaPercent;
         int currentX,
@@ -937,51 +929,51 @@ class Program
             currentY = posY;
             currentZ = posZ;
         }
-        Console.WriteLine("RealeraDX - Live Stats:\n");
-        Console.WriteLine("{0,-20} {1,15}", "Metric", "Value");
-        Console.WriteLine(new string('-', 40));
-        Console.WriteLine("{0,-20} {1,15:F0}", "Current HP", curHP);
-        Console.WriteLine("{0,-20} {1,15:F0}", "Max HP", maxHP);
-        Console.WriteLine("{0,-20} {1,15:F1}%", "HP %", hpPercent);
-        Console.WriteLine("{0,-20} {1,15:F0}", "Current Mana", curMana);
-        Console.WriteLine("{0,-20} {1,15:F0}", "Max Mana", maxMana);
-        Console.WriteLine("{0,-20} {1,15:F1}%", "Mana %", manaPercent);
-        Console.WriteLine("{0,-20} {1,15:F0}", "targetId", targetId);
-        Console.WriteLine("{0,-20} {1,15:F0}", "follow", follow);
-        Console.WriteLine(new string('-', 40));
-        Console.WriteLine($"Position: X={currentX}, Y={currentY}, Z={currentZ}");
-        Console.WriteLine($"Outfit: {currentOutfit}\n");
-        Console.WriteLine($"InvisibilityCode: {invisibilityCode}\n");
-        Console.WriteLine("\n");
+        //Console.WriteLine("RealeraDX - Live Stats:\n");
+        //Console.WriteLine("{0,-20} {1,15}", "Metric", "Value");
+        //Console.WriteLine(new string('-', 40));
+        //Console.WriteLine("{0,-20} {1,15:F0}", "Current HP", curHP);
+        //Console.WriteLine("{0,-20} {1,15:F0}", "Max HP", maxHP);
+        //Console.WriteLine("{0,-20} {1,15:F1}%", "HP %", hpPercent);
+        //Console.WriteLine("{0,-20} {1,15:F0}", "Current Mana", curMana);
+        //Console.WriteLine("{0,-20} {1,15:F0}", "Max Mana", maxMana);
+        //Console.WriteLine("{0,-20} {1,15:F1}%", "Mana %", manaPercent);
+        //Console.WriteLine("{0,-20} {1,15:F0}", "targetId", targetId);
+        //Console.WriteLine("{0,-20} {1,15:F0}", "follow", follow);
+        //Console.WriteLine(new string('-', 40));
+        //Console.WriteLine($"Position: X={currentX}, Y={currentY}, Z={currentZ}");
+        //Console.WriteLine($"Outfit: {currentOutfit}\n");
+        //Console.WriteLine($"InvisibilityCode: {invisibilityCode}\n");
+        //Console.WriteLine("\n");
         if (threadFlags["recording"])
         {
-            Console.WriteLine("🔴 Recording coordinates...");
-            Console.WriteLine($"Coordinates recorded: {recordedCoords.Count}");
+            //Console.WriteLine("🔴 Recording coordinates...");
+            //Console.WriteLine($"Coordinates recorded: {recordedCoords.Count}");
         }
         if (threadFlags["playing"] && currentTarget != null)
         {
-            Console.WriteLine("\n▶️ PLAYING PATH:");
-            Console.WriteLine(new string('-', 40));
-            Console.WriteLine(
-                $"Progress: {currentCoordIndex + 1}/{totalCoords} ({(((float)(currentCoordIndex + 1) / totalCoords) * 100):F1}%)"
-            );
-            Console.WriteLine($"Current: X={currentX}, Y={currentY}, Z={currentZ}");
-            Console.WriteLine(
-                $"Target:  X={currentTarget.X}, Y={currentTarget.Y}, Z={currentTarget.Z}"
-            );
+            //Console.WriteLine("\n▶️ PLAYING PATH:");
+            //Console.WriteLine(new string('-', 40));
+            //Console.WriteLine(
+            ////$"Progress: {currentCoordIndex + 1}/{totalCoords} ({(((float)(currentCoordIndex + 1) / totalCoords) * 100):F1}%)"
+            ////);
+            //Console.WriteLine($"Current: X={currentX}, Y={currentY}, Z={currentZ}");
+            //Console.WriteLine(
+            ////$"Target:  X={currentTarget.X}, Y={currentTarget.Y}, Z={currentTarget.Z}"
+            ////);
             int distanceX = Math.Abs(currentTarget.X - currentX);
             int distanceY = Math.Abs(currentTarget.Y - currentY);
-            Console.WriteLine($"Distance: {distanceX + distanceY} steps");
+            //Console.WriteLine($"Distance: {distanceX + distanceY} steps");
             int barLength = 20;
             int progress = (int)Math.Round(
                 (double)(currentCoordIndex + 1) / totalCoords * barLength
             );
-            Console.Write("[");
+            //Console.Write("[");
             for (int i = 0; i < barLength; i++)
             {
-                Console.Write(i < progress ? "█" : " ");
+                //Console.Write(i < progress ? "█" : " ");
             }
-            Console.WriteLine($"] {(((float)(currentCoordIndex + 1) / totalCoords) * 100):F1}%");
+            //Console.WriteLine($"] {(((float)(currentCoordIndex + 1) / totalCoords) * 100):F1}%");
         }
         Console.WriteLine("\nActive Features:");
         Console.WriteLine($"Auto-Potions: {(threadFlags["autopot"] ? "✅ ON" : "❌ OFF")} (A)");
@@ -1038,9 +1030,7 @@ class Program
                 break;
             case ConsoleKey.A:
                 threadFlags["autopot"] = !threadFlags["autopot"];
-                Console.WriteLine(
-                    $"Auto-potions {(threadFlags["autopot"] ? "enabled" : "disabled")}"
-                );
+                Console.WriteLine($"Auto-potions {(threadFlags["autopot"] ? "enabled" : "disabled")}");
                 break;
             case ConsoleKey.S: // Add a key to manually stop position alert sound
                 StopPositionAlertSound();
@@ -1079,7 +1069,7 @@ class Program
                 break;
             case ConsoleKey.O: // Add a key to toggle overlay
                 threadFlags["overlay"] = !threadFlags["overlay"];
-                Console.WriteLine($"Overlay {(threadFlags["overlay"] ? "enabled" : "disabled")}");
+                //Console.WriteLine($"Overlay {(threadFlags["overlay"] ? "enabled" : "disabled")}");
                 if (threadFlags["overlay"])
                 {
                     StartOverlay();
@@ -1139,7 +1129,7 @@ class Program
                 return;
             }
 
-            Console.WriteLine("F6 key pressed - starting cooldown");
+            //Console.WriteLine("F6 key pressed - starting cooldown");
             lastF6Press = currentTime;
             canPressF6 = false;
 
@@ -1152,16 +1142,16 @@ class Program
             }, null, F6Cooldown, TimeSpan.Zero);
         }
 
-        PostMessage(targetWindow, WM_KEYDOWN, (IntPtr)key, IntPtr.Zero);
+        SendMessage(targetWindow, WM_KEYDOWN, (IntPtr)key, IntPtr.Zero);
         Sleep(random.Next(10, 25));
-        PostMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
+        SendMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
     }
 
     static void InstantSendKeyPress(int key)
     {
-        PostMessage(targetWindow, WM_KEYDOWN, (IntPtr)key, IntPtr.Zero);
+        SendMessage(targetWindow, WM_KEYDOWN, (IntPtr)key, IntPtr.Zero);
         Sleep(random.Next(10, 25));
-        PostMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
+        SendMessage(targetWindow, WM_KEYUP, (IntPtr)key, IntPtr.Zero);
     }
 
     static void FindRealeraWindow(Process process)
@@ -1225,12 +1215,12 @@ class Program
             // Move in X direction first if it's farther
             if (diffX > 0)
             {
-                Console.WriteLine("[DEBUG] Moving EAST with arrow key");
+                //Console.WriteLine("[DEBUG] Moving EAST with arrow key");
                 SendKeyPress(VK_RIGHT);
             }
             else if (diffX < 0)
             {
-                Console.WriteLine("[DEBUG] Moving WEST with arrow key");
+                //Console.WriteLine("[DEBUG] Moving WEST with arrow key");
                 SendKeyPress(VK_LEFT);
             }
         }
@@ -1239,12 +1229,12 @@ class Program
             // Move in Y direction first if it's farther
             if (diffY > 0)
             {
-                Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
+                //Console.WriteLine("[DEBUG] Moving SOUTH with arrow key");
                 SendKeyPress(VK_DOWN);
             }
             else if (diffY < 0)
             {
-                Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
+                //Console.WriteLine("[DEBUG] Moving NORTH with arrow key");
                 SendKeyPress(VK_UP);
             }
         }
@@ -1288,7 +1278,7 @@ class Program
 
             if (isChaseReturnPoint)
             {
-                Console.WriteLine("[DEBUG] Clicking waypoint that is a chase return position");
+                //Console.WriteLine("[DEBUG] Clicking waypoint that is a chase return position");
             }
 
             int currentX, currentY;
@@ -1308,7 +1298,7 @@ class Program
 
             if (GetTargetId() != 0)
             {
-                Console.WriteLine("[DEBUG] Combat detected, canceling movement");
+                //Console.WriteLine("[DEBUG] Combat detected, canceling movement");
                 return false;
             }
 
@@ -1316,18 +1306,18 @@ class Program
             Point clickPoint = new Point(targetX, targetY);
             if (failedClickPoints.Any(p => Math.Abs(p.X - clickPoint.X) < 5 && Math.Abs(p.Y - clickPoint.Y) < 5))
             {
-                Console.WriteLine("[DEBUG] This click point previously failed, trying a different location");
+                //Console.WriteLine("[DEBUG] This click point previously failed, trying a different location");
                 return false;
             }
 
             int lParam = (targetY << 16) | (targetX & 0xFFFF);
             SendKeyPress(VK_ESCAPE);
             Sleep(25);
-            PostMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)lParam);
+            SendMessage(targetWindow, 0x0200, IntPtr.Zero, (IntPtr)lParam);
             Sleep(1);
-            PostMessage(targetWindow, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
+            SendMessage(targetWindow, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
             Sleep(1);
-            PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
+            SendMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
             Sleep(1);
             int centerLParam = (baseY << 16) | (baseX & 0xFFFF);
 
@@ -1338,9 +1328,9 @@ class Program
             lastClickedWaypoint = new Coordinate { X = target.X, Y = target.Y, Z = target.Z };
             lastWaypointClickTime = DateTime.Now;
 
-            Console.WriteLine(
-                $"[DEBUG] Clicked: X={diffX}, Y={diffY} (Screen: {targetX}, {targetY}, Pixel Size: {pixelSize})"
-            );
+            //Console.WriteLine(
+            ////$"[DEBUG] Clicked: X={diffX}, Y={diffY} (Screen: {targetX}, {targetY}, Pixel Size: {pixelSize})"
+            ////);
             return true;
         }
         catch (Exception ex)
@@ -1360,7 +1350,7 @@ class Program
         loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
         if (loadedCoords == null || loadedCoords.cords.Count == 0)
         {
-            Console.WriteLine("No coordinates found in cords.json!");
+            //Console.WriteLine("No coordinates found in cords.json!");
             threadFlags["playing"] = false;
             return;
         }
@@ -1418,7 +1408,7 @@ class Program
                         // If player hasn't moved significantly since clicking
                         if (totalDistanceMoved <= 1) // Threshold for "hasn't moved"
                         {
-                            Console.WriteLine($"[STUCK DETECTION] Player appears to be stuck! Hasn't moved in {timeSinceClick.TotalSeconds:F1} seconds");
+                            //Console.WriteLine($"[STUCK DETECTION] Player appears to be stuck! Hasn't moved in {timeSinceClick.TotalSeconds:F1} seconds");
 
                             // Add the failed click point to our list
                             GetClientRect(targetWindow, out RECT rect);
@@ -1429,8 +1419,8 @@ class Program
                             int clickX = baseX + (diffX * pixelSize);
                             int clickY = baseY + (diffY * pixelSize);
                             failedClickPoints.Add(new Point(clickX, clickY));
-                            Console.WriteLine($"[STUCK DETECTION] Added failed click point at screen coordinates ({clickX}, {clickY})");
-                            Console.WriteLine($"[STUCK DETECTION] Total failed click points: {failedClickPoints.Count}");
+                            //Console.WriteLine($"[STUCK DETECTION] Added failed click point at screen coordinates ({clickX}, {clickY})");
+                            //Console.WriteLine($"[STUCK DETECTION] Total failed click points: {failedClickPoints.Count}");
 
                             // Increment stuck counter
                             consecutiveStuckCount++;
@@ -1439,7 +1429,7 @@ class Program
                             // If we've been stuck too many times, temporarily disable randomization
                             if (consecutiveStuckCount >= maxConsecutiveStuckCount)
                             {
-                                Console.WriteLine("[STUCK DETECTION] Too many consecutive stuck instances. Temporarily disabling waypoint randomization.");
+                                //Console.WriteLine("[STUCK DETECTION] Too many consecutive stuck instances. Temporarily disabling waypoint randomization.");
                                 waypointRandomizationEnabled = false;
                             }
 
@@ -1450,10 +1440,10 @@ class Program
                             // Try to handle the stuck situation based on retry count
                             if (waypointRetryCount >= MAX_WAYPOINT_RETRIES)
                             {
-                                Console.WriteLine($"[STUCK DETECTION] Max retries reached ({MAX_WAYPOINT_RETRIES}). Switching to arrow key movement.");
+                                //Console.WriteLine($"[STUCK DETECTION] Max retries reached ({MAX_WAYPOINT_RETRIES}). Switching to arrow key movement.");
 
                                 // First try pressing escape to clear any potential UI elements
-                                Console.WriteLine("[STUCK DETECTION] Pressing Escape to clear any UI elements");
+                                //Console.WriteLine("[STUCK DETECTION] Pressing Escape to clear any UI elements");
                                 SendKeyPress(VK_ESCAPE);
                                 Sleep(100);
 
@@ -1467,7 +1457,7 @@ class Program
                                 );
 
                                 // Move with arrow keys
-                                Console.WriteLine($"[STUCK DETECTION] Trying arrow key movement to ({nextWaypointy.X}, {nextWaypointy.Y})");
+                                //Console.WriteLine($"[STUCK DETECTION] Trying arrow key movement to ({nextWaypointy.X}, {nextWaypointy.Y})");
                                 MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypointy.X, nextWaypointy.Y);
                                 SendKeyPress(VK_F6);
                                 Sleep(300);
@@ -1479,7 +1469,7 @@ class Program
                                     currentY = posY;
                                 }
 
-                                Console.WriteLine($"[STUCK DETECTION] Trying a second arrow movement in a different direction");
+                                //Console.WriteLine($"[STUCK DETECTION] Trying a second arrow movement in a different direction");
                                 // Pick a different direction - try perpendicular movement
                                 int theX = nextWaypointy.X - currentX;
                                 int theY = nextWaypointy.Y - currentY;
@@ -1511,7 +1501,7 @@ class Program
                             {
                                 // Skip to find a new waypoint
                                 currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                                Console.WriteLine($"[STUCK DETECTION] Resetting to closest waypoint: index {currentCoordIndex}");
+                                //Console.WriteLine($"[STUCK DETECTION] Resetting to closest waypoint: index {currentCoordIndex}");
                             }
 
                             // Continue to next iteration to find a new waypoint
@@ -1522,14 +1512,14 @@ class Program
                             // Player has moved, reset stuck counter
                             if (consecutiveStuckCount > 0)
                             {
-                                Console.WriteLine($"[STUCK DETECTION] Player is moving normally again. Resetting stuck counter.");
+                                //Console.WriteLine($"[STUCK DETECTION] Player is moving normally again. Resetting stuck counter.");
                                 consecutiveStuckCount = 0;
                                 waypointRetryCount = 0;
 
                                 // Re-enable randomization if it was disabled
                                 if (!waypointRandomizationEnabled)
                                 {
-                                    Console.WriteLine("[STUCK DETECTION] Re-enabling waypoint randomization.");
+                                    //Console.WriteLine("[STUCK DETECTION] Re-enabling waypoint randomization.");
                                     waypointRandomizationEnabled = true;
                                 }
                             }
@@ -1553,7 +1543,7 @@ class Program
                         failedClickPoints = failedClickPoints.Skip(failedClickPoints.Count - 20).ToList();
                     }
 
-                    Console.WriteLine($"[STUCK DETECTION] Cleaned up failed click points list: {oldCount} -> {failedClickPoints.Count}");
+                    //Console.WriteLine($"[STUCK DETECTION] Cleaned up failed click points list: {oldCount} -> {failedClickPoints.Count}");
                     lastFailedClickPointsCleanupTime = now;
                 }
 
@@ -1570,11 +1560,11 @@ class Program
 
                     if (chaseTracker.ShouldReturnToStart())
                     {
-                        Console.WriteLine("[DEBUG] Need to return to chase start position");
+                        //Console.WriteLine("[DEBUG] Need to return to chase start position");
                     }
                     else
                     {
-                        Console.WriteLine("[DEBUG] No need to return to chase start position");
+                        //Console.WriteLine("[DEBUG] No need to return to chase start position");
                     }
 
 
@@ -1583,7 +1573,7 @@ class Program
 
                     if (!clickedAroundTargets.Contains(previousTargetId) && previousTargetId != 0)
                     {
-                        Console.WriteLine($"[DEBUG] Fight finished, calling ClickAroundCharacter for target ID: {previousTargetId}");
+                        //Console.WriteLine($"[DEBUG] Fight finished, calling ClickAroundCharacter for target ID: {previousTargetId}");
                         clickedAroundTargets.Add(previousTargetId); // Track that we've clicked for this target
 
                         // Perform click around and wait for it to complete
@@ -1607,7 +1597,7 @@ class Program
                 if (currentTargetId != 0 && currentTargetId != lastTrackedTargetId)
                 {
                     // A new target appeared, clear the tracking
-                    Console.WriteLine($"[DEBUG] New target ID detected: {currentTargetId}, resetting click tracking");
+                    //Console.WriteLine($"[DEBUG] New target ID detected: {currentTargetId}, resetting click tracking");
                     clickedAroundTargets.Clear();
                     lastTrackedTargetId = currentTargetId;
                 }
@@ -1624,15 +1614,15 @@ class Program
                     if (previousTargetId == 0 && currentTargetId != 0)
                     {
                         previousChasePosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
-                        Console.WriteLine($"[DEBUG] Chase began at position: X={currentX}, Y={currentY}, Z={currentZ}");
+                        //Console.WriteLine($"[DEBUG] Chase began at position: X={currentX}, Y={currentY}, Z={currentZ}");
                     }
 
                     if (blacklistedTargets.Contains(currentTargetId))
                     {
 
-                        Console.WriteLine(
-                            $"[DEBUG] Skipping blacklisted target ID: {currentTargetId}"
-                        );
+                        //Console.WriteLine(
+                        ////$"[DEBUG] Skipping blacklisted target ID: {currentTargetId}"
+                        ////);
                         Sleep(1);
                         continue;
                     }
@@ -1642,9 +1632,9 @@ class Program
                     )
                     {
 
-                        Console.WriteLine(
-                            $"[DEBUG] Skipping blacklisted monster: {monsterName}"
-                        );
+                        //Console.WriteLine(
+                        ////$"[DEBUG] Skipping blacklisted monster: {monsterName}"
+                        ////);
                         Sleep(1);
                         continue;
                     }
@@ -1674,13 +1664,13 @@ class Program
                     // Check if click around is in progress - never press F6 while click around is happening
                     if (isClickAroundInProgress)
                     {
-                        Console.WriteLine("[DEBUG] Click around operation in progress, skipping F6");
+                        //Console.WriteLine("[DEBUG] Click around operation in progress, skipping F6");
                     }
                     // Check if F6 was pressed very recently
                     else if ((DateTime.Now - lastF6Press).TotalMilliseconds < F6Cooldown.TotalMilliseconds)
                     {
                         TimeSpan remainingCooldown = F6Cooldown - (DateTime.Now - lastF6Press);
-                        Console.WriteLine($"[DEBUG] F6 cooldown active: {remainingCooldown.TotalMilliseconds:F0}ms remaining");
+                        //Console.WriteLine($"[DEBUG] F6 cooldown active: {remainingCooldown.TotalMilliseconds:F0}ms remaining");
                     }
                 }
 
@@ -1691,10 +1681,10 @@ class Program
                 if (currentTargetId != 0)
                 {
 
-                    Console.WriteLine($"[DEBUG] Found target: {currentTargetId}");
+                    //Console.WriteLine($"[DEBUG] Found target: {currentTargetId}");
                     continue;
                 }
-                Console.WriteLine("[DEBUG] No target found, proceeding with movement");
+                //Console.WriteLine("[DEBUG] No target found, proceeding with movement");
                 Sleep(1);
                 Coordinate nextWaypoint = FindNextWaypoint(
                     ref waypoints,
@@ -1704,24 +1694,24 @@ class Program
                     ref currentCoordIndex
                 );
                 currentTarget = nextWaypoint;
-                Console.WriteLine(
-                    $"[DEBUG] Moving to waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
-                );
+                //Console.WriteLine(
+                ////$"[DEBUG] Moving to waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                ////);
                 int distanceX = Math.Abs(nextWaypoint.X - currentX);
                 int distanceY = Math.Abs(nextWaypoint.Y - currentY);
                 int totalDistance = distanceX + distanceY;
                 if (distanceX > 5 || distanceY > 5)
                 {
 
-                    Console.WriteLine(
-                        $"[DEBUG] Waypoint too far to click: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
-                    );
+                    //Console.WriteLine(
+                    ////$"[DEBUG] Waypoint too far to click: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                    ////);
 
-                    Console.WriteLine(
-                        $"[DEBUG] Current position: X={currentX}, Y={currentY}, Z={currentZ}"
-                    );
+                    //Console.WriteLine(
+                    ////$"[DEBUG] Current position: X={currentX}, Y={currentY}, Z={currentZ}"
+                    ////);
 
-                    Console.WriteLine($"[DEBUG] Distance: X={distanceX}, Y={distanceY}");
+                    //Console.WriteLine($"[DEBUG] Distance: X={distanceX}, Y={distanceY}");
                     int maxMoves = 5;
                     int movesMade = 0;
                     while ((distanceX > 5 || distanceY > 5) && movesMade < maxMoves)
@@ -1743,32 +1733,32 @@ class Program
                         distanceX = Math.Abs(nextWaypoint.X - currentX);
                         distanceY = Math.Abs(nextWaypoint.Y - currentY);
 
-                        Console.WriteLine(
-                            $"[DEBUG] After move #{movesMade + 1}, new position: X={currentX}, Y={currentY}"
-                        );
+                        //Console.WriteLine(
+                        ////$"[DEBUG] After move #{movesMade + 1}, new position: X={currentX}, Y={currentY}"
+                        ////);
 
-                        Console.WriteLine(
-                            $"[DEBUG] New distance: X={distanceX}, Y={distanceY}"
-                        );
+                        //Console.WriteLine(
+                        ////$"[DEBUG] New distance: X={distanceX}, Y={distanceY}"
+                        ////);
                         movesMade++;
                         if (distanceX <= 5 && distanceY <= 5)
                         {
 
-                            Console.WriteLine("[DEBUG] Now within clickable range");
+                            //Console.WriteLine("[DEBUG] Now within clickable range");
                             break;
                         }
                         if (movesMade % 2 == 0)
                         {
 
-                            Console.WriteLine("[DEBUG] Switching movement priority");
+                            //Console.WriteLine("[DEBUG] Switching movement priority");
                         }
                     }
                     if (distanceX > 5 || distanceY > 5)
                     {
 
-                        Console.WriteLine(
-                            "[DEBUG] Still too far after arrow movement, finding a new waypoint"
-                        );
+                        //Console.WriteLine(
+                        ////"[DEBUG] Still too far after arrow movement, finding a new waypoint"
+                        ////);
                         currentCoordIndex = FindClosestWaypointIndex(
                             waypoints,
                             currentX,
@@ -1790,7 +1780,7 @@ class Program
                     // If we're now close to a waypoint, stop returning from chase
                     if (distanceToWaypointX < 5 && distanceToWaypointY < 5)
                     {
-                        Console.WriteLine($"[DEBUG] While returning from chase, found close waypoint (dx={distanceToWaypointX}, dy={distanceToWaypointY}), stopping return");
+                        //Console.WriteLine($"[DEBUG] While returning from chase, found close waypoint (dx={distanceToWaypointX}, dy={distanceToWaypointY}), stopping return");
                         chaseTracker.CompleteReturn();
                         isReturningFromChase = false;
 
@@ -1799,20 +1789,20 @@ class Program
                         continue;
                     }
 
-                    Console.WriteLine("[DEBUG] Using arrow keys to return from chase");
+                    //Console.WriteLine("[DEBUG] Using arrow keys to return from chase");
                     // Move step by step with arrow keys instead of clicking
                     MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypoint.X, nextWaypoint.Y);
                     SendKeyPress(VK_F6);
                     Sleep(100); // Give the game time to process the movement
                     continue;   // Skip the normal waypoint clicking
                 }
-                Console.WriteLine(
-                    $"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
-                );
+                //Console.WriteLine(
+                ////$"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                ////);
                 bool clickSuccess = ClickWaypoint(nextWaypoint);
-                Console.WriteLine(
-                    $"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
-                );
+                //Console.WriteLine(
+                ////$"[DEBUG] Clicking waypoint: X={nextWaypoint.X}, Y={nextWaypoint.Y}, Z={nextWaypoint.Z}"
+                ////);
 
                 // Remove the Sleep(2500) and replace with this destination-checking code
                 if (clickSuccess)
@@ -1823,7 +1813,7 @@ class Program
                     DateTime wp_startTime = DateTime.Now;
                     bool wp_reachedDestination = false;
 
-                    Console.WriteLine("[DEBUG] Waiting for character to reach destination...");
+                    //Console.WriteLine("[DEBUG] Waiting for character to reach destination...");
 
                     while (DateTime.Now.Subtract(wp_startTime).TotalMilliseconds < wp_MAX_WAIT_TIME_MS)
                     {
@@ -1883,9 +1873,9 @@ class Program
                             if (currentTargetId != 0)
                             {
                                 ToggleRing(targetWindow, true);
-                                Console.WriteLine(
-                                    "[DEBUG] Target found during movement, switching to combat"
-                                );
+                                //Console.WriteLine(
+                                ////"[DEBUG] Target found during movement, switching to combat"
+                                ////);
                                 break;
                             }
                             else
@@ -1924,9 +1914,9 @@ class Program
                         }
                         if (currentTargetId != 0)
                         {
-                            Console.WriteLine(
-                                "[DEBUG] Target found after movement, switching to combat"
-                            );
+                            //Console.WriteLine(
+                            ////"[DEBUG] Target found after movement, switching to combat"
+                            ////);
                             continue;
                         }
                     }
@@ -1938,7 +1928,7 @@ class Program
                 Sleep(1);
             }
         }
-        Console.WriteLine("Path playback ended");
+        //Console.WriteLine("Path playback ended");
     }
 
     // Updated FindNextWaypoint method with improved randomization handling
@@ -1950,7 +1940,7 @@ class Program
         ref int currentIndex
     )
     {
-        Console.WriteLine("\n=== FIND NEXT WAYPOINT DEBUG ===");
+        //Console.WriteLine("\n=== FIND NEXT WAYPOINT DEBUG ===");
 
         // First, check if we should return from chase
         Coordinate returnPosition = chaseTracker.GetReturnPosition();
@@ -1965,7 +1955,7 @@ class Program
             // If we're already close to a waypoint, reset chase state and continue normal pathing
             if (distanceToWaypointX < 5 && distanceToWaypointY < 5)
             {
-                Console.WriteLine($"[DEBUG] Already close to waypoint (dx={distanceToWaypointX}, dy={distanceToWaypointY}), resetting chase state");
+                //Console.WriteLine($"[DEBUG] Already close to waypoint (dx={distanceToWaypointX}, dy={distanceToWaypointY}), resetting chase state");
                 chaseTracker.CompleteReturn();
                 isReturningFromChase = false;
 
@@ -1973,7 +1963,7 @@ class Program
             }
             else if (returnPosition != null)
             {
-                Console.WriteLine($"[DEBUG] Returning to chase start position: X={returnPosition.X}, Y={returnPosition.Y}, Z={returnPosition.Z}");
+                //Console.WriteLine($"[DEBUG] Returning to chase start position: X={returnPosition.X}, Y={returnPosition.Y}, Z={returnPosition.Z}");
 
                 // Check if we're already close to the return position
                 int distanceX = Math.Abs(returnPosition.X - currentX);
@@ -1981,7 +1971,7 @@ class Program
 
                 if (distanceX <= 1 && distanceY <= 1)
                 {
-                    Console.WriteLine("[DEBUG] Reached chase start position, resuming normal pathing");
+                    //Console.WriteLine("[DEBUG] Reached chase start position, resuming normal pathing");
                     chaseTracker.CompleteReturn();
                     isReturningFromChase = false;
                 }
@@ -1995,49 +1985,49 @@ class Program
             else
             {
                 // Something went wrong, reset the chase state
-                Console.WriteLine("[DEBUG] Chase return position is null, resetting chase state");
+                //Console.WriteLine("[DEBUG] Chase return position is null, resetting chase state");
                 chaseTracker.CompleteReturn();
                 isReturningFromChase = false;
             }
         }
 
-        Console.WriteLine($"Current position: X={currentX}, Y={currentY}, Z={currentZ}");
-        Console.WriteLine($"Current index: {currentIndex}");
-        Console.WriteLine($"Total waypoints: {waypoints.Count}");
+        //Console.WriteLine($"Current position: X={currentX}, Y={currentY}, Z={currentZ}");
+        //Console.WriteLine($"Current index: {currentIndex}");
+        //Console.WriteLine($"Total waypoints: {waypoints.Count}");
 
         if (waypoints.Count == 0)
         {
-            Console.WriteLine("ERROR: Empty waypoints list");
+            //Console.WriteLine("ERROR: Empty waypoints list");
             return new Coordinate { X = currentX, Y = currentY, Z = currentZ };
         }
 
         if (currentIndex < 0 || currentIndex >= waypoints.Count)
         {
-            Console.WriteLine($"ERROR: Current index {currentIndex} out of bounds");
+            //Console.WriteLine($"ERROR: Current index {currentIndex} out of bounds");
             currentIndex = Math.Max(0, Math.Min(waypoints.Count - 1, currentIndex));
-            Console.WriteLine($"Corrected to index {currentIndex}");
+            //Console.WriteLine($"Corrected to index {currentIndex}");
         }
 
         // Check if we're at the last waypoint
         if (currentIndex == waypoints.Count - 1)
         {
-            Console.WriteLine("At last waypoint, checking distance to first waypoint...");
+            //Console.WriteLine("At last waypoint, checking distance to first waypoint...");
             int distanceToFirst =
                 Math.Abs(waypoints[0].X - currentX) + Math.Abs(waypoints[0].Y - currentY);
-            Console.WriteLine($"Distance to first waypoint: {distanceToFirst} steps");
+            //Console.WriteLine($"Distance to first waypoint: {distanceToFirst} steps");
 
             if (distanceToFirst > 12)
             {
-                Console.WriteLine("Distance > 12, REVERSING THE LIST NOW");
+                //Console.WriteLine("Distance > 12, REVERSING THE LIST NOW");
                 waypoints.Reverse();
                 currentIndex = 0;
-                Console.WriteLine("List reversed, now at index 0");
+                //Console.WriteLine("List reversed, now at index 0");
             }
             else
             {
-                Console.WriteLine("Distance <= 12, RESETTING to beginning of list");
+                //Console.WriteLine("Distance <= 12, RESETTING to beginning of list");
                 currentIndex = 0;
-                Console.WriteLine("Reset to index 0");
+                //Console.WriteLine("Reset to index 0");
             }
         }
 
@@ -2046,7 +2036,7 @@ class Program
         int maxAllowedY = 5;
         int bestIndex = -1;
         double maxDistance = 0;
-        Console.WriteLine("Starting waypoint search...");
+        //Console.WriteLine("Starting waypoint search...");
 
         int startIndex = currentIndex + 1;
         // If we've wrapped around to the beginning
@@ -2056,7 +2046,7 @@ class Program
         }
 
         int endIndex = Math.Min(waypoints.Count - 1, startIndex + maxSearchCount - 1);
-        Console.WriteLine($"Searching from index {startIndex} to {endIndex}");
+        //Console.WriteLine($"Searching from index {startIndex} to {endIndex}");
 
         for (int index = startIndex; index <= endIndex; index++)
         {
@@ -2066,42 +2056,42 @@ class Program
             Coordinate waypoint = waypoints[index];
             int deltaX = Math.Abs(waypoint.X - currentX);
             int deltaY = Math.Abs(waypoint.Y - currentY);
-            Console.WriteLine(
-                $"  Checking waypoint[{index}]: X={waypoint.X}, Y={waypoint.Y}, deltaX={deltaX}, deltaY={deltaY}"
-            );
+            //Console.WriteLine(
+            ////$"  Checking waypoint[{index}]: X={waypoint.X}, Y={waypoint.Y}, deltaX={deltaX}, deltaY={deltaY}"
+            ////);
 
             if (deltaX <= maxAllowedX && deltaY <= maxAllowedY)
             {
                 double distance = Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
-                Console.WriteLine($"  Distance: {distance:F2} (within limits)");
+                //Console.WriteLine($"  Distance: {distance:F2} (within limits)");
 
                 if (distance > maxDistance)
                 {
                     maxDistance = distance;
                     bestIndex = index;
-                    Console.WriteLine($"  New best! Distance={distance:F2}, Index={bestIndex}");
+                    //Console.WriteLine($"  New best! Distance={distance:F2}, Index={bestIndex}");
                 }
             }
             else
             {
-                Console.WriteLine($"  Skipped: Outside distance limits");
+                //Console.WriteLine($"  Skipped: Outside distance limits");
             }
         }
 
         if (bestIndex == -1)
         {
-            Console.WriteLine("No valid waypoint found ahead. Choosing adjacent waypoint...");
+            //Console.WriteLine("No valid waypoint found ahead. Choosing adjacent waypoint...");
 
             // If we're at the last waypoint, we've already reset the index above
             if (currentIndex < waypoints.Count - 1)
             {
                 bestIndex = currentIndex + 1;
-                Console.WriteLine($"Moving to next waypoint (index {bestIndex})");
+                //Console.WriteLine($"Moving to next waypoint (index {bestIndex})");
             }
             else
             {
                 bestIndex = 0; // Reset to beginning 
-                Console.WriteLine("At last waypoint, resetting to index 0");
+                //Console.WriteLine("At last waypoint, resetting to index 0");
             }
         }
 
@@ -2175,19 +2165,19 @@ class Program
                 // Choose a random position from our valid options
                 int randomIndex = random.Next(potentialRandomPositions.Count);
                 result = potentialRandomPositions[randomIndex];
-                Console.WriteLine($"  RANDOMIZED WAYPOINT: Original({originalResult.X},{originalResult.Y}) → Random({result.X},{result.Y})");
+                //Console.WriteLine($"  RANDOMIZED WAYPOINT: Original({originalResult.X},{originalResult.Y}) → Random({result.X},{result.Y})");
             }
             else
             {
                 // If no valid random positions found, use the original waypoint
-                Console.WriteLine($"  No valid randomized positions found, using original waypoint ({result.X},{result.Y})");
+                //Console.WriteLine($"  No valid randomized positions found, using original waypoint ({result.X},{result.Y})");
             }
         }
 
-        Console.WriteLine(
-            $"Final choice: waypoint[{bestIndex}]: X={result.X}, Y={result.Y}, Z={result.Z}"
-        );
-        Console.WriteLine("=== END FIND NEXT WAYPOINT DEBUG ===\n");
+        //Console.WriteLine(
+        ////$"Final choice: waypoint[{bestIndex}]: X={result.X}, Y={result.Y}, Z={result.Z}"
+        ////);
+        //Console.WriteLine("=== END FIND NEXT WAYPOINT DEBUG ===\n");
         return result;
     }
 
@@ -2267,9 +2257,9 @@ class Program
     {
         GetClientRect(targetWindow, out RECT windowRect);
         int windowHeight = windowRect.Bottom - windowRect.Top;
-        Console.WriteLine($"[DEBUG] Detected window height: {windowHeight}px");
+        //Console.WriteLine($"[DEBUG] Detected window height: {windowHeight}px");
         smallWindow = windowHeight < 1200;
-        Console.WriteLine($"[DEBUG] Using {(smallWindow ? "small window (1080p)" : "large window (1440p)")} settings");
+        //Console.WriteLine($"[DEBUG] Using {(smallWindow ? "small window (1080p)" : "large window (1440p)")} settings");
 
         bool valueChanged = (previousSmallWindowValue != smallWindow);
         previousSmallWindowValue = smallWindow;
@@ -2288,13 +2278,13 @@ class Program
         closeCorpseY = smallWindow ? 320 : 400;
 
         {
-            Console.WriteLine($"[DEBUG] Window size changed to: {(smallWindow ? "small (1080p)" : "large (1440p)")}");
-            Console.WriteLine($"[DEBUG] UI positions updated:");
-            Console.WriteLine($"  - Pixel size: {pixelSize}");
-            Console.WriteLine($"  - Base Y Offset: {baseYOffset}");
-            Console.WriteLine($"  - Inventory position: ({inventoryX},{inventoryY})");
-            Console.WriteLine($"  - Equipment position: ({equipmentX},{equipmentY})");
-            Console.WriteLine($"  - Second slot position: ({secondSlotBpX},{secondSLotBpY})");
+            //Console.WriteLine($"[DEBUG] Window size changed to: {(smallWindow ? "small (1080p)" : "large (1440p)")}");
+            //Console.WriteLine($"[DEBUG] UI positions updated:");
+            //Console.WriteLine($"  - Pixel size: {pixelSize}");
+            //Console.WriteLine($"  - Base Y Offset: {baseYOffset}");
+            //Console.WriteLine($"  - Inventory position: ({inventoryX},{inventoryY})");
+            //Console.WriteLine($"  - Equipment position: ({equipmentX},{equipmentY})");
+            //Console.WriteLine($"  - Second slot position: ({secondSlotBpX},{secondSLotBpY})");
         }
 
         if (threadFlags["spawnwatch"] && SPAWNWATCHER.IsActive())
@@ -2423,8 +2413,6 @@ class Program
     {
         return (IntPtr)((y << 16) | (x & 0xFFFF));
     }
-    [DllImport("user32.dll")]
-    static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
     static void ShuffleArray((int dx, int dy)[] array, Random random)
     {
         int n = array.Length;
@@ -2448,7 +2436,7 @@ class Program
         {
             // Set flag to indicate click around is in progress
             isClickAroundInProgress = true;
-            Console.WriteLine("[DEBUG] Click around character operation started");
+            //Console.WriteLine("[DEBUG] Click around character operation started");
 
             // Get last known target coordinates and player position
             int currentX, currentY, currentZ;
@@ -2466,15 +2454,15 @@ class Program
                 monsterZ = lastKnownMonsterZ;
             }
 
-            Console.WriteLine($"[DEBUG] Player position: X={currentX}, Y={currentY}, Z={currentZ}");
-            Console.WriteLine($"[DEBUG] Last monster position: X={monsterX}, Y={monsterY}, Z={monsterZ}");
+            //Console.WriteLine($"[DEBUG] Player position: X={currentX}, Y={currentY}, Z={currentZ}");
+            //Console.WriteLine($"[DEBUG] Last monster position: X={monsterX}, Y={monsterY}, Z={monsterZ}");
 
             // Get window dimensions for center calculation
             GetClientRect(hWnd, out RECT rect);
             int screenCenterX = (rect.Right - rect.Left) / 2 - 186;
             int screenCenterY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
 
-            Console.WriteLine($"[DEBUG] Screen center: X={screenCenterX}, Y={screenCenterY}");
+            //Console.WriteLine($"[DEBUG] Screen center: X={screenCenterX}, Y={screenCenterY}");
 
             // Define all directions for clicking in exact clockwise order
             (int dx, int dy)[] clickPattern = new[]
@@ -2499,7 +2487,7 @@ class Program
                 int relX = monsterX - currentX;
                 int relY = monsterY - currentY;
 
-                Console.WriteLine($"[DEBUG] Relative monster position: ({relX}, {relY})");
+                //Console.WriteLine($"[DEBUG] Relative monster position: ({relX}, {relY})");
 
                 // Find closest direction in our click pattern
                 if (relX != 0 || relY != 0)
@@ -2510,7 +2498,7 @@ class Program
                         Math.Max(-1, Math.Min(1, relY))
                     );
 
-                    Console.WriteLine($"[DEBUG] Normalized monster direction: ({monsterRelativePos.dx}, {monsterRelativePos.dy})");
+                    //Console.WriteLine($"[DEBUG] Normalized monster direction: ({monsterRelativePos.dx}, {monsterRelativePos.dy})");
                 }
             }
 
@@ -2521,7 +2509,7 @@ class Program
             if (monsterRelativePos.dx != 0 || monsterRelativePos.dy != 0)
             {
                 orderedClickPattern.Add(monsterRelativePos);
-                Console.WriteLine($"[DEBUG] First click will be at monster position: ({monsterRelativePos.dx}, {monsterRelativePos.dy})");
+                //Console.WriteLine($"[DEBUG] First click will be at monster position: ({monsterRelativePos.dx}, {monsterRelativePos.dy})");
             }
 
             // Then add all other positions in clockwise order
@@ -2534,10 +2522,10 @@ class Program
                 }
             }
 
-            Console.WriteLine("[DEBUG] Final click pattern:");
+            //Console.WriteLine("[DEBUG] Final click pattern:");
             for (int i = 0; i < orderedClickPattern.Count; i++)
             {
-                Console.WriteLine($"[DEBUG]   {i + 1}: ({orderedClickPattern[i].dx}, {orderedClickPattern[i].dy})");
+                //Console.WriteLine($"[DEBUG]   {i + 1}: ({orderedClickPattern[i].dx}, {orderedClickPattern[i].dy})");
             }
 
             // Add a delay before clicking to allow overlays to initialize
@@ -2553,7 +2541,7 @@ class Program
                 int clickX = screenCenterX + (dx * pixelSize);
                 int clickY = screenCenterY + (dy * pixelSize);
 
-                Console.WriteLine($"[DEBUG] Clicking at screen position: X={clickX}, Y={clickY} (offset: {dx}, {dy})");
+                //Console.WriteLine($"[DEBUG] Clicking at screen position: X={clickX}, Y={clickY} (offset: {dx}, {dy})");
 
                 Sleep(1); // Give time for highlight to appear
                 VirtualRightClick(targetWindow, clickX, clickY);
@@ -2568,7 +2556,7 @@ class Program
 
                 if (currentTargetId != 0)
                 {
-                    Console.WriteLine($"[DEBUG] Target acquired during click around. Target ID: {currentTargetId}");
+                    //Console.WriteLine($"[DEBUG] Target acquired during click around. Target ID: {currentTargetId}");
                     lastClickAroundTargetId = currentTargetId; // Track the target ID we found
                     lastClickAroundCompleted = DateTime.Now;
 
@@ -2595,7 +2583,7 @@ class Program
                 PlayClickCompletedSound();
             }
 
-            Console.WriteLine("[DEBUG] Click around character operation completed");
+            //Console.WriteLine("[DEBUG] Click around character operation completed");
             lastClickAroundCompleted = DateTime.Now;
             isClickAroundInProgress = false;
             return false; // No target found
@@ -2620,11 +2608,11 @@ class Program
     {
         int lParam = (y << 16) | (x & 0xFFFF);
 
-        PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
+        SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)lParam);
         Sleep(1);
-        PostMessage(hWnd, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
+        SendMessage(hWnd, WM_LBUTTONDOWN, (IntPtr)1, (IntPtr)lParam);
         Sleep(1);
-        PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
+        SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, (IntPtr)lParam);
         Sleep(1);
 
         // Record the click position
@@ -2849,7 +2837,7 @@ class Program
 
         if (!string.IsNullOrEmpty(monsterName) && monsterName != "" && !whitelistedMonsterNames.Contains(monsterName))
         {
-            Console.WriteLine($"[CRITICAL] Non-whitelisted monster detected: '{monsterName}'. Stopping all threads!");
+            //Console.WriteLine($"[CRITICAL] Non-whitelisted monster detected: '{monsterName}'. Stopping all threads!");
 
             // Stop all threads
             threadFlags["recording"] = false;
@@ -2870,7 +2858,7 @@ class Program
 
     static void PlayEmergencyAlert(int durationSeconds)
     {
-        Console.WriteLine($"[EMERGENCY] Playing alert for {durationSeconds} seconds!");
+        //Console.WriteLine($"[EMERGENCY] Playing alert for {durationSeconds} seconds!");
 
         // Create a dedicated thread for the alert that won't be stopped by the other thread controls
         Thread alertThread = new Thread(() =>
@@ -2915,7 +2903,7 @@ class Program
     static readonly int MAX_MONSTER_DISTANCE = 4; // Maximum allowed distance in sqm
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
-        Sleep(256);
+        ScanRingContainersForMisplacedRings();
         try
         {
             int currentTargetId;
@@ -2936,44 +2924,47 @@ class Program
                 return;
             }
 
+
+
             if (equip && isRingEquipped == false && withLifeRing && currentTargetId != 0)
             {
                 int lifeRingX = inventoryX;
                 int lifeRingY = inventoryY + 3 * pixelSize + 15;
 
-                Console.WriteLine("[DEBUG] Moving life ring back to inventory");
+                //Console.WriteLine("[DEBUG] Moving life ring back to inventory");
 
                 // Perform drag-and-drop to move life ring back to inventory
                 IntPtr lifeRingSourceLParam = MakeLParam(equipmentX, equipmentY);
-                PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lifeRingSourceLParam);
-                Sleep(25);
-                PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lifeRingSourceLParam);
-                Sleep(25);
+                SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lifeRingSourceLParam);
+                Sleep(1);
+                SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lifeRingSourceLParam);
+                Sleep(1);
                 // Record the source click for our overlay
                 RecordClickPosition(equipmentX, equipmentY, true);
 
                 // Destination is life ring inventory slot
                 IntPtr lifeRingDestLParam = MakeLParam(lifeRingX, lifeRingY);
-                PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lifeRingDestLParam);
-                Sleep(25);
-                PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
+                SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lifeRingDestLParam);
+                Sleep(1);
+                SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
                 Sleep(1);
                 // Record the destination click for our overlay
                 RecordClickPosition(lifeRingX, lifeRingY, true);
 
-                Console.WriteLine("[DEBUG] Successfully moved life ring back to inventory");
+                //Console.WriteLine("[DEBUG] Successfully moved life ring back to inventory");
                 //Sleep(100); // Add a small delay before continuing with normal ring
                 //Sleep(4000);
-                Sleep(256);
+                Sleep(1);
             }
 
+            Sleep(512);
             // Check blacklisted monsters if trying to equip
             if (equip && currentTargetId != 0)
             {
                 var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
                 if (!string.IsNullOrEmpty(monsterName) && blacklistedRingMonsters.Contains(monsterName))
                 {
-                    Console.WriteLine($"[DEBUG] Monster '{monsterName}' is blacklisted for ring usage");
+                    //Console.WriteLine($"[DEBUG] Monster '{monsterName}' is blacklisted for ring usage");
                     return;
                 }
 
@@ -3001,22 +2992,22 @@ class Program
             int destX = equip ? equipmentX : inventoryX;
             int destY = equip ? equipmentY : inventoryY;
 
-            Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} ring");
+            //Console.WriteLine($"[DEBUG] {(equip ? "Equipping" : "De-equipping")} ring");
 
             // Perform the drag-and-drop operation
             IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
-            PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
+            SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
             Sleep(25);
-            PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
+            SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
             Sleep(25);
 
             // *** Record the source click for our overlay ***
             RecordClickPosition(sourceX, sourceY, true);
 
             IntPtr destLParam = MakeLParam(destX, destY);
-            PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
+            SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
             Sleep(25);
-            PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
+            SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
             Sleep(1);
 
             // *** Record the destination click for our overlay ***
@@ -3032,42 +3023,42 @@ class Program
                 int lifeRingX = inventoryX;
                 int lifeRingY = inventoryY + 3 * pixelSize + 15;
 
-                Console.WriteLine("[DEBUG] Equipping life ring");
+                //Console.WriteLine("[DEBUG] Equipping life ring");
                 double xd = 9999999;
                 lock (memoryLock)
                 {
                     xd = curMana;
                 }
-                if(xd < 845)
+                if (xd < 845)
                 {
                     IntPtr lifeRingSourceLParam = MakeLParam(lifeRingX, lifeRingY);
-                    PostMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lifeRingSourceLParam);
+                    SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lifeRingSourceLParam);
                     Sleep(25);
-                    PostMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lifeRingSourceLParam);
+                    SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lifeRingSourceLParam);
                     Sleep(25);
                     // Record the source click for our overlay
                     RecordClickPosition(lifeRingX, lifeRingY, true);
 
                     // Destination is equipment slot
                     IntPtr lifeRingDestLParam = MakeLParam(equipmentX, equipmentY);
-                    PostMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lifeRingDestLParam);
+                    SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lifeRingDestLParam);
                     Sleep(25);
-                    PostMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
+                    SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
                     Sleep(1);
                     // Record the destination click for our overlay
                     RecordClickPosition(equipmentX, equipmentY, true);
                 }
-                Console.WriteLine("[DEBUG] Successfully equipped life ring");
+                //Console.WriteLine("[DEBUG] Successfully equipped life ring");
             }
 
             // Log the result of the operation
             if (equip)
             {
-                Console.WriteLine($"[DEBUG] Successfully equipped ring for target {currentTargetId}");
+                //Console.WriteLine($"[DEBUG] Successfully equipped ring for target {currentTargetId}");
             }
             else
             {
-                Console.WriteLine($"[DEBUG] Successfully de-equipped ring");
+                //Console.WriteLine($"[DEBUG] Successfully de-equipped ring");
             }
         }
         catch (Exception ex)
@@ -3127,23 +3118,23 @@ class Program
             // Check if sound files exist
             if (!File.Exists(clickCompletedSoundPath))
             {
-                Console.WriteLine("Warning: click_completed.wav not found. Using system beep instead.");
+                //Console.WriteLine("Warning: click_completed.wav not found. Using system beep instead.");
             }
             else
             {
-                Console.WriteLine("Found click_completed.wav");
+                //Console.WriteLine("Found click_completed.wav");
             }
 
             if (!File.Exists(positionAlertSoundPath))
             {
-                Console.WriteLine("Warning: position_alert.wav not found. Using system beep instead.");
+                //Console.WriteLine("Warning: position_alert.wav not found. Using system beep instead.");
             }
             else
             {
-                Console.WriteLine("Found position_alert.wav");
+                //Console.WriteLine("Found position_alert.wav");
             }
 
-            Console.WriteLine("Sound system initialized successfully.");
+            //Console.WriteLine("Sound system initialized successfully.");
 
             // Test beep to verify sound capability
             //Beep(800, 200);
@@ -3170,14 +3161,14 @@ class Program
                 bool success = PlaySound(clickCompletedSoundPath, IntPtr.Zero, SND_FILENAME | SND_ASYNC);
                 if (success)
                 {
-                    Console.WriteLine("[SOUND] Click around completed sound played from file.");
+                    //Console.WriteLine("[SOUND] Click around completed sound played from file.");
                     return;
                 }
             }
 
             // Fall back to Beep if file doesn't exist or PlaySound failed
             Beep(CLICK_COMPLETED_FREQ, CLICK_COMPLETED_DURATION);
-            Console.WriteLine("[SOUND] Click around completed beep played.");
+            //Console.WriteLine("[SOUND] Click around completed beep played.");
         }
         catch (Exception ex)
         {
@@ -3206,7 +3197,7 @@ class Program
                 return;
             }
 
-            Console.WriteLine($"[SOUND] Starting position alert sound (max {maxDurationSeconds} seconds).");
+            //Console.WriteLine($"[SOUND] Starting position alert sound (max {maxDurationSeconds} seconds).");
             lastPositionAlertTime = DateTime.Now;
 
             // Create a new cancellation token source
@@ -3265,7 +3256,7 @@ class Program
                         Thread.Sleep(1500);
                     }
 
-                    Console.WriteLine("[SOUND] Position alert sound stopped.");
+                    //Console.WriteLine("[SOUND] Position alert sound stopped.");
                 }
                 catch (TaskCanceledException)
                 {
@@ -3295,7 +3286,7 @@ class Program
             {
                 positionAlertCts.Cancel();
                 positionAlertCts = null;
-                Console.WriteLine("[SOUND] Position alert sound cancelled.");
+                //Console.WriteLine("[SOUND] Position alert sound cancelled.");
             }
         }
     }
@@ -3330,7 +3321,7 @@ class Program
         // If the closest waypoint is too far, start playing the alert
         if (minDistance > MAX_DISTANCE_SQMS)
         {
-            Console.WriteLine($"[WARNING] Position too far from any waypoint! Distance: {minDistance} sqm");
+            //Console.WriteLine($"[WARNING] Position too far from any waypoint! Distance: {minDistance} sqm");
             StartPositionAlertSound();
         }
         else
@@ -3583,7 +3574,7 @@ class Program
                 (now - messageTypeTimes[messageType]).TotalSeconds >= DISPLAY_COOLDOWN_SECONDS)
             {
                 // Display the message
-                Console.WriteLine(message);
+                //Console.WriteLine(message);
 
                 // Update the last display time for this message type
                 messageTypeTimes[messageType] = now;
@@ -3643,7 +3634,7 @@ class Program
 
         if (expiredTargets.Count > 0)
         {
-            Console.WriteLine($"[DEBUG] Removed {expiredTargets.Count} expired blacklisted targets");
+            //Console.WriteLine($"[DEBUG] Removed {expiredTargets.Count} expired blacklisted targets");
         }
     }
 
@@ -3698,7 +3689,7 @@ class Program
             // If monster is too far away and we're not moving
             if (totalDistance > MAX_MONSTER_DISTANCE)
             {
-                Console.WriteLine($"[DEBUG] Target monster (ID: {currentTargetId}) is too far away ({totalDistance} sqm) and player is stuck. Blacklisting for {TARGET_BLACKLIST_DURATION.TotalSeconds} seconds.");
+                //Console.WriteLine($"[DEBUG] Target monster (ID: {currentTargetId}) is too far away ({totalDistance} sqm) and player is stuck. Blacklisting for {TARGET_BLACKLIST_DURATION.TotalSeconds} seconds.");
 
                 // Blacklist this target ID
                 blacklistedTargetTimers[currentTargetId] = DateTime.Now.Add(TARGET_BLACKLIST_DURATION);
@@ -3722,15 +3713,15 @@ class Program
             return;
 
         var now = DateTime.Now;
-        Console.WriteLine("\nBlacklisted Targets:");
-        Console.WriteLine(new string('-', 40));
+        //Console.WriteLine("\nBlacklisted Targets:");
+        //Console.WriteLine(new string('-', 40));
 
         foreach (var kvp in blacklistedTargetTimers)
         {
             TimeSpan remainingTime = kvp.Value - now;
             if (remainingTime.TotalSeconds > 0)
             {
-                Console.WriteLine($"  Target ID: {kvp.Key}, Time remaining: {remainingTime.TotalSeconds:F1} seconds");
+                //Console.WriteLine($"  Target ID: {kvp.Key}, Time remaining: {remainingTime.TotalSeconds:F1} seconds");
             }
         }
     }
@@ -3809,15 +3800,15 @@ class Program
             {
                 if (watcherActive)
                 {
-                    Console.WriteLine("[SPAWN] Watcher already running");
+                    //Console.WriteLine("[SPAWN] Watcher already running");
                     return;
                 }
 
                 if (!Directory.Exists(imageFolderPath))
                 {
                     Directory.CreateDirectory(imageFolderPath);
-                    Console.WriteLine($"[SPAWN] Created image directory: {Path.GetFullPath(imageFolderPath)}");
-                    Console.WriteLine("[SPAWN] Place PNG or JPG template images in this directory to detect them");
+                    //Console.WriteLine($"[SPAWN] Created image directory: {Path.GetFullPath(imageFolderPath)}");
+                    //Console.WriteLine("[SPAWN] Place PNG or JPG template images in this directory to detect them");
                 }
 
                 // Calculate scan area for template matching
@@ -3827,22 +3818,22 @@ class Program
                 scanWidth = pixelSize * 10;
                 scanHeight = pixelSize * 10;
 
-                Console.WriteLine($"[SPAWN] Scan area set to: Center({scanCenterX},{scanCenterY}), Size({scanWidth}x{scanHeight})");
-                Console.WriteLine($"[SPAWN] Color detection: {(colorDetectionEnabled ? "Enabled" : "Disabled")}");
+                //Console.WriteLine($"[SPAWN] Scan area set to: Center({scanCenterX},{scanCenterY}), Size({scanWidth}x{scanHeight})");
+                //Console.WriteLine($"[SPAWN] Color detection: {(colorDetectionEnabled ? "Enabled" : "Disabled")}");
 
                 LoadTemplates();
 
                 if (templates.Count == 0)
                 {
-                    Console.WriteLine($"[SPAWN] No template images found in {Path.GetFullPath(imageFolderPath)}");
-                    Console.WriteLine("[SPAWN] Add .png or .jpg files to detect them in-game");
+                    //Console.WriteLine($"[SPAWN] No template images found in {Path.GetFullPath(imageFolderPath)}");
+                    //Console.WriteLine("[SPAWN] Add .png or .jpg files to detect them in-game");
                 }
                 else
                 {
-                    Console.WriteLine($"[SPAWN] Loaded {templates.Count} template(s) to watch for:");
+                    //Console.WriteLine($"[SPAWN] Loaded {templates.Count} template(s) to watch for:");
                     foreach (var template in templates)
                     {
-                        Console.WriteLine($"[SPAWN] - {template.Name} ({template.Width}x{template.Height}, Priority: {template.Priority})");
+                        //Console.WriteLine($"[SPAWN] - {template.Name} ({template.Width}x{template.Height}, Priority: {template.Priority})");
                     }
                 }
 
@@ -3855,7 +3846,7 @@ class Program
                 watcherThread.Name = "OptimizedSpawnWatcher";
                 watcherThread.Start();
 
-                Console.WriteLine("[SPAWN] Optimized watcher thread started");
+                //Console.WriteLine("[SPAWN] Optimized watcher thread started");
             }
         }
 
@@ -3869,15 +3860,15 @@ class Program
                 }
 
                 watcherActive = false;
-                Console.WriteLine("[SPAWN] Watcher stopping...");
+                //Console.WriteLine("[SPAWN] Watcher stopping...");
 
                 if (scanCount > 0)
                 {
                     double avgScanTimeMs = (double)totalScanTime / scanCount;
                     double scansPerSecond = 1000.0 / avgScanTimeMs;
-                    Console.WriteLine($"[SPAWN] Final stats: {scanCount} scans completed");
-                    Console.WriteLine($"[SPAWN] Average scan time: {avgScanTimeMs:F2}ms");
-                    Console.WriteLine($"[SPAWN] Scan rate: {scansPerSecond:F1} scans/second");
+                    //Console.WriteLine($"[SPAWN] Final stats: {scanCount} scans completed");
+                    //Console.WriteLine($"[SPAWN] Average scan time: {avgScanTimeMs:F2}ms");
+                    //Console.WriteLine($"[SPAWN] Scan rate: {scansPerSecond:F1} scans/second");
                 }
 
                 // Clean up resources
@@ -3919,7 +3910,7 @@ class Program
                 scanWidth = pixelSize * 10;
                 scanHeight = pixelSize * 10;
 
-                Console.WriteLine($"[SPAWN] Scan area updated: Center({scanCenterX},{scanCenterY}), Size({scanWidth}x{scanHeight})");
+                //Console.WriteLine($"[SPAWN] Scan area updated: Center({scanCenterX},{scanCenterY}), Size({scanWidth}x{scanHeight})");
             }
         }
 
@@ -3937,14 +3928,14 @@ class Program
 
                 if (templates.Count == 0)
                 {
-                    Console.WriteLine($"[SPAWN] No template images found in {Path.GetFullPath(imageFolderPath)}");
+                    //Console.WriteLine($"[SPAWN] No template images found in {Path.GetFullPath(imageFolderPath)}");
                 }
                 else
                 {
-                    Console.WriteLine($"[SPAWN] Reloaded {templates.Count} template(s) to watch for:");
+                    //Console.WriteLine($"[SPAWN] Reloaded {templates.Count} template(s) to watch for:");
                     foreach (var template in templates)
                     {
-                        Console.WriteLine($"[SPAWN] - {template.Name} ({template.Width}x{template.Height}, Priority: {template.Priority})");
+                        //Console.WriteLine($"[SPAWN] - {template.Name} ({template.Width}x{template.Height}, Priority: {template.Priority})");
                     }
                 }
             }
@@ -3963,7 +3954,7 @@ class Program
                     .Where(f => IsImageFile(f))
                     .ToArray();
 
-                Console.WriteLine($"[SPAWN] Found {imageFiles.Length} image files in {Path.GetFullPath(imageFolderPath)}");
+                //Console.WriteLine($"[SPAWN] Found {imageFiles.Length} image files in {Path.GetFullPath(imageFolderPath)}");
 
                 // Load template priority settings if available
                 Dictionary<string, int> priorityMap = LoadTemplatePriorities();
@@ -3973,14 +3964,14 @@ class Program
                     try
                     {
                         string fileName = Path.GetFileNameWithoutExtension(filePath);
-                        Console.WriteLine($"[SPAWN] Loading template: {Path.GetFileName(filePath)}");
+                        //Console.WriteLine($"[SPAWN] Loading template: {Path.GetFileName(filePath)}");
 
                         // Load template image directly as Mat
                         Mat template = CvInvoke.Imread(filePath, ImreadModes.Color);
 
                         if (template.IsEmpty)
                         {
-                            Console.WriteLine($"[SPAWN] Failed to load template: {Path.GetFileName(filePath)}");
+                            //Console.WriteLine($"[SPAWN] Failed to load template: {Path.GetFileName(filePath)}");
                             continue;
                         }
 
@@ -3991,7 +3982,7 @@ class Program
                             priority = priorityMap[fileName];
                         }
 
-                        Console.WriteLine($"[SPAWN] Loaded {Path.GetFileName(filePath)}: {template.Width}x{template.Height}, Priority: {priority}");
+                        //Console.WriteLine($"[SPAWN] Loaded {Path.GetFileName(filePath)}: {template.Width}x{template.Height}, Priority: {priority}");
 
                         templates.Add(new TemplateInfo
                         {
@@ -4009,10 +4000,10 @@ class Program
                 // Sort templates by priority (higher priority first)
                 templates = templates.OrderByDescending(t => t.Priority).ToList();
 
-                Console.WriteLine("[SPAWN] Templates sorted by priority:");
+                //Console.WriteLine("[SPAWN] Templates sorted by priority:");
                 foreach (var template in templates)
                 {
-                    Console.WriteLine($"[SPAWN] - {template.Name} (Priority: {template.Priority})");
+                    //Console.WriteLine($"[SPAWN] - {template.Name} (Priority: {template.Priority})");
                 }
             }
             catch (Exception ex)
@@ -4029,8 +4020,8 @@ class Program
 
             if (!File.Exists(priorityFilePath))
             {
-                Console.WriteLine("[SPAWN] No priorities.txt file found. Using default priorities.");
-                Console.WriteLine("[SPAWN] To set priorities, create a file 'images/priorities.txt' with lines like 'image_name.png=10'");
+                //Console.WriteLine("[SPAWN] No priorities.txt file found. Using default priorities.");
+                //Console.WriteLine("[SPAWN] To set priorities, create a file 'images/priorities.txt' with lines like 'image_name.png=10'");
                 return priorities;
             }
 
@@ -4049,7 +4040,7 @@ class Program
                         if (int.TryParse(parts[1].Trim(), out int priority))
                         {
                             priorities[imageName] = priority;
-                            Console.WriteLine($"[SPAWN] Priority set: {imageName} = {priority}");
+                            //Console.WriteLine($"[SPAWN] Priority set: {imageName} = {priority}");
                         }
                     }
                 }
@@ -4082,24 +4073,24 @@ class Program
                 if (hdcWindow == IntPtr.Zero)
                 {
                     if (verboseDebug)
-                        Console.WriteLine("[SPAWN] GetDC failed");
-                    return null;
+                        //Console.WriteLine("[SPAWN] GetDC failed");
+                        return null;
                 }
 
                 hdcMemDC = CreateCompatibleDC(hdcWindow);
                 if (hdcMemDC == IntPtr.Zero)
                 {
                     if (verboseDebug)
-                        Console.WriteLine("[SPAWN] CreateCompatibleDC failed");
-                    return null;
+                        //Console.WriteLine("[SPAWN] CreateCompatibleDC failed");
+                        return null;
                 }
 
                 hBitmap = CreateCompatibleBitmap(hdcWindow, width, height);
                 if (hBitmap == IntPtr.Zero)
                 {
                     if (verboseDebug)
-                        Console.WriteLine("[SPAWN] CreateCompatibleBitmap failed");
-                    return null;
+                        //Console.WriteLine("[SPAWN] CreateCompatibleBitmap failed");
+                        return null;
                 }
 
                 hOld = SelectObject(hdcMemDC, hBitmap);
@@ -4108,8 +4099,8 @@ class Program
                 if (!success)
                 {
                     if (verboseDebug)
-                        Console.WriteLine("[SPAWN] BitBlt failed");
-                    return null;
+                        //Console.WriteLine("[SPAWN] BitBlt failed");
+                        return null;
                 }
 
                 SelectObject(hdcMemDC, hOld);
@@ -4138,8 +4129,7 @@ class Program
             }
             catch (Exception ex)
             {
-                if (verboseDebug)
-                    Console.WriteLine($"[SPAWN] Screenshot error: {ex.Message}");
+                Console.WriteLine($"[SPAWN] Screenshot error: {ex.Message}");
                 result?.Dispose();
                 return null;
             }
@@ -4153,7 +4143,7 @@ class Program
 
         static void WatcherThreadFunction(IntPtr gameWindow)
         {
-            Console.WriteLine("[SPAWN] Optimized watcher thread started");
+            //Console.WriteLine("[SPAWN] Optimized watcher thread started");
 
             try
             {
@@ -4216,7 +4206,7 @@ class Program
                             // Output debug info occasionally
                             if (verboseDebug && DateTime.Now.Subtract(lastDebugOutput) > debugOutputInterval)
                             {
-                                Console.WriteLine($"[SPAWN] Scanning area: X={scanLeft}-{scanLeft + scanWidth}, Y={scanTop}-{scanTop + scanHeight}");
+                                //Console.WriteLine($"[SPAWN] Scanning area: X={scanLeft}-{scanLeft + scanWidth}, Y={scanTop}-{scanTop + scanHeight}");
                                 lastDebugOutput = DateTime.Now;
                             }
 
@@ -4227,7 +4217,7 @@ class Program
                                 {
                                     if (verboseDebug && iterationCount % 100 == 0)
                                     {
-                                        Console.WriteLine("[SPAWN] Failed to capture screenshot");
+                                        //Console.WriteLine("[SPAWN] Failed to capture screenshot");
                                     }
                                 }
                                 else
@@ -4235,7 +4225,7 @@ class Program
                                     bool debugOutputThisIteration = verboseDebug && iterationCount % 50 == 0;
                                     if (debugOutputThisIteration)
                                     {
-                                        Console.WriteLine($"[SPAWN] Scan #{scanCount + 1}: Comparing against {templates.Count} templates in priority order...");
+                                        //Console.WriteLine($"[SPAWN] Scan #{scanCount + 1}: Comparing against {templates.Count} templates in priority order...");
                                     }
 
                                     bool matchFound = false;
@@ -4265,7 +4255,7 @@ class Program
 
                                             if (isColorSimilar)
                                             {
-                                                Console.WriteLine($"[SPAWN] MATCH FOUND: {template.Name}, Shape Match: {maxVal:F3}, Color Match: {colorSimilarityPercent:F1}%");
+                                                //Console.WriteLine($"[SPAWN] MATCH FOUND: {template.Name}, Shape Match: {maxVal:F3}, Color Match: {colorSimilarityPercent:F1}%");
 
                                                 HandleMatchFound(template.Name, screenshot, maxLoc, template.Width, template.Height, maxVal);
                                                 lastMatchTime = DateTime.Now;
@@ -4277,7 +4267,7 @@ class Program
 
                                     if (iterationCount % 200 == 0 && !matchFound)
                                     {
-                                        Console.WriteLine($"[SPAWN] Scanning...");
+                                        //Console.WriteLine($"[SPAWN] Scanning...");
                                     }
                                 }
                             }
@@ -4343,7 +4333,7 @@ class Program
         // This method handles what happens when a template match is found
         private static void HandleMatchFound(string templateName, Mat screenshot, Point matchLocation, int templateWidth, int templateHeight, double similarity)
         {
-            Console.WriteLine($"[SPAWN] !!! MATCH FOUND !!! - {templateName} - Similarity: {similarity:F3}");
+            //Console.WriteLine($"[SPAWN] !!! MATCH FOUND !!! - {templateName} - Similarity: {similarity:F3}");
 
             // Create directories for saving matches if they don't exist
             string matchesDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "matches");
@@ -4395,13 +4385,13 @@ class Program
 
                         // Save the highlighted match
                         CvInvoke.Imwrite(matchPath, fullScreenshot);
-                        Console.WriteLine($"[SPAWN] Full window match screenshot saved to: {matchPath}");
+                        //Console.WriteLine($"[SPAWN] Full window match screenshot saved to: {matchPath}");
                     }
                     else
                     {
                         // Fall back to the scan area screenshot
                         CvInvoke.Imwrite(matchPath, screenshot);
-                        Console.WriteLine($"[SPAWN] Scan area match screenshot saved to: {matchPath}");
+                        //Console.WriteLine($"[SPAWN] Scan area match screenshot saved to: {matchPath}");
                     }
                 }
             }
@@ -4425,342 +4415,13 @@ class Program
         private static bool colorChangeAlarmEnabled = true;
         private static readonly object colorDetectionLock = new object();
 
-        // Color change detection method
-        private static string DetectColorChanges(Mat currentImage)
-        {
-            try
-            {
-                // Save original input image for debugging
-                string debugDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug");
-                if (!Directory.Exists(debugDir))
-                {
-                    Directory.CreateDirectory(debugDir);
-                }
-                CvInvoke.Imwrite(Path.Combine(debugDir, "original_input.png"), currentImage);
-
-                lock (colorDetectionLock)
-                {
-                    // On first capture, just save the reference image and return
-                    if (isFirstCapture || referenceImage == null)
-                    {
-                        if (referenceImage != null)
-                        {
-                            referenceImage.Dispose();
-                        }
-
-                        referenceImage = currentImage.Clone();
-                        referenceImageTime = DateTime.Now;
-                        isFirstCapture = false;
-
-                        Console.WriteLine("[COLOR] First capture - saved as reference image");
-                        CvInvoke.Imwrite(Path.Combine(debugDir, "reference_image.png"), referenceImage);
-                        return null;
-                    }
-
-                    // Check if we need to update the reference image
-                    if (DateTime.Now - referenceImageTime > referenceUpdateInterval)
-                    {
-                        // Only update reference if current image doesn't have significant changes
-                        // This prevents a gradual drift toward the "alert" state
-                        bool hasSignificantChanges = CheckForColorChanges(currentImage, referenceImage, debugDir, "reference_update_check");
-                        if (!hasSignificantChanges)
-                        {
-                            Console.WriteLine("[COLOR] Updating reference image (scheduled update)");
-                            referenceImage.Dispose();
-                            referenceImage = currentImage.Clone();
-                            referenceImageTime = DateTime.Now;
-                            CvInvoke.Imwrite(Path.Combine(debugDir, "updated_reference_image.png"), referenceImage);
-                        }
-                        else
-                        {
-                            Console.WriteLine("[COLOR] Skipping reference update because significant changes detected");
-                        }
-                    }
-
-                    // Check for color changes
-                    bool changeDetected = CheckForColorChanges(currentImage, referenceImage, debugDir, "current_diff");
-
-                    if (changeDetected)
-                    {
-                        Console.WriteLine("[COLOR] Significant color change detected!");
-                        CvInvoke.Imwrite(Path.Combine(debugDir, "triggered_current.png"), currentImage);
-                        return "change"; // Return a simple indicator that a change was detected
-                    }
-                }
-
-                return null; // No significant change detected
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[COLOR] Error in color change detection: {ex.Message}");
-                return null;
-            }
-        }
-
-        // Helper method to check for color changes between two images
-        private static bool CheckForColorChanges(Mat currentImage, Mat referenceImage, string debugDir, string debugPrefix)
-        {
-            // Create result image to store difference visualization
-            using (Mat diffImage = new Mat(currentImage.Size, DepthType.Cv8U, 3))
-            {
-                // FIXED: Don't try to convert BGR to BGR, just use the images directly
-                // Both images should already be in BGR format from capture
-
-                // Split the images into BGR channels
-                using (VectorOfMat currentChannels = new VectorOfMat())
-                using (VectorOfMat referenceChannels = new VectorOfMat())
-                {
-                    CvInvoke.Split(currentImage, currentChannels);
-                    CvInvoke.Split(referenceImage, referenceChannels);
-
-                    // Create mask for each channel that's different beyond threshold
-                    using (Mat bDiff = new Mat())
-                    using (Mat gDiff = new Mat())
-                    using (Mat rDiff = new Mat())
-                    using (Mat combinedMask = new Mat(currentImage.Rows, currentImage.Cols, DepthType.Cv8U, 1))
-                    {
-                        // Calculate absolute difference for each channel
-                        CvInvoke.AbsDiff(currentChannels[0], referenceChannels[0], bDiff);
-                        CvInvoke.AbsDiff(currentChannels[1], referenceChannels[1], gDiff);
-                        CvInvoke.AbsDiff(currentChannels[2], referenceChannels[2], rDiff);
-
-                        // Save the channel differences for debugging
-                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_b_diff.png"), bDiff);
-                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_g_diff.png"), gDiff);
-                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_r_diff.png"), rDiff);
-
-                        // Create mask of pixels that differ significantly in any channel
-                        using (Mat bMask = new Mat())
-                        using (Mat gMask = new Mat())
-                        using (Mat rMask = new Mat())
-                        {
-                            CvInvoke.Threshold(bDiff, bMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
-                            CvInvoke.Threshold(gDiff, gMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
-                            CvInvoke.Threshold(rDiff, rMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
-
-                            // Combine masks - if any channel differs significantly, mark the pixel
-                            CvInvoke.BitwiseOr(bMask, gMask, combinedMask);
-                            CvInvoke.BitwiseOr(combinedMask, rMask, combinedMask);
-
-                            // Save the combined mask for debugging
-                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_combined_mask.png"), combinedMask);
-
-                            // Count changed pixels
-                            double totalPixels = combinedMask.Rows * combinedMask.Cols;
-                            double changedPixels = CvInvoke.CountNonZero(combinedMask);
-                            double percentChanged = (changedPixels / totalPixels) * 100.0;
-
-                            //Console.WriteLine($"[COLOR] Change detection: {percentChanged:F2}% pixels changed (threshold: {changedPixelPercentageThreshold}%)");
-
-                            // Visualize the changes
-                            currentImage.CopyTo(diffImage);
-
-                            // Mark changed areas with red
-                            using (Mat redLayer = new Mat(diffImage.Size, DepthType.Cv8U, 1))
-                            {
-                                CvInvoke.BitwiseNot(combinedMask, redLayer);
-                                using (VectorOfMat diffChannels = new VectorOfMat())
-                                {
-                                    CvInvoke.Split(diffImage, diffChannels);
-                                    // Set blue and green to 0 where mask is white (changed pixels)
-                                    CvInvoke.BitwiseAnd(diffChannels[0], redLayer, diffChannels[0]);
-                                    CvInvoke.BitwiseAnd(diffChannels[1], redLayer, diffChannels[1]);
-                                    // Set red to 255 where mask is white (changed pixels)
-                                    CvInvoke.BitwiseOr(diffChannels[2], combinedMask, diffChannels[2]);
-
-                                    CvInvoke.Merge(diffChannels, diffImage);
-                                }
-                            }
-
-                            // Save the visualization
-                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_visualization.png"), diffImage);
-
-                            // Calculate if the change is significant enough
-                            bool isSignificantChange = percentChanged >= changedPixelPercentageThreshold;
-
-                            // Add text with the percentage to the visualization
-                            string percentText = $"Changed: {percentChanged:F1}% ({(isSignificantChange ? "ALERT" : "normal")})";
-                            CvInvoke.PutText(
-                                diffImage,
-                                percentText,
-                                new System.Drawing.Point(10, 20),
-                                FontFace.HersheyComplex,
-                                0.5,
-                                isSignificantChange ? new MCvScalar(0, 0, 255) : new MCvScalar(0, 255, 0),
-                                1
-                            );
-
-                            // Save the visualization with text
-                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_visualization_with_text.png"), diffImage);
-
-                            return isSignificantChange;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Simplified version without channel analysis if needed
-        private static void SaveColorDistributionInfoSimple(Mat image, string outputPath)
-        {
-            try
-            {
-                using (StreamWriter writer = new StreamWriter(outputPath))
-                {
-                    writer.WriteLine("COLOR DETECTION INFORMATION");
-                    writer.WriteLine("===========================");
-                    writer.WriteLine($"Image size: {image.Width}x{image.Height}");
-                    writer.WriteLine();
-                    writer.WriteLine("COLOR DETECTION THRESHOLDS (HSV):");
-                    writer.WriteLine("Cyan/Teal: H(75-95), S(50-255), V(50-255)");
-                    writer.WriteLine("Green: H(45-75), S(50-255), V(50-255)");
-                    writer.WriteLine("Yellow: H(15-45), S(50-255), V(50-255)");
-                    writer.WriteLine("Red: H(0-10 or 160-180), S(50-255), V(50-255)");
-                    writer.WriteLine("Blue: H(100-130), S(50-255), V(50-255)");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[COLOR] Error saving color detection info: {ex.Message}");
-            }
-        }
-
-        private static bool HasSignificantColor(Mat mask)
-        {
-            // Calculate the percentage of pixels that match the color
-            double nonZeroPixels = CvInvoke.CountNonZero(mask);
-            double totalPixels = mask.Rows * mask.Cols;
-            double percentage = (nonZeroPixels / totalPixels) * 100;
-
-            // Consider significant if at least 2% of pixels match (lowered threshold)
-            bool isSignificant = percentage >= 2.0;
-
-            //if (isSignificant)
-            //{
-            //    Console.WriteLine($"[COLOR] Found significant color: {percentage:F1}% of pixels match");
-            //}
-            //else if (percentage > 0.5) // Log even small amounts of color
-            //{
-            //    Console.WriteLine($"[COLOR] Found some color but below threshold: {percentage:F1}% of pixels match");
-            //}
-
-            return isSignificant;
-        }
-
-        private static void HandleColorChangeDetection(Mat image)
-        {
-            try
-            {
-                // Create directories for saving matches if they don't exist
-                string matchesDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "matches");
-                if (!Directory.Exists(matchesDir))
-                {
-                    Directory.CreateDirectory(matchesDir);
-                }
-
-                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                string matchFileName = $"color_change_{timestamp}.png";
-                string matchPath = Path.Combine(matchesDir, matchFileName);
-
-                // Save the screenshot with timestamp
-                CvInvoke.Imwrite(matchPath, image);
-                Console.WriteLine($"[COLOR] Color change detection screenshot saved to: {matchPath}");
-
-                // Trigger the color change alert
-                TriggerColorChangeAlert();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[COLOR] Error handling color change detection: {ex.Message}");
-            }
-        }
-
-
-        private static void TriggerColorChangeAlert()
-        {
-            try
-            {
-                Console.WriteLine("\n[!!!] COLOR CHANGE ALERT - UNUSUAL COLOR DETECTED [!!!]");
-                Console.WriteLine("[!!!] Stopping all threads and sounding alarm [!!!]\n");
-
-                IntPtr copyWindow = Program.targetWindow;
-                // Stop all program threads except for this one
-                Program.threadFlags["recording"] = false;
-                Program.threadFlags["playing"] = false;
-                Program.threadFlags["autopot"] = false;
-                Program.threadFlags["spawnwatch"] = false;
-                Program.memoryReadActive = false;
-                Program.programRunning = false;
-                Program.StopPositionAlertSound();  // Stop any existing alert sounds
-
-                // Create a thread for the alarm sound - will run asynchronously
-                Thread alarmSoundThread = new Thread(() =>
-                {
-                    try
-                    {
-                        // Sound the alarm until program exit - pattern for color change alert
-                        while (true)
-                        {
-                            // Distinctive pattern for color change alert
-                            Beep(1400, 200);
-                            Thread.Sleep(150);
-                            Beep(1800, 200);
-                            Thread.Sleep(150);
-                            Beep(1400, 200);
-                            Thread.Sleep(500);
-
-                            Console.WriteLine("[COLOR ALARM] Unusual color detected in game interface!");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[COLOR ALARM] Error in alarm sound: {ex.Message}");
-                    }
-                });
-
-                // Make alarm thread independent
-                alarmSoundThread.IsBackground = true;
-                alarmSoundThread.Start();
-
-                // Create a thread for focusing the game window (without sending panic keys)
-                Thread focusWindowThread = new Thread(() =>
-                {
-                    try
-                    {
-                        // Only focus the window, don't send panic keys
-                        FocusGameWindow(copyWindow);
-
-                        Console.WriteLine("[COLOR ALARM] Color change alert: Window focused, press ESC to exit");
-
-                        // Exit after a delay
-                        Thread.Sleep(60000); // Wait 60 seconds
-                        Environment.Exit(1);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[COLOR ALARM] Error in window focus: {ex.Message}");
-                        Environment.Exit(1);
-                    }
-                });
-
-                // Make sure this thread will continue even if main thread ends
-                focusWindowThread.IsBackground = false;
-                focusWindowThread.Start();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[COLOR ALARM] Error triggering color change alert: {ex.Message}");
-                Environment.Exit(1);
-            }
-        }
-
         private static void TriggerAlarm(string templateName)
         {
             try
             {
-                Console.WriteLine("\n[!!!] CRITICAL ALARM - SPAWN DETECTED [!!!]");
-                Console.WriteLine($"[!!!] Matched template: {templateName}");
-                Console.WriteLine("[!!!] STOPPING ALL THREADS AND SOUNDING ALARM [!!!]\n");
+                //Console.WriteLine("\n[!!!] CRITICAL ALARM - SPAWN DETECTED [!!!]");
+                //Console.WriteLine($"[!!!] Matched template: {templateName}");
+                //Console.WriteLine("[!!!] STOPPING ALL THREADS AND SOUNDING ALARM [!!!]\n");
 
                 IntPtr copyWindow = Program.targetWindow;
                 // Stop all program threads
@@ -4789,7 +4450,7 @@ class Program
                             Beep(1500, 200);
                             Thread.Sleep(200);
 
-                            Console.WriteLine($"[ALARM] CRITICAL: Spawn '{templateName}' detected!");
+                            //Console.WriteLine($"[ALARM] CRITICAL: Spawn '{templateName}' detected!");
                         }
                     }
                     catch (Exception ex)
@@ -4810,7 +4471,7 @@ class Program
                         // Send key inputs to the game
                         SendPanicKeysToGame(copyWindow);
 
-                        Console.WriteLine("[ALARM] CRITICAL: Terminating program immediately!");
+                        //Console.WriteLine("[ALARM] CRITICAL: Terminating program immediately!");
 
                         // Force immediate program exit with error code
                         Environment.Exit(1);
@@ -4841,19 +4502,19 @@ class Program
         {
             if (gameWindow == IntPtr.Zero)
             {
-                Console.WriteLine("[ALARM] Cannot focus - game window handle is invalid");
+                //Console.WriteLine("[ALARM] Cannot focus - game window handle is invalid");
                 return;
             }
 
             try
             {
-                Console.WriteLine("[ALARM] Attempting to focus game window...");
+                //Console.WriteLine("[ALARM] Attempting to focus game window...");
 
                 // Try to bring the window to the foreground
                 if (!SetForegroundWindow(gameWindow))
                 {
                     int error = Marshal.GetLastWin32Error();
-                    Console.WriteLine($"[ALARM] Failed to set foreground window. Error code: {error}");
+                    //Console.WriteLine($"[ALARM] Failed to set foreground window. Error code: {error}");
 
                     // Alternative approach - activate the window first
                     ShowWindow(gameWindow, SW_RESTORE);
@@ -4866,11 +4527,11 @@ class Program
                 IntPtr activeWindow = GetForegroundWindow();
                 if (activeWindow != gameWindow)
                 {
-                    Console.WriteLine("[ALARM] Warning: Game window is not in foreground");
+                    //Console.WriteLine("[ALARM] Warning: Game window is not in foreground");
                 }
                 else
                 {
-                    Console.WriteLine("[ALARM] Game window successfully focused");
+                    //Console.WriteLine("[ALARM] Game window successfully focused");
                 }
             }
             catch (Exception ex)
@@ -4883,7 +4544,7 @@ class Program
         {
             if (gameWindow == IntPtr.Zero)
             {
-                Console.WriteLine("[ALARM] Cannot send keys - game window handle is invalid");
+                //Console.WriteLine("[ALARM] Cannot send keys - game window handle is invalid");
                 return;
             }
 
@@ -4893,9 +4554,9 @@ class Program
                 FocusGameWindow(gameWindow);
                 Thread.Sleep(200); // Give the window time to get focus
 
-                Console.WriteLine("[ALARM] Sending panic keys to game...");
+                //Console.WriteLine("[ALARM] Sending panic keys to game...");
 
-                Console.WriteLine("[ALARM] Sending ESC 3 times...");
+                //Console.WriteLine("[ALARM] Sending ESC 3 times...");
                 for (int i = 0; i < 3; i++)
                 {
                     SendKeys.SendWait("{ESC}");
@@ -4905,7 +4566,7 @@ class Program
                 Random random = new Random();
                 int questionMarkCount = random.Next(4, 8); // 4 to 7 inclusive
 
-                Console.WriteLine($"[ALARM] Sending {questionMarkCount} question marks...");
+                //Console.WriteLine($"[ALARM] Sending {questionMarkCount} question marks...");
 
                 for (int i = 0; i < questionMarkCount; i++)
                 {
@@ -4929,7 +4590,7 @@ class Program
                 Thread.Sleep(50);
 
                 // Prepare for arrow sequence with CTRL
-                Console.WriteLine("[ALARM] Starting CTRL+Arrow key sequence...");
+                //Console.WriteLine("[ALARM] Starting CTRL+Arrow key sequence...");
                 DateTime endTime = DateTime.Now.AddSeconds(15); // Do this for 15 seconds
 
                 // Improved panic movement code with randomization
@@ -4966,7 +4627,7 @@ class Program
                     }
                 }
 
-                Console.WriteLine("[ALARM] Finished sending panic keys to game");
+                //Console.WriteLine("[ALARM] Finished sending panic keys to game");
             }
             catch (Exception ex)
             {
@@ -5542,9 +5203,9 @@ class Program
         statsOverlayBottomOffset = Math.Max(10, statsOverlayBottomOffset + bottomOffsetChange);
         statsOverlaySizeScale = Math.Max(0.5f, Math.Min(2.0f, statsOverlaySizeScale + scaleChange));
 
-        Console.WriteLine($"[OVERLAY] Config: Right Offset={statsOverlayRightOffset}, " +
-                         $"Bottom Offset={statsOverlayBottomOffset}, " +
-                         $"Scale={statsOverlaySizeScale:F1}");
+        //Console.WriteLine($"[OVERLAY] Config: Right Offset={statsOverlayRightOffset}, " +
+        ////$"Bottom Offset={statsOverlayBottomOffset}, " +
+        ////$"Scale={statsOverlaySizeScale:F1}");
 
         // Restart overlay to apply changes
         if (overlayForm != null)
@@ -5599,97 +5260,13 @@ class Program
         }
     }
 
-
-
-    static void DrawGameWindowHighlights()
-    {
-        if (targetWindow == IntPtr.Zero || activeHighlights.Count == 0)
-            return;
-
-        try
-        {
-            Console.WriteLine($"[DEBUG] Drawing {activeHighlights.Count} highlights on game window");
-
-            // Get window DC
-            IntPtr hdc = GetDC(targetWindow);
-            if (hdc == IntPtr.Zero)
-            {
-                Console.WriteLine("[DEBUG] Failed to get window DC");
-                return;
-            }
-
-            try
-            {
-                // Create pens and brushes - use a bright color that stands out
-                uint highlightColor = MakeRGB(255, 50, 50);  // Bright red
-                IntPtr pen = CreatePen(PS_SOLID, 3, highlightColor);  // Thicker line
-                IntPtr nullBrush = GetStockObject(HOLLOW_BRUSH);
-
-                if (pen == IntPtr.Zero || nullBrush == IntPtr.Zero)
-                {
-                    Console.WriteLine("[DEBUG] Failed to create pen or brush");
-                    return;
-                }
-
-                // Select them into DC
-                IntPtr oldPen = SelectObject(hdc, pen);
-                IntPtr oldBrush = SelectObject(hdc, nullBrush);
-
-                // Use normal drawing mode instead of XOR
-                // SetROP2(hdc, R2_XORPEN);
-
-                lock (highlightLock)
-                {
-                    foreach (var highlight in activeHighlights.Where(h => DateTime.Now < h.time))
-                    {
-                        // Calculate rectangle
-                        int halfSize = highlight.size / 2;
-
-                        // Log the exact coordinates we're drawing
-                        Console.WriteLine($"[DEBUG] Drawing highlight at ({highlight.x}, {highlight.y}) with size {highlight.size}");
-
-                        // Draw filled rectangle for better visibility
-                        Rectangle(hdc,
-                            highlight.x - halfSize,
-                            highlight.y - halfSize,
-                            highlight.x + halfSize,
-                            highlight.y + halfSize);
-
-                        // Draw crosshairs with thicker lines
-                        MoveToEx(hdc, highlight.x - halfSize, highlight.y, IntPtr.Zero);
-                        LineTo(hdc, highlight.x + halfSize, highlight.y);
-
-                        MoveToEx(hdc, highlight.x, highlight.y - halfSize, IntPtr.Zero);
-                        LineTo(hdc, highlight.x + halfSize * 2, highlight.y + halfSize);  // Make lines more noticeable
-                    }
-                }
-
-                // Clean up
-                SelectObject(hdc, oldPen);
-                SelectObject(hdc, oldBrush);
-                DeleteObject(pen);
-
-                Console.WriteLine("[DEBUG] Highlights drawing completed");
-            }
-            finally
-            {
-                ReleaseDC(targetWindow, hdc);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[DEBUG] Error drawing game window highlights: {ex.Message}");
-        }
-    }
-
-
     // Add this to manage overlay start/stop cleanly
     static void StartOverlay()
     {
         if (overlayForm != null && !overlayForm.IsDisposed)
             return;
 
-        Console.WriteLine("[OVERLAY] Starting overlay display");
+        //Console.WriteLine("[OVERLAY] Starting overlay display");
         EnsureOverlayExists();
     }
 
@@ -5698,7 +5275,7 @@ class Program
         if (overlayForm == null || overlayForm.IsDisposed)
             return;
 
-        Console.WriteLine("[OVERLAY] Stopping overlay display");
+        //Console.WriteLine("[OVERLAY] Stopping overlay display");
         var form = overlayForm;
         overlayForm = null; // Clear reference first to prevent further access
 
@@ -5848,7 +5425,7 @@ class Program
                 }
                 catch (Exception ex)
                 {
-                    //Console.WriteLine($"[CLICK OVERLAY] Thread error: {ex.Message}");
+                    Console.WriteLine($"[CLICK OVERLAY] Thread error: {ex.Message}");
                 }
                 finally
                 {
@@ -5898,7 +5475,7 @@ class Program
                 }
                 catch (Exception ex)
                 {
-                    //Console.WriteLine($"[CLICK OVERLAY] Error closing form: {ex.Message}");
+                    Console.WriteLine($"[CLICK OVERLAY] Error closing form: {ex.Message}");
                 }
             }
         }
@@ -6281,14 +5858,14 @@ class Program
     static readonly object lootRecognizerLock = new object();
     static Dictionary<string, Mat> lootTemplates = new Dictionary<string, Mat>();
     static string dropsDirectoryPath = "drops";
-    static readonly TimeSpan LOOT_SCAN_INTERVAL = TimeSpan.FromSeconds(2); // Scan for loot every 2 seconds
-    static readonly TimeSpan DRAG_OPERATION_COOLDOWN = TimeSpan.FromSeconds(3); // Minimum time between drag operations
+    static readonly TimeSpan LOOT_SCAN_INTERVAL = TimeSpan.FromSeconds(1); // Scan for loot every 2 seconds
+    static readonly TimeSpan DRAG_OPERATION_COOLDOWN = TimeSpan.FromSeconds(1); // Minimum time between drag operations
     static DateTime lastDragOperationTime = DateTime.MinValue;
     static double lootMatchThreshold = 0.92; // Similarity threshold for matching loot items
 
     static void LootRecognizerThread()
     {
-        Console.WriteLine("[LOOT] Loot recognizer thread started");
+        //Console.WriteLine("[LOOT] Loot recognizer thread started");
 
         try
         {
@@ -6296,8 +5873,8 @@ class Program
             if (!Directory.Exists(dropsDirectoryPath))
             {
                 Directory.CreateDirectory(dropsDirectoryPath);
-                Console.WriteLine($"[LOOT] Created drops directory: {Path.GetFullPath(dropsDirectoryPath)}");
-                Console.WriteLine("[LOOT] Place PNG or JPG images of items in this directory to recognize them");
+                //Console.WriteLine($"[LOOT] Created drops directory: {Path.GetFullPath(dropsDirectoryPath)}");
+                //Console.WriteLine("[LOOT] Place PNG or JPG images of items in this directory to recognize them");
             }
 
             // Load all item templates
@@ -6320,7 +5897,7 @@ class Program
             // Check if the platinum template is available
             if (lootTemplates.ContainsKey(PLATINUM_TEMPLATE_NAME))
             {
-                Console.WriteLine($"[LOOT] Platinum template found - will enable right-click after dragging");
+                // Console.WriteLine($"[LOOT] Platinum template found - will enable right-click after dragging");
             }
             else
             {
@@ -6369,7 +5946,7 @@ class Program
             Console.WriteLine($"[LOOT] Error initializing loot recognizer: {ex.Message}");
         }
 
-        Console.WriteLine("[LOOT] Loot recognizer thread exited");
+        //Console.WriteLine("[LOOT] Loot recognizer thread exited");
     }
 
     static void LoadLootTemplates()
@@ -6393,21 +5970,21 @@ class Program
                 try
                 {
                     string fileName = Path.GetFileNameWithoutExtension(filePath);
-                    Console.WriteLine($"[LOOT] Loading item template: {Path.GetFileName(filePath)}");
+                    //Console.WriteLine($"[LOOT] Loading item template: {Path.GetFileName(filePath)}");
 
                     // Load template image
                     Mat template = CvInvoke.Imread(filePath, ImreadModes.Color);
 
                     if (template.IsEmpty)
                     {
-                        Console.WriteLine($"[LOOT] Failed to load template: {Path.GetFileName(filePath)}");
+                        //Console.WriteLine($"[LOOT] Failed to load template: {Path.GetFileName(filePath)}");
                         continue;
                     }
 
                     // Store in dictionary with filename as key
                     lootTemplates[fileName] = template;
 
-                    Console.WriteLine($"[LOOT] Loaded {fileName}: {template.Width}x{template.Height}");
+                    //Console.WriteLine($"[LOOT] Loaded {fileName}: {template.Width}x{template.Height}");
                 }
                 catch (Exception ex)
                 {
@@ -6433,7 +6010,7 @@ class Program
     private static bool hasDebugImageBeenSaved = false;
     static void ScanBackpackForLoot()
     {
-        bool debugMode = false; // Set to true to enable debugging, false to disable
+        var debugMode = false;
         try
         {
             UpdateUIPositions();
@@ -6443,21 +6020,21 @@ class Program
                 return;
             }
 
-            Console.WriteLine("[LOOT] Starting backpack scan");
+            //Console.WriteLine("[LOOT] Starting backpack scan");
 
             // Debug directory and path variables
             string debugDir = string.Empty;
             if (debugMode)
             {
                 // Output current values for debugging
-                Console.WriteLine($"[LOOT DEBUG] secondSlotBpX = {secondSlotBpX}, secondSLotBpY = {secondSLotBpY}");
-                Console.WriteLine($"[LOOT DEBUG] pixelSize = {pixelSize}");
+                //Console.WriteLine($"[LOOT DEBUG] secondSlotBpX = {secondSlotBpX}, secondSLotBpY = {secondSLotBpY}");
+                //Console.WriteLine($"[LOOT DEBUG] pixelSize = {pixelSize}");
 
                 // Create timestamped debug directory to save all matches
                 string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 debugDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug", $"scan_{timestamp}");
                 if (!Directory.Exists(debugDir)) Directory.CreateDirectory(debugDir);
-                Console.WriteLine($"[LOOT DEBUG] Debug images will be saved to: {debugDir}");
+                //Console.WriteLine($"[LOOT DEBUG] Debug images will be saved to: {debugDir}");
             }
 
             // Get window dimensions
@@ -6465,8 +6042,8 @@ class Program
             int windowWidth = windowRect.Right - windowRect.Left;
             int windowHeight = windowRect.Bottom - windowRect.Top;
 
-            if (debugMode)
-                Console.WriteLine($"[LOOT DEBUG] Window dimensions: {windowWidth}x{windowHeight}");
+
+            //Console.WriteLine($"[LOOT DEBUG] Window dimensions: {windowWidth}x{windowHeight}");
 
             // Calculate scan area
             int backpackScanLeft = firstSlotBpX - (pixelSize / 2);
@@ -6474,8 +6051,7 @@ class Program
             int backpackScanWidth = pixelSize * 4;
             int backpackScanHeight = pixelSize * 2;
 
-            if (debugMode)
-                Console.WriteLine($"[LOOT DEBUG] Backpack scan area: X={backpackScanLeft}, Y={backpackScanTop}, Width={backpackScanWidth}, Height={backpackScanHeight}");
+
 
             // Ensure we're not capturing outside the window
             if (backpackScanLeft < 0) backpackScanLeft = 0;
@@ -6483,15 +6059,14 @@ class Program
             if (backpackScanLeft + backpackScanWidth > windowWidth) backpackScanWidth = windowWidth - backpackScanLeft;
             if (backpackScanTop + backpackScanHeight > windowHeight) backpackScanHeight = windowHeight - backpackScanTop;
 
-            if (debugMode)
-                Console.WriteLine($"[LOOT DEBUG] Adjusted backpack scan area: X={backpackScanLeft}, Y={backpackScanTop}, Width={backpackScanWidth}, Height={backpackScanHeight}");
+
 
             // Take a screenshot of the scan area
             using (Mat backpackArea = CaptureGameAreaAsMat(targetWindow, backpackScanLeft, backpackScanTop, backpackScanWidth, backpackScanHeight))
             {
                 if (backpackArea == null || backpackArea.IsEmpty)
                 {
-                    Console.WriteLine("[LOOT ERROR] Failed to capture backpack area");
+                    //Console.WriteLine("[LOOT ERROR] Failed to capture backpack area");
                     return;
                 }
 
@@ -6501,10 +6076,10 @@ class Program
                     // Always save the current scan area
                     string scanAreaPath = Path.Combine(debugDir, "backpack_scan_area.png");
                     CvInvoke.Imwrite(scanAreaPath, backpackArea);
-                    Console.WriteLine($"[LOOT DEBUG] Saved current backpack scan image to {scanAreaPath}");
+                    //Console.WriteLine($"[LOOT DEBUG] Saved current backpack scan image to {scanAreaPath}");
 
                     // Get image dimensions
-                    Console.WriteLine($"[LOOT DEBUG] Captured image dimensions: {backpackArea.Width}x{backpackArea.Height}");
+                    //Console.WriteLine($"[LOOT DEBUG] Captured image dimensions: {backpackArea.Width}x{backpackArea.Height}");
 
                     // Save all templates for reference
                     string templatesDir = Path.Combine(debugDir, "templates");
@@ -6514,7 +6089,7 @@ class Program
                         string templatePath = Path.Combine(templatesDir, $"{template.Key}.png");
                         CvInvoke.Imwrite(templatePath, template.Value);
                     }
-                    Console.WriteLine($"[LOOT DEBUG] Saved all {lootTemplates.Count} templates to {templatesDir}");
+                    //Console.WriteLine($"[LOOT DEBUG] Saved all {lootTemplates.Count} templates to {templatesDir}");
                 }
 
                 // Create a visualization image if in debug mode
@@ -6529,8 +6104,8 @@ class Program
                         Mat itemTemplate = template.Value;
 
                         // Log template details if debugging
-                        if (debugMode)
-                            Console.WriteLine($"[LOOT DEBUG] Trying to match template: {itemName} ({itemTemplate.Width}x{itemTemplate.Height})");
+
+                        //Console.WriteLine($"[LOOT DEBUG] Trying to match template: {itemName} ({itemTemplate.Width}x{itemTemplate.Height})");
 
                         using (Mat result = new Mat())
                         {
@@ -6542,8 +6117,8 @@ class Program
                             CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
 
                             // Log the best match value if debugging
-                            if (debugMode)
-                                Console.WriteLine($"[LOOT DEBUG] Template {itemName} best match: {maxVal:F3} at ({maxLoc.X}, {maxLoc.Y})");
+
+                            //Console.WriteLine($"[LOOT DEBUG] Template {itemName} best match: {maxVal:F3} at ({maxLoc.X}, {maxLoc.Y})");
 
                             // Save debug images and visualization only if debug mode is on
                             if (debugMode)
@@ -6587,7 +6162,7 @@ class Program
                             // If we found a good match
                             if (maxVal >= lootMatchThreshold)
                             {
-                                Console.WriteLine($"[LOOT] Recognized item '{itemName}' in backpack (match: {maxVal:F3})");
+                                //Console.WriteLine($"[LOOT] Recognized item '{itemName}' in backpack (match: {maxVal:F3})");
 
                                 // Debug visualization if enabled
                                 if (debugMode)
@@ -6622,28 +6197,28 @@ class Program
                                 }
 
                                 // Wait a moment to ensure the game is ready
-                                Sleep(500);
+                                Sleep(1);
 
                                 // Calculate where in the slot the match occurred
                                 int lootItemX = backpackScanLeft + maxLoc.X + (itemTemplate.Width / 2);
                                 int lootItemY = backpackScanTop + maxLoc.Y + (itemTemplate.Height / 2);
 
                                 // Log exact match coordinates if debugging
-                                if (debugMode)
-                                    Console.WriteLine($"[LOOT DEBUG] Loot item center at screen coordinates: ({lootItemX}, {lootItemY})");
+
+                                //Console.WriteLine($"[LOOT DEBUG] Loot item center at screen coordinates: ({lootItemX}, {lootItemY})");
 
                                 // Calculate inventory slot destination
                                 int inventorySlotX = inventoryX;
                                 int inventorySlotY = inventoryY + pixelSize + 30;
 
-                                if (debugMode)
-                                    Console.WriteLine($"[LOOT DEBUG] Inventory slot coordinates: ({inventorySlotX}, {inventorySlotY})");
+
+                                //Console.WriteLine($"[LOOT DEBUG] Inventory slot coordinates: ({inventorySlotX}, {inventorySlotY})");
 
                                 // Check if the recognized template is "100gold"
                                 if (itemName.Equals("100gold", StringComparison.OrdinalIgnoreCase))
                                 {
                                     // If it's gold, just right-click it instead of dragging
-                                    Console.WriteLine($"[LOOT] Found gold! Right-clicking instead of dragging");
+                                    //Console.WriteLine($"[LOOT] Found gold! Right-clicking instead of dragging");
                                     VirtualRightClick(targetWindow, lootItemX, lootItemY);
 
                                     // Update the last operation time
@@ -6657,13 +6232,14 @@ class Program
                                     if (itemName.Equals("stealthring", StringComparison.OrdinalIgnoreCase))
                                     {
                                         invY = inventoryY;
-                                    }else if (itemName.Equals("lifering", StringComparison.OrdinalIgnoreCase))
+                                    }
+                                    else if (itemName.Equals("lifering", StringComparison.OrdinalIgnoreCase))
                                     {
                                         invY = inventoryY + 3 * pixelSize + 15;
                                     }
 
-                                        // Drag the item to the destination
-                                     DragItemToDestination(lootItemX, lootItemY, invX, invY, itemName);
+                                    // Drag the item to the destination
+                                    DragItemToDestination(lootItemX, lootItemY, invX, invY, itemName);
 
                                     // Update the last drag operation time
                                     lastDragOperationTime = DateTime.Now;
@@ -6683,7 +6259,7 @@ class Program
                     {
                         string allMatchesPath = Path.Combine(debugDir, "all_matches_visualization.png");
                         CvInvoke.Imwrite(allMatchesPath, visualizationImage);
-                        Console.WriteLine($"[LOOT DEBUG] Saved visualization with all matches to {allMatchesPath}");
+                        //Console.WriteLine($"[LOOT DEBUG] Saved visualization with all matches to {allMatchesPath}");
                     }
                 }
                 finally
@@ -6696,7 +6272,7 @@ class Program
                 }
             }
 
-            Console.WriteLine("[LOOT] Scan complete");
+            //Console.WriteLine("[LOOT] Scan complete");
         }
         catch (Exception ex)
         {
@@ -6735,21 +6311,21 @@ class Program
             hdcWindow = GetDC(hWnd);
             if (hdcWindow == IntPtr.Zero)
             {
-                Console.WriteLine("[LOOT] GetDC failed");
+                //Console.WriteLine("[LOOT] GetDC failed");
                 return null;
             }
 
             hdcMemDC = CreateCompatibleDC(hdcWindow);
             if (hdcMemDC == IntPtr.Zero)
             {
-                Console.WriteLine("[LOOT] CreateCompatibleDC failed");
+                //Console.WriteLine("[LOOT] CreateCompatibleDC failed");
                 return null;
             }
 
             hBitmap = CreateCompatibleBitmap(hdcWindow, width, height);
             if (hBitmap == IntPtr.Zero)
             {
-                Console.WriteLine("[LOOT] CreateCompatibleBitmap failed");
+                //Console.WriteLine("[LOOT] CreateCompatibleBitmap failed");
                 return null;
             }
 
@@ -6758,7 +6334,7 @@ class Program
             bool success = BitBlt(hdcMemDC, 0, 0, width, height, hdcWindow, x, y, SRCCOPY);
             if (!success)
             {
-                Console.WriteLine("[LOOT] BitBlt failed");
+                //Console.WriteLine("[LOOT] BitBlt failed");
                 return null;
             }
 
@@ -6809,54 +6385,54 @@ class Program
     {
         try
         {
-            Console.WriteLine($"[LOOT] Dragging '{itemName}' from ({sourceX}, {sourceY}) to ({destX}, {destY})");
+            //Console.WriteLine($"[LOOT] Dragging '{itemName}' from ({sourceX}, {sourceY}) to ({destX}, {destY})");
 
             // Create IntPtr lParam values for source and destination
             IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
             IntPtr destLParam = MakeLParam(destX, destY);
 
             // Log the lParam values for debugging
-            Console.WriteLine($"[LOOT DEBUG] Source lParam: 0x{sourceLParam.ToInt64():X}, dest lParam: 0x{destLParam.ToInt64():X}");
+            //Console.WriteLine($"[LOOT DEBUG] Source lParam: 0x{sourceLParam.ToInt64():X}, dest lParam: 0x{destLParam.ToInt64():X}");
 
             // Move mouse to source position
-            Console.WriteLine($"[LOOT DEBUG] Moving mouse to source position");
-            PostMessage(targetWindow, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
-            Sleep(50);  // Short delay between operations
+            //Console.WriteLine($"[LOOT DEBUG] Moving mouse to source position");
+            SendMessage(targetWindow, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
+            Sleep(1);  // Short delay between operations
 
             // Left button down at source
-            Console.WriteLine($"[LOOT DEBUG] Mouse button down at source");
-            PostMessage(targetWindow, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
-            Sleep(50);  // Short delay
+            //Console.WriteLine($"[LOOT DEBUG] Mouse button down at source");
+            SendMessage(targetWindow, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
+            Sleep(1);  // Short delay
 
             // Record the source click for overlay visualization
             RecordClickPosition(sourceX, sourceY, true);
 
             // Move mouse to destination with button held down
-            Console.WriteLine($"[LOOT DEBUG] Moving to destination with button held");
-            PostMessage(targetWindow, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
-            Sleep(50);  // Short delay
+            //Console.WriteLine($"[LOOT DEBUG] Moving to destination with button held");
+            SendMessage(targetWindow, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
+            Sleep(1);  // Short delay
 
             // Release button at destination
-            Console.WriteLine($"[LOOT DEBUG] Releasing button at destination");
-            PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, destLParam);
-            Sleep(50);  // Short delay
+            //Console.WriteLine($"[LOOT DEBUG] Releasing button at destination");
+            SendMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, destLParam);
+            Sleep(1);  // Short delay
 
             // Record the destination click for overlay visualization
             RecordClickPosition(destX, destY, true);
 
             // Add a significant delay to allow game to process the action
-            Console.WriteLine($"[LOOT DEBUG] Drag operation completed, waiting for game to process...");
-            Sleep(1000);  // This delay is important for the game to process the action
+            //Console.WriteLine($"[LOOT DEBUG] Drag operation completed, waiting for game to process...");
+            Sleep(1);  // This delay is important for the game to process the action
 
             // NEW: Flag for inventory scanning if this was a platinum item
             if (itemName.Equals(PLATINUM_TEMPLATE_NAME, StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine($"[LOOT] Detected platinum move to inventory. Will scan inventory for right-click.");
+                //Console.WriteLine($"[LOOT] Detected platinum move to inventory. Will scan inventory for right-click.");
                 shouldScanInventoryForPlatinum = true;
                 lastInventoryScanTime = DateTime.Now.Add(PLATINUM_SCAN_DELAY); // Set time for future scan
             }
 
-            Console.WriteLine($"[LOOT] Successfully moved item '{itemName}' to inventory");
+            //Console.WriteLine($"[LOOT] Successfully moved item '{itemName}' to inventory");
         }
         catch (Exception ex)
         {
@@ -6869,7 +6445,7 @@ class Program
     {
         try
         {
-            Console.WriteLine("[LOOT] Scanning inventory for platinum coins");
+            //Console.WriteLine("[LOOT] Scanning inventory for platinum coins");
 
             // Calculate scan area - focused on inventory area where the coins were dropped
             int invScanLeft = inventoryX - (pixelSize / 2);
@@ -6877,7 +6453,7 @@ class Program
             int invScanWidth = pixelSize * 2;  // Adjusted width to cover inventory area
             int invScanHeight = pixelSize * 3; // Taller height to cover more inventory slots
 
-            Console.WriteLine($"[LOOT] Inventory scan area: X={invScanLeft}, Y={invScanTop}, Width={invScanWidth}, Height={invScanHeight}");
+            //Console.WriteLine($"[LOOT] Inventory scan area: X={invScanLeft}, Y={invScanTop}, Width={invScanWidth}, Height={invScanHeight}");
 
             // Ensure we're not capturing outside the window
             GetClientRect(targetWindow, out RECT windowRect);
@@ -6894,7 +6470,7 @@ class Program
             {
                 if (inventoryArea == null || inventoryArea.IsEmpty)
                 {
-                    Console.WriteLine("[LOOT ERROR] Failed to capture inventory area");
+                    //Console.WriteLine("[LOOT ERROR] Failed to capture inventory area");
                     return;
                 }
 
@@ -6910,7 +6486,7 @@ class Program
                         Point minLoc = new Point(), maxLoc = new Point();
                         CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
 
-                        Console.WriteLine($"[LOOT] Platinum match in inventory: {maxVal:F3} at ({maxLoc.X}, {maxLoc.Y})");
+                        //Console.WriteLine($"[LOOT] Platinum match in inventory: {maxVal:F3} at ({maxLoc.X}, {maxLoc.Y})");
 
                         // If we found a good match for platinum in the inventory
                         if (maxVal >= lootMatchThreshold)
@@ -6919,7 +6495,7 @@ class Program
                             int platinumX = invScanLeft + maxLoc.X + (platinumTemplate.Width / 2);
                             int platinumY = invScanTop + maxLoc.Y + (platinumTemplate.Height / 2);
 
-                            Console.WriteLine($"[LOOT] Found platinum in inventory at ({platinumX}, {platinumY}) - right-clicking");
+                            //Console.WriteLine($"[LOOT] Found platinum in inventory at ({platinumX}, {platinumY}) - right-clicking");
 
                             // Right click on the platinum coins
                             VirtualRightClick(targetWindow, platinumX, platinumY);
@@ -6927,17 +6503,17 @@ class Program
                             // Reset the flag since we've processed the platinum
                             shouldScanInventoryForPlatinum = false;
 
-                            Console.WriteLine("[LOOT] Successfully right-clicked on platinum coins in inventory");
+                            //Console.WriteLine("[LOOT] Successfully right-clicked on platinum coins in inventory");
                         }
                         else
                         {
-                            Console.WriteLine("[LOOT] Could not find platinum in inventory with sufficient confidence");
+                            //Console.WriteLine("[LOOT] Could not find platinum in inventory with sufficient confidence");
                         }
                     }
                 }
                 else
                 {
-                    Console.WriteLine($"[LOOT ERROR] Platinum template '{PLATINUM_TEMPLATE_NAME}' not found in loaded templates");
+                    //Console.WriteLine($"[LOOT ERROR] Platinum template '{PLATINUM_TEMPLATE_NAME}' not found in loaded templates");
                 }
             }
         }
@@ -6951,4 +6527,272 @@ class Program
             shouldScanInventoryForPlatinum = false;
         }
     }
+
+    static readonly TimeSpan RING_OPERATION_COOLDOWN = TimeSpan.FromSeconds(2); // Cooldown between ring movements
+    static DateTime lastRingOperationTime = DateTime.MinValue;
+    // Scan the ring containers for misplaced rings
+    // Add this static variable at the class level, near other timing variables
+    static DateTime lastRingScanTime = DateTime.MinValue;
+    static readonly TimeSpan RING_SCAN_INTERVAL = TimeSpan.FromSeconds(1); // Scan rings at most once per second
+
+    // Modified ScanRingContainersForMisplacedRings function
+    static void ScanRingContainersForMisplacedRings()
+    {
+        try
+        {
+            // Check if enough time has passed since last scan
+            DateTime now = DateTime.Now;
+            if ((now - lastRingScanTime) < RING_SCAN_INTERVAL)
+            {
+                // Not enough time has passed, skip this scan
+                return;
+            }
+
+            // Update the last scan time
+            lastRingScanTime = now;
+
+            //Console.WriteLine("[RING CORRECTOR] Starting scan for misplaced rings in ring containers and backpack");
+
+            // Update UI positions to ensure we have the correct coordinates
+            UpdateUIPositions();
+
+            // Define the ring slot positions based on ToggleRing function
+            // Stealth ring slot (top slot)
+            int stealthRingSlotX = inventoryX;
+            int stealthRingSlotY = inventoryY;
+
+            // Life ring slot (bottom slot) - same formula as in ToggleRing
+            int lifeRingSlotX = inventoryX;
+            int lifeRingSlotY = inventoryY + 3 * pixelSize + 15;
+
+            //Console.WriteLine($"[RING CORRECTOR] Stealth ring slot: ({stealthRingSlotX}, {stealthRingSlotY})");
+            //Console.WriteLine($"[RING CORRECTOR] Life ring slot: ({lifeRingSlotX}, {lifeRingSlotY})");
+
+            // First check the ring slots
+            bool stealthRingInLifeSlot = ScanSlotForItem("stealthring", lifeRingSlotX, lifeRingSlotY);
+            bool lifeRingInStealthSlot = ScanSlotForItem("lifering", stealthRingSlotX, stealthRingSlotY);
+
+            // Also check the first 4 slots of the backpack for rings
+            //Console.WriteLine("[RING CORRECTOR] Checking first 4 slots of backpack for rings");
+            var stealthRingInBackpack = ScanSlotsForItemWithPosition("stealthring", lifeRingSlotX, lifeRingSlotY, 4);
+            var lifeRingInBackpack = ScanSlotsForItemWithPosition("lifering", stealthRingSlotX, stealthRingSlotY, 4);
+
+            // Process findings
+            // If rings are in wrong equipment slots, prioritize swapping them
+            if (stealthRingInLifeSlot && lifeRingInStealthSlot)
+            {
+                //Console.WriteLine("[RING CORRECTOR] Both rings are in wrong positions - swapping them");
+                SwapRings(stealthRingSlotX, stealthRingSlotY, lifeRingSlotX, lifeRingSlotY);
+            }
+            else if (stealthRingInLifeSlot)
+            {
+                //Console.WriteLine("[RING CORRECTOR] Stealth ring in life ring slot - moving to correct position");
+                DragItemToDestination(lifeRingSlotX, lifeRingSlotY, stealthRingSlotX, stealthRingSlotY, "stealthring_correction");
+                lastRingOperationTime = DateTime.Now;
+            }
+            else if (lifeRingInStealthSlot)
+            {
+                //Console.WriteLine("[RING CORRECTOR] Life ring in stealth ring slot - moving to correct position");
+                DragItemToDestination(stealthRingSlotX, stealthRingSlotY, lifeRingSlotX, lifeRingSlotY, "lifering_correction");
+                lastRingOperationTime = DateTime.Now;
+            }
+            // If rings are found in backpack, move them to their correct slots
+            else if (stealthRingInBackpack.found)
+            {
+                //Console.WriteLine($"[RING CORRECTOR] Stealth ring found in backpack at ({stealthRingInBackpack.slotX}, {stealthRingInBackpack.slotY}) - moving to equipment slot");
+                DragItemToDestination(stealthRingInBackpack.slotX, stealthRingInBackpack.slotY, stealthRingSlotX, stealthRingSlotY, "stealthring_from_backpack");
+                lastRingOperationTime = DateTime.Now;
+            }
+            else if (lifeRingInBackpack.found)
+            {
+                //Console.WriteLine($"[RING CORRECTOR] Life ring found in backpack at ({lifeRingInBackpack.slotX}, {lifeRingInBackpack.slotY}) - moving to equipment slot");
+                DragItemToDestination(lifeRingInBackpack.slotX, lifeRingInBackpack.slotY, lifeRingSlotX, lifeRingSlotY, "lifering_from_backpack");
+                lastRingOperationTime = DateTime.Now;
+            }
+            else
+            {
+                //Console.WriteLine("[RING CORRECTOR] All rings are in correct positions");
+            }
+
+            //Console.WriteLine("[RING CORRECTOR] Scan complete");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[RING CORRECTOR] Error scanning ring containers: {ex.Message}");
+        }
+    }
+
+    // Scan a specific slot for a specific item
+    static bool ScanSlotForItem(string itemName, int slotX, int slotY, int numSlotsToScan = 1)
+    {
+        try
+        {
+            // For backpack scanning, we need to check multiple slots
+            // If numSlotsToScan > 1, scan that many slots to the right
+
+            for (int slotIndex = 0; slotIndex < numSlotsToScan; slotIndex++)
+            {
+                // Calculate the center of the current slot
+                int currentSlotX = slotX + (slotIndex * pixelSize);
+                int currentSlotY = slotY;
+
+                // Calculate scan area around the slot center
+                int scanSize = pixelSize / 2;
+                int scanLeft = currentSlotX - scanSize;
+                int scanTop = currentSlotY - scanSize;
+                int scanWidth = pixelSize;
+                int scanHeight = pixelSize;
+
+                // Ensure we're not capturing outside the window
+                GetClientRect(targetWindow, out RECT windowRect);
+                int windowWidth = windowRect.Right - windowRect.Left;
+                int windowHeight = windowRect.Bottom - windowRect.Top;
+
+                if (scanLeft < 0) scanLeft = 0;
+                if (scanTop < 0) scanTop = 0;
+                if (scanLeft + scanWidth > windowWidth) scanWidth = windowWidth - scanLeft;
+                if (scanTop + scanHeight > windowHeight) scanHeight = windowHeight - scanTop;
+
+                // Capture the area
+                using (Mat slotArea = CaptureGameAreaAsMat(targetWindow, scanLeft, scanTop, scanWidth, scanHeight))
+                {
+                    if (slotArea == null || slotArea.IsEmpty)
+                    {
+                        continue; // Try next slot
+                    }
+
+                    // Check if the specific item template exists
+                    if (lootTemplates.TryGetValue(itemName, out Mat itemTemplate))
+                    {
+                        using (Mat result = new Mat())
+                        {
+                            CvInvoke.MatchTemplate(slotArea, itemTemplate, result, TemplateMatchingType.CcoeffNormed);
+
+                            double minVal = 0, maxVal = 0;
+                            Point minLoc = new Point(), maxLoc = new Point();
+                            CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
+
+                            //Console.WriteLine($"[RING CORRECTOR] {itemName} match value at slot {slotIndex}: {maxVal:F3}");
+
+                            // If we found a good match, return true immediately
+                            if (maxVal >= lootMatchThreshold)
+                            {
+                                //Console.WriteLine($"[RING CORRECTOR] Found {itemName} in slot {slotIndex} (X: {currentSlotX}, Y: {currentSlotY})");
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return false; // Item not found in any of the scanned slots
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[RING CORRECTOR] Error scanning slots for {itemName}: {ex.Message}");
+            return false;
+        }
+    }
+
+    // Modified version that also returns the position where the item was found
+    static (bool found, int slotX, int slotY) ScanSlotsForItemWithPosition(string itemName, int startSlotX, int startSlotY, int numSlotsToScan = 1)
+    {
+        try
+        {
+            for (int slotIndex = 0; slotIndex < numSlotsToScan; slotIndex++)
+            {
+                // Calculate the center of the current slot
+                int currentSlotX = startSlotX + (slotIndex * pixelSize);
+                int currentSlotY = startSlotY;
+
+                // Calculate scan area around the slot center
+                int scanSize = pixelSize / 2;
+                int scanLeft = currentSlotX - scanSize;
+                int scanTop = currentSlotY - scanSize;
+                int scanWidth = pixelSize;
+                int scanHeight = pixelSize;
+
+                // Ensure we're not capturing outside the window
+                GetClientRect(targetWindow, out RECT windowRect);
+                int windowWidth = windowRect.Right - windowRect.Left;
+                int windowHeight = windowRect.Bottom - windowRect.Top;
+
+                if (scanLeft < 0) scanLeft = 0;
+                if (scanTop < 0) scanTop = 0;
+                if (scanLeft + scanWidth > windowWidth) scanWidth = windowWidth - scanLeft;
+                if (scanTop + scanHeight > windowHeight) scanHeight = windowHeight - scanTop;
+
+                // Capture the area
+                using (Mat slotArea = CaptureGameAreaAsMat(targetWindow, scanLeft, scanTop, scanWidth, scanHeight))
+                {
+                    if (slotArea == null || slotArea.IsEmpty)
+                    {
+                        continue; // Try next slot
+                    }
+
+                    // Check if the specific item template exists
+                    if (lootTemplates.TryGetValue(itemName, out Mat itemTemplate))
+                    {
+                        using (Mat result = new Mat())
+                        {
+                            CvInvoke.MatchTemplate(slotArea, itemTemplate, result, TemplateMatchingType.CcoeffNormed);
+
+                            double minVal = 0, maxVal = 0;
+                            Point minLoc = new Point(), maxLoc = new Point();
+                            CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
+
+                            //Console.WriteLine($"[RING CORRECTOR] {itemName} match value at slot {slotIndex}: {maxVal:F3}");
+
+                            // If we found a good match, return position
+                            if (maxVal >= lootMatchThreshold)
+                            {
+                                //Console.WriteLine($"[RING CORRECTOR] Found {itemName} in slot {slotIndex} (X: {currentSlotX}, Y: {currentSlotY})");
+                                return (true, currentSlotX, currentSlotY);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return (false, 0, 0); // Item not found in any of the scanned slots
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[RING CORRECTOR] Error scanning slots for {itemName}: {ex.Message}");
+            return (false, 0, 0);
+        }
+    }
+
+    // Swap two rings between their slots
+    static void SwapRings(int slot1X, int slot1Y, int slot2X, int slot2Y)
+    {
+        try
+        {
+            // We need a temporary location to move one ring while swapping
+            // Use first backpack slot as temporary storage
+            int tempX = firstSlotBpX;
+            int tempY = firstSlotBpY;
+
+            //Console.WriteLine("[RING CORRECTOR] Starting ring swap operation");
+
+            // Step 1: Move ring from slot1 to temporary location
+            DragItemToDestination(slot1X, slot1Y, tempX, tempY, "ring_to_temp");
+            Sleep(1);
+
+            // Step 2: Move ring from slot2 to slot1
+            DragItemToDestination(slot2X, slot2Y, slot1X, slot1Y, "ring_to_slot1");
+            Sleep(1);
+
+            // Step 3: Move ring from temporary location to slot2
+            DragItemToDestination(tempX, tempY, slot2X, slot2Y, "ring_to_slot2");
+
+            lastRingOperationTime = DateTime.Now;
+            //Console.WriteLine("[RING CORRECTOR] Ring swap completed");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[RING CORRECTOR] Error swapping rings: {ex.Message}");
+        }
+    }
+
 }
