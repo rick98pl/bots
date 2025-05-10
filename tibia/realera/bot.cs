@@ -367,10 +367,13 @@ class Program
         autoPotionThread.IsBackground = true;
         autoPotionThread.Name = "AutoPotion";
         autoPotionThread.Start();
-        Thread outfitThread = new Thread(MaintainOutfitThread);
-        outfitThread.IsBackground = true;
-        outfitThread.Name = "OutfitMaintenance";
-        outfitThread.Start();
+        if (false)
+        {
+            Thread outfitThread = new Thread(MaintainOutfitThread);
+            outfitThread.IsBackground = true;
+            outfitThread.Name = "OutfitMaintenance";
+            outfitThread.Start();
+        }
         Thread lootRecognizerThread = new Thread(LootRecognizerThread);
         lootRecognizerThread.IsBackground = true;
         lootRecognizerThread.Name = "LootRecognizer";
@@ -5094,7 +5097,7 @@ class Program
                             }
                         }
                     }
-                }
+                }//hej to ja rysiu to moj kod prosze nie krasc//
             }
             return false;
         }
