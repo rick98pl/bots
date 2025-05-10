@@ -2195,13 +2195,11 @@ class Program
                 Sleep(1);
                 SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lifeRingSourceLParam);
                 Sleep(1);
-                RecordClickPosition(equipmentX, equipmentY, true);
                 IntPtr lifeRingDestLParam = MakeLParam(lifeRingX, lifeRingY);
                 SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lifeRingDestLParam);
                 Sleep(1);
                 SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
                 Sleep(1);
-                RecordClickPosition(lifeRingX, lifeRingY, true);
                 Sleep(1);
             }
             Sleep(512);
@@ -2235,13 +2233,11 @@ class Program
             Sleep(25);
             SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
             Sleep(25);
-            RecordClickPosition(sourceX, sourceY, true);
             IntPtr destLParam = MakeLParam(destX, destY);
             SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
             Sleep(25);
             SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
             Sleep(1);
-            RecordClickPosition(destX, destY, true);
             onceLifeRing = true;
             if (!equip && withLifeRing && onceLifeRing && currentTargetId == 0)
             {
@@ -2267,7 +2263,6 @@ class Program
                     Sleep(25);
                     SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
                     Sleep(1);
-                    RecordClickPosition(equipmentX, equipmentY, true);
                 }
             }
         }
