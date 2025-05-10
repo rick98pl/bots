@@ -4982,8 +4982,6 @@ class Program
                         {
                             int platinumX = invScanLeft + maxLoc.X + (platinumTemplate.Width / 2);
                             int platinumY = invScanTop + maxLoc.Y + (platinumTemplate.Height / 2);
-                            Console.WriteLine(platinumX);
-                            Console.WriteLine(platinumY);
                             VirtualRightClick(targetWindow, platinumX, platinumY);
                             shouldScanInventoryForPlatinum = true;
                         }
