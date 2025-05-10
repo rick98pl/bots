@@ -2237,11 +2237,10 @@ class Program
             SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
             Sleep(25);
             SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
-            Sleep(1);
+            Sleep(128);
             onceLifeRing = true;
             if (!equip && withLifeRing && onceLifeRing && currentTargetId == 0)
             {
-                Sleep(128);
                 onceLifeRing = false;
                 int lifeRingX = inventoryX;
                 int lifeRingY = inventoryY + 3 * pixelSize + 15;
