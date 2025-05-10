@@ -2243,12 +2243,14 @@ class Program
                 onceLifeRing = false;
                 int lifeRingX = inventoryX;
                 int lifeRingY = inventoryY + 3 * pixelSize + 15;
-                double xd = 9999999;
+
+                // Modified section
+                double manaPercent = 0;
                 lock (memoryLock)
                 {
-                    xd = curMana;
+                    manaPercent = (curMana / maxMana) * 100;
                 }
-                if (xd < 845)
+                if (manaPercent < 90)
                 {
                     IntPtr lifeRingSourceLParam = MakeLParam(lifeRingX, lifeRingY);
                     SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lifeRingSourceLParam);
@@ -2263,12 +2265,6 @@ class Program
                     Sleep(1);
                     RecordClickPosition(equipmentX, equipmentY, true);
                 }
-            }
-            if (equip)
-            {
-            }
-            else
-            {
             }
         }
         catch (Exception ex)
