@@ -781,6 +781,11 @@ class Program
                 Console.WriteLine("Position alert sound stopped manually.");
                 break;
             case ConsoleKey.Q:
+                if (SPAWNWATCHER.IsColorAlarmActive())
+                {
+                    SPAWNWATCHER.StopColorAlarm();
+                    return;
+                }
                 programRunning = false;
                 memoryReadActive = false;
                 threadFlags["recording"] = false;
@@ -3454,33 +3459,39 @@ class Program
                 Console.WriteLine($"[COLOR] Error handling color change detection: {ex.Message}");
             }
         }
-        private static void TriggerColorChangeAlert()
+        public static CancellationTokenSource? colorAlarmCts = null;
+        public static readonly object colorAlarmLock = new object();
+        public static void TriggerColorChangeAlert()
         {
             try
             {
-                Console.WriteLine("\n[!!!] COLOR CHANGE ALERT - UNUSUAL COLOR DETECTED [!!!]");
-                Console.WriteLine("[!!!] Stopping all threads and sounding alarm [!!!]\n");
-                IntPtr copyWindow = Program.targetWindow;
                 Program.threadFlags["recording"] = false;
                 Program.threadFlags["playing"] = false;
                 Program.threadFlags["autopot"] = false;
                 Program.threadFlags["spawnwatch"] = false;
                 Program.memoryReadActive = false;
                 Program.programRunning = false;
-                Program.StopPositionAlertSound();  
+                IntPtr copyWindow = Program.targetWindow;
+                lock (colorAlarmLock)
+                {
+                    colorAlarmCts = new CancellationTokenSource();
+                }
+                var token = colorAlarmCts.Token;
                 Thread alarmSoundThread = new Thread(() =>
                 {
                     try
                     {
-                        while (true)
+                        while (!token.IsCancellationRequested)
                         {
                             Beep(1400, 200);
-                            Thread.Sleep(150);
+                            if (token.IsCancellationRequested) break;
+                            Thread.Sleep(1);
                             Beep(1800, 200);
-                            Thread.Sleep(150);
+                            if (token.IsCancellationRequested) break;
+                            Thread.Sleep(1);
                             Beep(1400, 200);
-                            Thread.Sleep(500);
-                            Console.WriteLine("[COLOR ALARM] Unusual color detected in game interface!");
+                            if (token.IsCancellationRequested) break;
+                            Thread.Sleep(1);
                         }
                     }
                     catch (Exception ex)
@@ -3490,19 +3501,54 @@ class Program
                 });
                 alarmSoundThread.IsBackground = true;
                 alarmSoundThread.Start();
+                Thread inputMonitorThread = new Thread(() =>
+                {
+                    try
+                    {
+                        while (!token.IsCancellationRequested)
+                        {
+                            if (Console.KeyAvailable)
+                            {
+                                var key = Console.ReadKey(true).Key;
+                                if (key == ConsoleKey.Q)
+                                {
+                                    Console.WriteLine("\n[COLOR ALARM] User pressed Q - stopping alarm...");
+                                    StopColorAlarm();
+                                    break;
+                                }
+                            }
+                            Thread.Sleep(50);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[COLOR ALARM] Error in input monitor: {ex.Message}");
+                    }
+                });
+                inputMonitorThread.IsBackground = true;
+                inputMonitorThread.Start();
                 Thread focusWindowThread = new Thread(() =>
                 {
                     try
                     {
                         FocusGameWindow(copyWindow);
-                        Console.WriteLine("[COLOR ALARM] Color change alert: Window focused, press ESC to exit");
-                        Thread.Sleep(60000); 
-                        Environment.Exit(1);
+                        for (int i = 0; i < 600; i++) 
+                        {
+                            if (token.IsCancellationRequested)
+                            {
+                                break;
+                            }
+                            Thread.Sleep(100);
+                        }
+                        if (!token.IsCancellationRequested)
+                        {
+                            Console.WriteLine("[COLOR ALARM] Timeout reached - exiting program");
+                            Environment.Exit(1);
+                        }
                     }
                     catch (Exception ex)
                     {
                         Console.WriteLine($"[COLOR ALARM] Error in window focus: {ex.Message}");
-                        Environment.Exit(1);
                     }
                 });
                 focusWindowThread.IsBackground = false;
@@ -3511,7 +3557,34 @@ class Program
             catch (Exception ex)
             {
                 Console.WriteLine($"[COLOR ALARM] Error triggering color change alert: {ex.Message}");
-                Environment.Exit(1);
+            }
+        }
+        public static bool IsColorAlarmActive()
+        {
+            lock (colorAlarmLock)
+            {
+                return colorAlarmCts != null;
+            }
+        }
+        public static void StopColorAlarm()
+        {
+            lock (colorAlarmLock)
+            {
+                if (colorAlarmCts != null)
+                {
+                    Console.WriteLine("[COLOR ALARM] Stopping color alarm...");
+                    colorAlarmCts.Cancel();
+                    colorAlarmCts.Dispose();
+                    colorAlarmCts = null;
+                    Program.threadFlags["recording"] = false;
+                    Program.threadFlags["playing"] = false;
+                    Program.threadFlags["autopot"] = false;
+                    Program.threadFlags["spawnwatch"] = false;
+                    Program.memoryReadActive = false;
+                    Program.programRunning = false;
+                    Console.WriteLine("[COLOR ALARM] Alarm stopped. Exiting program...");
+                    Environment.Exit(0);
+                }
             }
         }
         private static void TriggerAlarm(string templateName)
