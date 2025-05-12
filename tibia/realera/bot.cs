@@ -1172,7 +1172,7 @@ class Program
         if (target.Z != currentZ)
         {
             Console.WriteLine($"[NAV] Detected floor change needed: Current Z={currentZ}, Target Z={target.Z}");
-            return HandleZLevelChange(target, currentX, currentY, currentZ, waypoints);
+            return HandleZLevelChange(target, waypoints);
         }
 
         // Check if we're already close enough to the target
@@ -1456,16 +1456,22 @@ class Program
     }
 
     // Handle floor changes
-    static NavigationAction HandleZLevelChange(Coordinate target, int currentX, int currentY, int currentZ, List<Coordinate> waypoints)
+    static NavigationAction HandleZLevelChange(Coordinate target, List<Coordinate> waypoints)
     {
-        bool isGoingUp = target.Z < currentZ;
-        HoleLocation? hole = GetHoleAtPosition(target.X, target.Y, currentZ);
-
-        Console.WriteLine($"[FLOOR] Need to change floors from Z={currentZ} to Z={target.Z} ({(isGoingUp ? "UP" : "DOWN")})");
-        if (hole != null)
+        int currentX, currentY, currentZ;
+        lock (memoryLock)
         {
-            Console.WriteLine($"[FLOOR] Found hole information: {hole}");
+            currentX = posX;
+            currentY = posY;
+            currentZ = posZ;
         }
+        bool isGoingUp = target.Z < currentZ;
+
+        if(currentX == target.X)
+        {
+            target.Y = target.Y - 1;
+        }
+        Console.WriteLine($"[FLOOR] Need to change floors from Z={currentZ} to Z={target.Z} ({(isGoingUp ? "UP" : "DOWN")})");
 
         if (isGoingUp)
         {
@@ -1475,7 +1481,7 @@ class Program
 
             Console.WriteLine($"[FLOOR] Going UP - distance to F4 position: dx={distanceX}, dy={distanceY}");
 
-            if (distanceX <= 1 && distanceY <= 1)
+            if (distanceX == 0 && distanceY == 0)
             {
                 // We're at the F4 position
                 Console.WriteLine($"[FLOOR] At F4 position - will press F4");
@@ -5755,46 +5761,5 @@ class Program
         }
     }
 
-    static List<HoleLocation> detectedHoles = new List<HoleLocation>();
-    static Dictionary<string, bool> holeLocationCache = new Dictionary<string, bool>();
 
-    // Define hole/stairs location structure
-    public class HoleLocation
-    {
-        public int X { get; set; }
-        public int Y { get; set; }
-        public int FromZ { get; set; }
-        public int ToZ { get; set; }
-        public HoleType Type { get; set; }
-
-        public string GetLocationKey()
-        {
-            return $"{X},{Y}";
-        }
-
-        public override string ToString()
-        {
-            return $"{Type} at ({X},{Y}) from Z={FromZ} to Z={ToZ}";
-        }
-    }
-
-    public enum HoleType
-    {
-        Up,    // Going up (F4)
-        Down   // Going down (walking into)
-    }
-
-    // Call this function after loading waypoints to identify holes
-
-    // Helper function to check if a position is a known hole
-    static HoleLocation? GetHoleAtPosition(int x, int y, int currentZ)
-    {
-        string locationKey = $"{x},{y}";
-        if (!holeLocationCache.ContainsKey(locationKey))
-            return null;
-
-        // Find the specific hole at this position that matches our current Z
-        return detectedHoles.FirstOrDefault(h =>
-            h.X == x && h.Y == y && h.FromZ == currentZ);
-    }
 }
