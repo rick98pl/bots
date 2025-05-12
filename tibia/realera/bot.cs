@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -38,6 +40,8 @@ class Program
     const int VK_UP = 0x26;
     const int VK_RIGHT = 0x27;
     const int VK_DOWN = 0x28;
+    const int wp_MAX_WAIT_TIME_MS = 2500;
+    public static readonly int VK_F4 = 0x73;
     static extern bool SetForegroundWindow(IntPtr hWnd);
     static class Keys
     {
@@ -59,9 +63,9 @@ class Program
         public static int GetKeyCode(string keyName) =>
             KeyMap.ContainsKey(keyName) ? KeyMap[keyName] : -1;
     }
-    const int DEFAULT_HP_THRESHOLD = 50;
-    const int DEFAULT_BEEP_HP_THRESHOLD = 1;
-    const int DEFAULT_MANA_THRESHOLD = 70;
+    const int DEFAULT_HP_THRESHOLD = 40;
+    const int DEFAULT_BEEP_HP_THRESHOLD = 30;
+    const int DEFAULT_MANA_THRESHOLD = -1;
     const string DEFAULT_HP_KEY_NAME = "F1";
     const string DEFAULT_MANA_KEY_NAME = "F2";
     static int DEFAULT_HP_KEY => Keys.GetKeyCode(DEFAULT_HP_KEY_NAME);
@@ -115,6 +119,7 @@ class Program
         public int X { get; set; }
         public int Y { get; set; }
         public int Z { get; set; }
+
     }
     class CoordinateData
     {
@@ -367,10 +372,13 @@ class Program
         autoPotionThread.IsBackground = true;
         autoPotionThread.Name = "AutoPotion";
         autoPotionThread.Start();
-        Thread outfitThread = new Thread(MaintainOutfitThread);
-        outfitThread.IsBackground = true;
-        outfitThread.Name = "OutfitMaintenance";
-        outfitThread.Start();
+        if (false)
+        {
+            Thread outfitThread = new Thread(MaintainOutfitThread);
+            outfitThread.IsBackground = true;
+            outfitThread.Name = "OutfitMaintenance";
+            outfitThread.Start();
+        }
         Thread lootRecognizerThread = new Thread(LootRecognizerThread);
         lootRecognizerThread.IsBackground = true;
         lootRecognizerThread.Name = "LootRecognizer";
@@ -534,6 +542,7 @@ class Program
                             }
                         }
                     }
+
                     if (loadedCoords != null && loadedCoords.cords.Count > 0 && threadFlags["playing"])
                     {
                         CheckPositionDistance(loadedCoords.cords);
@@ -563,6 +572,79 @@ class Program
                 }
                 Sleep(500);
             }
+        }
+    }
+
+    static Dictionary<int, DateTime> targetEngagementTimes = new Dictionary<int, DateTime>();
+    static readonly TimeSpan MAX_TARGET_ENGAGEMENT_TIME = TimeSpan.FromSeconds(10);
+    static DateTime lastTargetChangeTime = DateTime.MinValue;
+    static int currentTargetEngagementId = 0;
+    static TimeSpan currentTargetEngagementDuration = TimeSpan.Zero;
+    static bool shouldForceTargetChange = false;
+
+    // Add this method to handle target engagement tracking
+    static void UpdateTargetEngagement()
+    {
+        int currentTargetId;
+        lock (memoryLock)
+        {
+            currentTargetId = targetId;
+        }
+
+        DateTime now = DateTime.Now;
+
+        // If we have a new target
+        if (currentTargetId != 0 && currentTargetId != currentTargetEngagementId)
+        {
+            // Record when we started attacking this target
+            if (!targetEngagementTimes.ContainsKey(currentTargetId))
+            {
+                targetEngagementTimes[currentTargetId] = now;
+                Console.WriteLine($"[COMBAT] Started engaging target {currentTargetId}");
+            }
+
+            currentTargetEngagementId = currentTargetId;
+            lastTargetChangeTime = now;
+        }
+
+        // If we currently have a target
+        if (currentTargetId != 0 && targetEngagementTimes.ContainsKey(currentTargetId))
+        {
+            DateTime engagementStart = targetEngagementTimes[currentTargetId];
+            currentTargetEngagementDuration = now - engagementStart;
+
+            // Check if we've been attacking too long
+            if (currentTargetEngagementDuration >= MAX_TARGET_ENGAGEMENT_TIME)
+            {
+                Console.WriteLine($"[COMBAT] Target {currentTargetId} engagement timeout after {currentTargetEngagementDuration.TotalSeconds:F1}s");
+                shouldForceTargetChange = true;
+
+                // Force target change by pressing F6
+                InstantSendKeyPress(VK_F6);
+
+                // Clean up this target from our tracking
+                targetEngagementTimes.Remove(currentTargetId);
+                currentTargetEngagementId = 0;
+                currentTargetEngagementDuration = TimeSpan.Zero;
+            }
+        }
+        else if (currentTargetId == 0)
+        {
+            // No target - reset engagement tracking
+            currentTargetEngagementId = 0;
+            currentTargetEngagementDuration = TimeSpan.Zero;
+            shouldForceTargetChange = false;
+        }
+
+        // Clean up old target entries (older than 30 seconds)
+        var oldTargets = targetEngagementTimes
+            .Where(kvp => (now - kvp.Value).TotalSeconds > 30)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var oldTarget in oldTargets)
+        {
+            targetEngagementTimes.Remove(oldTarget);
         }
     }
     static void ChangeOutfit(int change)
@@ -781,6 +863,11 @@ class Program
                 Console.WriteLine("Position alert sound stopped manually.");
                 break;
             case ConsoleKey.Q:
+                if (SPAWNWATCHER.IsColorAlarmActive())
+                {
+                    SPAWNWATCHER.StopColorAlarm();
+                    return;
+                }
                 programRunning = false;
                 memoryReadActive = false;
                 threadFlags["recording"] = false;
@@ -975,621 +1062,755 @@ class Program
     private static readonly int MAX_WAYPOINT_RETRIES = 3;
     private static DateTime lastFailedClickPointsCleanupTime = DateTime.MinValue;
     private static readonly TimeSpan FAILED_CLICK_POINTS_CLEANUP_INTERVAL = TimeSpan.FromMinutes(5);
-    static bool ClickWaypoint(Coordinate target)
-    {
-        try
-        {
-            bool isChaseReturnPoint = chaseTracker.ShouldReturnToStart() &&
-                                 target.X == chaseTracker.GetReturnPosition().X &&
-                                 target.Y == chaseTracker.GetReturnPosition().Y;
-            if (isChaseReturnPoint)
-            {
-            }
-            int currentX, currentY;
-            lock (memoryLock)
-            {
-                currentX = posX;
-                currentY = posY;
-            }
-            GetClientRect(targetWindow, out RECT rect);
-            int baseX = (rect.Right - rect.Left) / 2 - 186;
-            int baseY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
-            int diffX = target.X - currentX;
-            int diffY = target.Y - currentY;
-            int targetX = baseX + (diffX * pixelSize);
-            int targetY = baseY + (diffY * pixelSize);
-            if (GetTargetId() != 0)
-            {
-                return false;
-            }
-            Point clickPoint = new Point(targetX, targetY);
-            if (failedClickPoints.Any(p => Math.Abs(p.X - clickPoint.X) < 5 && Math.Abs(p.Y - clickPoint.Y) < 5))
-            {
-                return false;
-            }
-            int lParam = (targetY << 16) | (targetX & 0xFFFF);
-            SendKeyPress(VK_ESCAPE);
-            Sleep(25);
-            SendMessage(targetWindow, 0x0200, IntPtr.Zero, lParam);
-            Sleep(1);
-            SendMessage(targetWindow, WM_LBUTTONDOWN, 1, lParam);
-            Sleep(1);
-            SendMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, lParam);
-            Sleep(1);
-            int centerLParam = (baseY << 16) | (baseX & 0xFFFF);
-            RecordWaypointClick(targetX, targetY);
-            lastClickedWaypoint = new Coordinate { X = target.X, Y = target.Y, Z = target.Z };
-            lastWaypointClickTime = DateTime.Now;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[DEBUG] Click Error: {ex.Message}");
-            return false;
-        }
-    }
+    static bool boolInit = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     static void PlayCoordinates()
     {
         UpdateUIPositions();
         Console.WriteLine("Path playback starting...");
+
         string json = File.ReadAllText(cordsFilePath);
         loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
+
         if (loadedCoords == null || loadedCoords.cords.Count == 0)
         {
             threadFlags["playing"] = false;
             return;
         }
+
         List<Coordinate> waypoints = loadedCoords.cords;
         totalCoords = waypoints.Count;
-        HashSet<int> blacklistedTargets = new HashSet<int>();
-        Console.WriteLine($"Loaded {totalCoords} coordinates from cords.json");
-        int currentX,
-            currentY,
-            currentZ;
+
+        // Find starting position
+        int currentX, currentY, currentZ;
         lock (memoryLock)
         {
             currentX = posX;
             currentY = posY;
             currentZ = posZ;
         }
-        currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-        Console.WriteLine($"[DEBUG] Starting at closest waypoint: index {currentCoordIndex}");
-        consecutiveStuckCount = 0;
-        failedClickPoints.Clear();
-        waypointRetryCount = 0;
+
+        // Use the improved FindClosestWaypointIndex
+        if (boolInit)
+        {
+            currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+            boolInit = false;
+        }
+        else
+        {
+            currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+
+        }
+            
+        // Initialize or validate global state
+        if (globalLastIndex < 0 || Math.Abs(globalLastIndex - currentCoordIndex) > maxBacktrackDistance)
+        {
+            globalLastIndex = currentCoordIndex;
+            Console.WriteLine($"[DEBUG] Initialized global state. Starting at waypoint index: {currentCoordIndex}");
+        }
+        else
+        {
+            Console.WriteLine($"[DEBUG] Using existing global state. Current: {currentCoordIndex}, Global: {globalLastIndex}");
+        }
+
+        // Main navigation loop - rest of the code remains the same...
         while (threadFlags["playing"])
         {
             try
             {
-                int currentTargetId;
+                // Update current position
                 lock (memoryLock)
                 {
                     currentX = posX;
                     currentY = posY;
                     currentZ = posZ;
-                    currentTargetId = targetId;
                 }
-                if (waypointStuckDetectionEnabled &&
-                    lastWaypointClickTime != DateTime.MinValue &&
-                    lastClickedWaypoint != null)
-                {
-                    TimeSpan timeSinceClick = DateTime.Now - lastWaypointClickTime;
-                    if (timeSinceClick > waypointStuckTimeout)
-                    {
-                        int distanceMovedX = Math.Abs(lastClickedWaypoint.X - currentX);
-                        int distanceMovedY = Math.Abs(lastClickedWaypoint.Y - currentY);
-                        int totalDistanceMoved = distanceMovedX + distanceMovedY;
-                        if (totalDistanceMoved <= 1)
-                        {
-                            GetClientRect(targetWindow, out RECT rect);
-                            int baseX = (rect.Right - rect.Left) / 2 - 186;
-                            int baseY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
-                            int diffX = lastClickedWaypoint.X - currentX;
-                            int diffY = lastClickedWaypoint.Y - currentY;
-                            int clickX = baseX + (diffX * pixelSize);
-                            int clickY = baseY + (diffY * pixelSize);
-                            failedClickPoints.Add(new Point(clickX, clickY));
-                            consecutiveStuckCount++;
-                            waypointRetryCount++;
-                            if (consecutiveStuckCount >= maxConsecutiveStuckCount)
-                            {
-                                waypointRandomizationEnabled = false;
-                            }
-                            lastWaypointClickTime = DateTime.MinValue;
-                            lastClickedWaypoint = null;
-                            if (waypointRetryCount >= MAX_WAYPOINT_RETRIES)
-                            {
-                                SendKeyPress(VK_ESCAPE);
-                                Sleep(100);
-                                Coordinate nextWaypointy = FindNextWaypoint(
-                                    ref waypoints,
-                                    currentX,
-                                    currentY,
-                                    currentZ,
-                                    ref currentCoordIndex
-                                );
-                                MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypointy.X, nextWaypointy.Y);
-                                SendKeyPress(VK_F6);
-                                Sleep(300);
-                                lock (memoryLock)
-                                {
-                                    currentX = posX;
-                                    currentY = posY;
-                                }
-                                int theX = nextWaypointy.X - currentX;
-                                int theY = nextWaypointy.Y - currentY;
-                                if (Math.Abs(theX) >= Math.Abs(theY))
-                                {
-                                    if (theY > 0)
-                                        SendKeyPress(VK_DOWN);
-                                    else
-                                        SendKeyPress(VK_UP);
-                                }
-                                else
-                                {
-                                    if (theX > 0)
-                                        SendKeyPress(VK_RIGHT);
-                                    else
-                                        SendKeyPress(VK_LEFT);
-                                }
-                                SendKeyPress(VK_F6);
-                                Sleep(300);
-                                waypointRetryCount = 0;
-                            }
-                            else
-                            {
-                                currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                            }
-                            continue;
-                        }
-                        else
-                        {
-                            if (consecutiveStuckCount > 0)
-                            {
-                                consecutiveStuckCount = 0;
-                                waypointRetryCount = 0;
-                                if (!waypointRandomizationEnabled)
-                                {
-                                    waypointRandomizationEnabled = true;
-                                }
-                            }
-                            lastWaypointClickTime = DateTime.MinValue;
-                            lastClickedWaypoint = null;
-                        }
-                    }
-                }
-                DateTime now = DateTime.Now;
-                if (failedClickPoints.Count > 0 &&
-                    (now - lastFailedClickPointsCleanupTime) > FAILED_CLICK_POINTS_CLEANUP_INTERVAL)
-                {
-                    int oldCount = failedClickPoints.Count;
-                    if (failedClickPoints.Count > 20)
-                    {
-                        failedClickPoints = failedClickPoints.Skip(failedClickPoints.Count - 20).ToList();
-                    }
-                    lastFailedClickPointsCleanupTime = now;
-                }
-                if (previousTargetId != 0 && currentTargetId == 0)
-                {
-                    lock (memoryLock)
-                    {
-                        chaseTracker.Update(posX, posY, posZ, targetId);
-                    }
-                    if (chaseTracker.ShouldReturnToStart())
-                    {
-                    }
-                    else
-                    {
-                    }
-                    ToggleRing(targetWindow, false);
-                    Sleep(1);
-                    if (!clickedAroundTargets.Contains(previousTargetId) && previousTargetId != 0)
-                    {
-                        clickedAroundTargets.Add(previousTargetId);
-                        bool targetFoundDuringClickAround = ClickAroundCharacter(targetWindow);
-                    }
-                    lock (memoryLock)
-                    {
-                        currentTargetId = targetId;
-                    }
-                }
-                previousTargetId = currentTargetId;
+
+                // Check if combat is active
+                UpdateTargetEngagement();
+                int currentTargetId;
                 lock (memoryLock)
                 {
                     currentTargetId = targetId;
                 }
-                if (currentTargetId != 0 && currentTargetId != lastTrackedTargetId)
+
+                if (currentTargetId == 0)
                 {
-                    clickedAroundTargets.Clear();
-                    lastTrackedTargetId = currentTargetId;
+                    SendKeyPress(VK_F6);
+                    Thread.Sleep(150);
                 }
+                lock (memoryLock)
+                {
+                    currentTargetId = targetId;
+                }
+
+                // If combat is active, wait until target is killed
                 if (currentTargetId != 0)
                 {
-                    ToggleRing(targetWindow, true);
-                    Sleep(1);
-                    var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
-                    Sleep(1);
-                    if (previousTargetId == 0 && currentTargetId != 0)
+                    
+                    Console.WriteLine($"[COMBAT] Fighting target {currentTargetId}...");
+
+                    // Wait until target is killed
+                    while (threadFlags["playing"])
                     {
-                        previousChasePosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
+                        UpdateTargetEngagement();
+                        lock (memoryLock)
+                        {
+                            if (targetId == 0)
+                            {
+                                Console.WriteLine("[COMBAT] Target killed!");
+                                // Click around for loot after killing target
+                                ClickAroundCharacter(targetWindow);
+                                break;
+                            }
+
+                            if (shouldForceTargetChange)
+                            {
+                                Console.WriteLine($"[COMBAT] Target timeout during combat - switching target");
+                                SendKeyPress(VK_F6);
+                                shouldForceTargetChange = false;
+                                currentTargetEngagementId = 0;
+                                currentTargetEngagementDuration = TimeSpan.Zero;
+                                Thread.Sleep(150);
+                                break; // Exit combat loop to recheck targets
+                            }
+                        }
+                        Sleep(100);
                     }
-                    if (blacklistedTargets.Contains(currentTargetId))
-                    {
-                        Sleep(1);
-                        continue;
-                    }
-                    if (
-                        !string.IsNullOrEmpty(monsterName)
-                        && blacklistedMonsterNames.Contains(monsterName)
-                    )
-                    {
-                        Sleep(1);
-                        continue;
-                    }
-                    Sleep(1);
-                    lock (memoryLock)
-                    {
-                        currentTargetId = targetId;
-                    }
-                    if (!string.IsNullOrEmpty(monsterName))
-                    {
-                        shouldClickAround = true;
-                    }
+
+                    // Update current position after combat
                     lock (memoryLock)
                     {
                         currentX = posX;
                         currentY = posY;
                         currentZ = posZ;
                     }
+
+                    // Find closest waypoint to continue from using the improved function
+                    currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+                    Console.WriteLine($"[COMBAT] Resuming from waypoint index {currentCoordIndex}");
                     continue;
                 }
-                lock (memoryLock)
+
+                // Get next navigation point
+                NavigationAction action = DetermineNextAction(waypoints, currentX, currentY, currentZ);
+
+                // Execute the action
+                switch (action.Type)
                 {
-                    currentTargetId = targetId;
-                }
-                if (currentTargetId == 0)
-                {
-                    if (isClickAroundInProgress)
-                    {
-                    }
-                    else if ((DateTime.Now - lastF6Press).TotalMilliseconds < F6Cooldown.TotalMilliseconds)
-                    {
-                        TimeSpan remainingCooldown = F6Cooldown - (DateTime.Now - lastF6Press);
-                    }
-                }
-                lock (memoryLock)
-                {
-                    currentTargetId = targetId;
-                }
-                if (currentTargetId != 0)
-                {
-                    continue;
-                }
-                Sleep(1);
-                Coordinate nextWaypoint = FindNextWaypoint(
-                    ref waypoints,
-                    currentX,
-                    currentY,
-                    currentZ,
-                    ref currentCoordIndex
-                );
-                currentTarget = nextWaypoint;
-                int distanceX = Math.Abs(nextWaypoint.X - currentX);
-                int distanceY = Math.Abs(nextWaypoint.Y - currentY);
-                int totalDistance = distanceX + distanceY;
-                if (distanceX > 5 || distanceY > 5)
-                {
-                    int maxMoves = 5;
-                    int movesMade = 0;
-                    while ((distanceX > 5 || distanceY > 5) && movesMade < maxMoves)
-                    {
-                        MoveCharacterTowardsWaypoint(
-                            currentX,
-                            currentY,
-                            nextWaypoint.X,
-                            nextWaypoint.Y
-                        );
+                    case ActionType.UseKeyboard:
+                        MoveCharacterTowardsWaypoint(currentX, currentY, action.TargetX, action.TargetY);
+                        currentCoordIndex = action.WaypointIndex;
+                        globalLastIndex = currentCoordIndex; // Update global state
+                        break;
+
+                    case ActionType.ClickWaypoint:
+                        if (ClickWaypoint(action.TargetX, action.TargetY))
+                        {
+                            WaitForMovementCompletion(action.TargetX, action.TargetY);
+                        }
+                        currentCoordIndex = action.WaypointIndex;
+                        globalLastIndex = currentCoordIndex; // Update global state
+                        break;
+
+                    case ActionType.UseF4:
+                        HandleF4Transition(action.TargetX, action.TargetY, action.FromZ, action.ToZ);
+                        currentCoordIndex = action.WaypointIndex;
+                        globalLastIndex = currentCoordIndex; // Update global state
+                        break;
+
+                    case ActionType.WaitForTarget:
                         SendKeyPress(VK_F6);
-                        Sleep(250);
-                        lock (memoryLock)
-                        {
-                            currentX = posX;
-                            currentY = posY;
-                            currentZ = posZ;
-                        }
-                        distanceX = Math.Abs(nextWaypoint.X - currentX);
-                        distanceY = Math.Abs(nextWaypoint.Y - currentY);
-                        movesMade++;
-                        if (distanceX <= 5 && distanceY <= 5)
-                        {
-                            break;
-                        }
-                        if (movesMade % 2 == 0)
-                        {
-                        }
-                    }
-                    if (distanceX > 5 || distanceY > 5)
-                    {
-                        currentCoordIndex = FindClosestWaypointIndex(
-                            waypoints,
-                            currentX,
-                            currentY,
-                            currentZ
-                        );
-                        continue;
-                    }
+                        Sleep(100);
+                        break;
                 }
-                if (isReturningFromChase)
-                {
-                    int closestIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                    Coordinate closestWaypoint = waypoints[closestIndex];
-                    int distanceToWaypointX = Math.Abs(closestWaypoint.X - currentX);
-                    int distanceToWaypointY = Math.Abs(closestWaypoint.Y - currentY);
-                    if (distanceToWaypointX < 5 && distanceToWaypointY < 5)
-                    {
-                        chaseTracker.CompleteReturn();
-                        isReturningFromChase = false;
-                        continue;
-                    }
-                    MoveCharacterTowardsWaypoint(currentX, currentY, nextWaypoint.X, nextWaypoint.Y);
-                    SendKeyPress(VK_F6);
-                    Sleep(100);
-                    continue;
-                }
-                bool clickSuccess = ClickWaypoint(nextWaypoint);
-                if (clickSuccess)
-                {
-                    const int wp_DISTANCE_THRESHOLD = 1;
-                    const int wp_MAX_WAIT_TIME_MS = 1000;
-                    DateTime wp_startTime = DateTime.Now;
-                    bool wp_reachedDestination = false;
-                    while (DateTime.Now.Subtract(wp_startTime).TotalMilliseconds < wp_MAX_WAIT_TIME_MS)
-                    {
-                        int wp_followStatus;
-                        int wp_currentTargetId;
-                        int wp_currentX, wp_currentY, wp_currentZ;
-                        lock (memoryLock)
-                        {
-                            wp_followStatus = follow;
-                            wp_currentTargetId = targetId;
-                            wp_currentX = posX;
-                            wp_currentY = posY;
-                            wp_currentZ = posZ;
-                        }
-                        if (wp_currentTargetId != 0)
-                        {
-                            break;
-                        }
-                        int wp_currentDiffX = Math.Abs(nextWaypoint.X - wp_currentX);
-                        int wp_currentDiffY = Math.Abs(nextWaypoint.Y - wp_currentY);
-                        int wp_totalDistance = wp_currentDiffX + wp_currentDiffY;
-                        if (DateTime.Now.Millisecond < 100)
-                        {
-                        }
-                        if (wp_totalDistance <= wp_DISTANCE_THRESHOLD)
-                        {
-                            wp_reachedDestination = true;
-                            break;
-                        }
-                        if (currentTargetId == 0)
-                        {
-                            firstFound = false;
-                            Thread.Sleep(300);
-                        }
-                        if (!firstFound && currentTargetId == 0)
-                        {
-                            firstFound = true;
-                            SendKeyPress(VK_F6);
-                            Sleep(10);
-                            lock (memoryLock)
-                            {
-                                currentTargetId = targetId;
-                            }
-                            if (currentTargetId != 0)
-                            {
-                                ToggleRing(targetWindow, true);
-                                break;
-                            }
-                            else
-                            {
-                                ToggleRing(targetWindow, false);
-                            }
-                        }
-                    }
-                    if (!wp_reachedDestination)
-                    {
-                    }
-                    lock (memoryLock)
-                    {
-                        currentTargetId = targetId;
-                    }
-                    if (currentTargetId == 0)
-                    {
-                        firstFound = false;
-                        Thread.Sleep(300);
-                    }
-                    if (!firstFound && currentTargetId == 0)
-                    {
-                        firstFound = true;
-                        SendKeyPress(VK_F6);
-                        Sleep(1);
-                        lock (memoryLock)
-                        {
-                            currentTargetId = targetId;
-                        }
-                        if (currentTargetId != 0)
-                        {
-                            continue;
-                        }
-                    }
-                }
+
+                Sleep(100);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error in path playback: {ex.Message}");
-                Sleep(1);
+                Sleep(1000);
             }
         }
     }
-    static Coordinate FindNextWaypoint(
-        ref List<Coordinate> waypoints,
-        int currentX,
-        int currentY,
-        int currentZ,
-        ref int currentIndex
-    )
+
+    // Determine what action to take next
+    static NavigationAction DetermineNextAction(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
     {
-        Coordinate returnPosition = chaseTracker.GetReturnPosition();
-        if (chaseTracker.ShouldReturnToStart())
+        // Find the furthest reachable waypoint (max distance = 5)
+        Coordinate target = FindFurthestReachableWaypoint(waypoints, currentX, currentY, currentZ);
+
+
+        // Check if we need to change floors
+        if (target.Z != currentZ)
         {
-            int closestIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-            Coordinate closestWaypoint = waypoints[closestIndex];
-            int distanceToWaypointX = Math.Abs(closestWaypoint.X - currentX);
-            int distanceToWaypointY = Math.Abs(closestWaypoint.Y - currentY);
-            if (distanceToWaypointX < 5 && distanceToWaypointY < 5)
+            Console.WriteLine($"[NAV] Detected floor change needed: Current Z={currentZ}, Target Z={target.Z}");
+            return HandleZLevelChange(target, waypoints);
+        }
+
+        // Check if we're already close enough to the target
+        int distanceX = Math.Abs(target.X - currentX);
+        int distanceY = Math.Abs(target.Y - currentY);
+
+        if (distanceX == 0 && distanceY == 0)
+        {
+            Console.WriteLine($"[NAV] Already at target position - distance X={distanceX}, Y={distanceY}");
+            return new NavigationAction
             {
-                chaseTracker.CompleteReturn();
-                isReturningFromChase = false;
+                Type = ActionType.WaitAtPosition,
+                TargetX = currentX,
+                TargetY = currentY,
+                WaypointIndex = currentCoordIndex
+            };
+        }
+
+        // Decide whether to use keyboard or click
+        int totalDistance = distanceX + distanceY;
+
+        if (totalDistance <= 1)
+        {
+            // Close enough - use keyboard
+            Console.WriteLine($"[NAV] Using keyboard - total distance {totalDistance}");
+            return new NavigationAction
+            {
+                Type = ActionType.UseKeyboard,
+                TargetX = target.X,
+                TargetY = target.Y,
+                WaypointIndex = FindWaypointIndex(waypoints, target)
+            };
+        }
+        else
+        {
+            // Far enough - use click
+            Console.WriteLine($"[NAV] Using click - total distance {totalDistance} > 3");
+            return new NavigationAction
+            {
+                Type = ActionType.ClickWaypoint,
+                TargetX = target.X,
+                TargetY = target.Y,
+                WaypointIndex = FindWaypointIndex(waypoints, target)
+            };
+        }
+    }
+
+    // Add these static variables to track progression
+    static int lastTargetedIndex = -1; // Remember the last waypoint we actually targeted
+    static Coordinate lastTargetedWaypoint = null;
+
+
+    static HashSet<string> visitedWaypoints = new HashSet<string>();
+    static string MakeCoordKey(Coordinate coord) => $"{coord.X}_{coord.Y}_{coord.Z}";
+
+
+    // Fixed FindFurthestReachableWaypoint with proper Z-level handling
+    static Coordinate FindFurthestReachableWaypoint(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
+    {
+        const int MAX_DISTANCE = 5;
+        Console.WriteLine($"[NAV] Looking for furthest reachable waypoint from ({currentX},{currentY},{currentZ})");
+        Console.WriteLine($"[NAV] Current waypoint index: {currentCoordIndex}");
+        Console.WriteLine($"[NAV] Global last index: {globalLastIndex}");
+
+        // Sync currentCoordIndex with globalLastIndex if they're out of sync
+        if (globalLastIndex >= 0 && Math.Abs(globalLastIndex - currentCoordIndex) <= maxBacktrackDistance)
+        {
+            if (globalLastIndex != currentCoordIndex)
+            {
+                Console.WriteLine($"[NAV] Syncing currentCoordIndex ({currentCoordIndex}) with globalLastIndex ({globalLastIndex})");
+                currentCoordIndex = globalLastIndex;
             }
-            else if (returnPosition != null)
+        }
+
+        // Check if we've reached our last targeted waypoint
+        if (lastTargetedIndex >= 0 && lastTargetedWaypoint != null)
+        {
+            int distanceToTarget = Math.Abs(lastTargetedWaypoint.X - currentX) + Math.Abs(lastTargetedWaypoint.Y - currentY);
+            if (distanceToTarget <= 2) // Close enough to consider "reached"
             {
-                int distanceX = Math.Abs(returnPosition.X - currentX);
-                int distanceY = Math.Abs(returnPosition.Y - currentY);
-                if (distanceX <= 1 && distanceY <= 1)
+                Console.WriteLine($"[NAV] Reached targeted waypoint {lastTargetedIndex}. Advancing current index from {currentCoordIndex} to {lastTargetedIndex}");
+                currentCoordIndex = lastTargetedIndex;
+                globalLastIndex = lastTargetedIndex; // Update global state too
+                lastTargetedIndex = -1; // Reset since we've reached it
+                lastTargetedWaypoint = null;
+            }
+        }
+
+        // Keep track of the best reachable waypoint found so far
+        Coordinate furthest = null;
+        int bestIndex = -1;
+        int maxDistance = 0;
+
+        // Look forward through the waypoint list (only forward, never backward)
+        for (int i = 1; i < Math.Min(15, waypoints.Count); i++) // Start from i=1 to skip current waypoint
+        {
+            // Calculate next index, wrapping around if needed
+            int checkIndex = (currentCoordIndex + i) % waypoints.Count;
+            Coordinate check = waypoints[checkIndex];
+            Console.WriteLine($"[NAV] Checking waypoint {checkIndex}: ({check.X},{check.Y},{check.Z})");
+
+            // NEW LOGIC: Only consider Z-level changes if this is the very next waypoint (i == 1)
+            if (check.Z != currentZ)
+            {
+                if (i == 1)
                 {
-                    chaseTracker.CompleteReturn();
-                    isReturningFromChase = false;
+                    // This is the next waypoint and it has a different Z level
+                    Console.WriteLine($"[NAV] Next waypoint {checkIndex} requires floor change (Z={check.Z} vs current Z={currentZ})");
+
+                    // Handle the floor change for the next waypoint
+                    Coordinate transitionWaypoint = null;
+                    int transitionIndex = -1;
+                    int minTransitionDistance = int.MaxValue;
+
+                    if (check.Z > currentZ)
+                    {
+                        // Need to go UP - find closest waypoint with higher Z
+                        Console.WriteLine($"[NAV] Need to go UP to Z={check.Z}");
+                        for (int j = 0; j < waypoints.Count; j++)
+                        {
+                            var candidate = waypoints[j];
+                            if (candidate.Z == check.Z)
+                            {
+                                int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
+                                if (distance < minTransitionDistance)
+                                {
+                                    minTransitionDistance = distance;
+                                    transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
+                                    transitionIndex = j;
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Need to go DOWN - find closest waypoint with lower Z
+                        Console.WriteLine($"[NAV] Need to go DOWN to Z={check.Z}");
+                        for (int j = 0; j < waypoints.Count; j++)
+                        {
+                            var candidate = waypoints[j];
+                            if (candidate.Z == check.Z)
+                            {
+                                int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
+                                if (distance < minTransitionDistance)
+                                {
+                                    minTransitionDistance = distance;
+                                    transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
+                                    transitionIndex = j;
+                                }
+                            }
+                        }
+                    }
+
+                    if (transitionWaypoint != null)
+                    {
+                        Console.WriteLine($"[NAV] Found transition waypoint: index {transitionIndex} at ({transitionWaypoint.X},{transitionWaypoint.Y},{transitionWaypoint.Z})");
+                        lastTargetedIndex = checkIndex;
+                        lastTargetedWaypoint = check;
+                        return transitionWaypoint;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[NAV] No transition waypoint found - returning the next waypoint directly");
+                        lastTargetedIndex = checkIndex;
+                        lastTargetedWaypoint = check;
+                        return check;
+                    }
                 }
                 else
                 {
-                    isReturningFromChase = true;
-                    return returnPosition;
+                    // This is not the next waypoint and has different Z - skip it entirely
+                    Console.WriteLine($"[NAV] Skipping waypoint {checkIndex} - different Z level (Z={check.Z}) and not next waypoint");
+                    continue;
+                }
+            }
+
+            // Calculate distance to this waypoint (same Z level as current)
+            int distanceX = Math.Abs(check.X - currentX);
+            int distanceY = Math.Abs(check.Y - currentY);
+            int totalDistance = distanceX + distanceY;
+            Console.WriteLine($"[NAV] Distance to waypoint {checkIndex}: dx={distanceX}, dy={distanceY}, total={totalDistance}");
+
+            // Check if this waypoint is reachable
+            if (distanceX <= MAX_DISTANCE && distanceY <= MAX_DISTANCE)
+            {
+                // This waypoint is reachable, update our best choice
+                if (totalDistance > maxDistance || furthest == null)
+                {
+                    furthest = check;
+                    bestIndex = checkIndex;
+                    maxDistance = totalDistance;
+                    Console.WriteLine($"[NAV] New best waypoint: {checkIndex} at distance {totalDistance}");
                 }
             }
             else
             {
-                chaseTracker.CompleteReturn();
-                isReturningFromChase = false;
-            }
-        }
-        if (waypoints.Count == 0)
-        {
-            return new Coordinate { X = currentX, Y = currentY, Z = currentZ };
-        }
-        if (currentIndex < 0 || currentIndex >= waypoints.Count)
-        {
-            currentIndex = Math.Max(0, Math.Min(waypoints.Count - 1, currentIndex));
-        }
-        if (currentIndex == waypoints.Count - 1)
-        {
-            int distanceToFirst =
-                Math.Abs(waypoints[0].X - currentX) + Math.Abs(waypoints[0].Y - currentY);
-            if (distanceToFirst > 12)
-            {
-                waypoints.Reverse();
-                currentIndex = 0;
-            }
-            else
-            {
-                currentIndex = 0;
-            }
-        }
-        int maxSearchCount = 10;
-        int maxAllowedX = 5;
-        int maxAllowedY = 5;
-        int bestIndex = -1;
-        double maxDistance = 0;
-        int startIndex = currentIndex + 1;
-        if (startIndex >= waypoints.Count)
-        {
-            startIndex = 0;
-        }
-        int endIndex = Math.Min(waypoints.Count - 1, startIndex + maxSearchCount - 1);
-        for (int index = startIndex; index <= endIndex; index++)
-        {
-            if (index < 0 || index >= waypoints.Count)
-                continue;
-            Coordinate waypoint = waypoints[index];
-            int deltaX = Math.Abs(waypoint.X - currentX);
-            int deltaY = Math.Abs(waypoint.Y - currentY);
-            if (deltaX <= maxAllowedX && deltaY <= maxAllowedY)
-            {
-                double distance = Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
-                if (distance > maxDistance)
+                // We've reached a waypoint that's too far, so we should stop
+                Console.WriteLine($"[NAV] Waypoint {checkIndex} too far (dx={distanceX}, dy={distanceY}), stopping search");
+
+                // If we found a reachable waypoint, break and return it
+                if (furthest != null)
                 {
-                    maxDistance = distance;
-                    bestIndex = index;
+                    Console.WriteLine($"[NAV] Returning previously found reachable waypoint {bestIndex}");
+                    break;
+                }
+                else
+                {
+                    // No reachable waypoint found yet, continue to next iteration
+                    Console.WriteLine($"[NAV] No reachable waypoint found yet, continuing search...");
+                    continue;
                 }
             }
-            else
-            {
-            }
         }
-        if (bestIndex == -1)
+
+        // If we still haven't found any reachable waypoint, return a coordinate 1 square away in the direction of the next waypoint
+        if (furthest == null)
         {
-            if (currentIndex < waypoints.Count - 1)
+            Console.WriteLine($"[NAV] No reachable waypoint found, calculating direction to next waypoint");
+
+            // Get the next waypoint in sequence
+            int nextIndex = (currentCoordIndex + 1) % waypoints.Count;
+            Coordinate nextWaypoint = waypoints[nextIndex];
+
+            // Calculate direction to the next waypoint
+            int deltaX = nextWaypoint.X - currentX;
+            int deltaY = nextWaypoint.Y - currentY;
+
+            int stepX = 0;
+            int stepY = 0;
+
+            bool canMoveX = deltaX != 0;
+            bool canMoveY = deltaY != 0;
+
+            Random rand = new Random();
+
+            if (canMoveX && canMoveY)
             {
-                bestIndex = currentIndex + 1;
-            }
-            else
-            {
-                bestIndex = 0;
-            }
-        }
-        bestIndex = Math.Max(0, Math.Min(waypoints.Count - 1, bestIndex));
-        currentIndex = bestIndex;
-        Coordinate result = waypoints[bestIndex];
-        if (waypointRandomizationEnabled)
-        {
-            Coordinate originalResult = result;
-            List<Coordinate> potentialRandomPositions = new List<Coordinate>();
-            for (int i = 0; i < 5; i++)
-            {
-                int randomX = result.X + random.Next(-randomizationRange, randomizationRange + 1);
-                int randomY = result.Y + random.Next(-randomizationRange, randomizationRange + 1);
-                int deltaX = Math.Abs(randomX - currentX);
-                int deltaY = Math.Abs(randomY - currentY);
-                if (deltaX <= 5 && deltaY <= 5)
+                // Randomly choose one axis to step in
+                if (rand.Next(2) == 0)
                 {
-                    GetClientRect(targetWindow, out RECT rect);
-                    int baseX = (rect.Right - rect.Left) / 2 - 186;
-                    int baseY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
-                    int diffX = randomX - currentX;
-                    int diffY = randomY - currentY;
-                    int screenX = baseX + (diffX * pixelSize);
-                    int screenY = baseY + (diffY * pixelSize);
-                    Point screenPoint = new Point(screenX, screenY);
-                    bool isFailedPoint = false;
-                    foreach (var failedPoint in failedClickPoints)
+                    stepX = deltaX > 0 ? 1 : -1;
+                }
+                else
+                {
+                    stepY = deltaY > 0 ? 1 : -1;
+                }
+            }
+            else if (canMoveX)
+            {
+                stepX = deltaX > 0 ? 1 : -1;
+            }
+            else if (canMoveY)
+            {
+                stepY = deltaY > 0 ? 1 : -1;
+            }
+
+            // Create coordinate 1 square away in the chosen direction
+            furthest = new Coordinate
+            {
+                X = currentX + stepX,
+                Y = currentY + stepY,
+                Z = currentZ
+            };
+
+            bestIndex = -1;
+            maxDistance = 1;
+
+            Console.WriteLine($"[NAV] Returning directional step: ({furthest.X},{furthest.Y},{furthest.Z}) toward waypoint {nextIndex}");
+        }
+
+        // Remember what we're targeting
+        if (bestIndex != currentCoordIndex)
+        {
+            lastTargetedIndex = bestIndex;
+            lastTargetedWaypoint = furthest;
+            Console.WriteLine($"[NAV] Targeting waypoint {bestIndex} at ({furthest.X},{furthest.Y},{furthest.Z})");
+        }
+
+        Console.WriteLine($"[NAV] Selected furthest reachable waypoint: {bestIndex} at ({furthest.X},{furthest.Y},{furthest.Z}) distance={maxDistance}");
+        return furthest;
+    }
+
+    // Handle floor changes
+    static NavigationAction HandleZLevelChange(Coordinate target, List<Coordinate> waypoints)
+    {
+        int currentX, currentY, currentZ;
+        lock (memoryLock)
+        {
+            currentX = posX;
+            currentY = posY;
+            currentZ = posZ;
+        }
+        bool isGoingUp = target.Z < currentZ;
+
+        if(currentX == target.X)
+        {
+            target.Y = target.Y - 1;
+        }
+        Console.WriteLine($"[FLOOR] Need to change floors from Z={currentZ} to Z={target.Z} ({(isGoingUp ? "UP" : "DOWN")})");
+
+        if (isGoingUp)
+        {
+            // Going UP - need to be at exact position and press F4
+            int distanceX = Math.Abs(target.X - currentX);
+            int distanceY = Math.Abs(target.Y - currentY);
+
+            Console.WriteLine($"[FLOOR] Going UP - distance to F4 position: dx={distanceX}, dy={distanceY}");
+
+            if (distanceX == 0 && distanceY == 0)
+            {
+                // We're at the F4 position
+                Console.WriteLine($"[FLOOR] At F4 position - will press F4");
+                return new NavigationAction
+                {
+                    Type = ActionType.UseF4,
+                    TargetX = target.X,
+                    TargetY = target.Y,
+                    FromZ = currentZ,
+                    ToZ = target.Z,
+                    WaypointIndex = FindWaypointIndex(waypoints, target)
+                };
+            }
+            else
+            {
+                // Move to F4 position
+                Console.WriteLine($"[FLOOR] Moving to F4 position at ({target.X},{target.Y})");
+                return new NavigationAction
+                {
+                    Type = ActionType.ClickWaypoint,
+                    TargetX = target.X,
+                    TargetY = target.Y,
+                    FromZ = currentZ,
+                    ToZ = target.Z,
+                    WaypointIndex = currentCoordIndex
+                };
+            }
+        }
+        else
+        {
+            // Going DOWN - walk into the hole
+            Console.WriteLine($"[FLOOR] Going DOWN - will click hole at ({target.X},{target.Y})");
+            return new NavigationAction
+            {
+                Type = ActionType.ClickWaypoint,
+                TargetX = target.X,
+                TargetY = target.Y,
+                FromZ = currentZ,
+                ToZ = target.Z,
+                WaypointIndex = FindWaypointIndex(waypoints, target)
+            };
+        }
+    }
+
+    // Handle F4 transitions
+    static void HandleF4Transition(int targetX, int targetY, int fromZ, int toZ)
+    {
+        Console.WriteLine($"[F4] Pressing F4 to go from Z={fromZ} to Z={toZ}");
+
+        SendKeyPress(VK_F4);
+
+        // Wait for Z change
+        DateTime startTime = DateTime.Now;
+        while ((DateTime.Now - startTime).TotalMilliseconds < 2000)
+        {
+            Sleep(100);
+            lock (memoryLock)
+            {
+                if (posZ == toZ)
+                {
+                    Console.WriteLine($"[F4] Successfully changed to Z={toZ}");
+                    return;
+                }
+            }
+        }
+
+        Console.WriteLine($"[F4] Warning: Z change may have failed or taken longer than expected");
+    }
+
+    // Simplified click waypoint function
+    static bool ClickWaypoint(int targetX, int targetY)
+    {
+        try
+        {
+            UpdateUIPositions();
+
+            // Get window dimensions
+            GetClientRect(targetWindow, out RECT rect);
+
+            // Calculate center coordinates
+            int centerX = (rect.Right - rect.Left) / 2 - 186;
+            int centerY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
+            
+            // Initial lParam calculation (this gets overwritten)
+            int lParam = (centerX << 16) | (centerY & 0xFFFF);
+           
+
+            // Record center waypoint
+            RecordWaypointClick(centerX, centerY);
+
+
+            // Get current position
+            int currentX, currentY;
+            lock (memoryLock)
+            {
+                currentX = posX;
+                currentY = posY;
+            }
+        
+
+            // Calculate differences
+            int diffX = targetX - currentX;
+            int diffY = targetY - currentY;
+          
+
+            // Calculate screen coordinates
+            int screenX = centerX + (diffX * pixelSize);
+            int screenY = centerY + (diffY * pixelSize);
+         
+            // Create the lParam for the screen coordinates
+            lParam = (screenY << 16) | (screenX & 0xFFFF);
+          
+            SendMessage(targetWindow, WM_MOUSEMOVE, IntPtr.Zero, lParam);
+            Sleep(1);
+
+            // Send the click
+          
+            SendMessage(targetWindow, WM_LBUTTONDOWN, 1, lParam);
+            Sleep(1);
+
+         
+            SendMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, lParam);
+
+            // Record the click
+            RecordWaypointClick(screenX, screenY);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[CLICK] Error: {ex.Message}");
+            Console.WriteLine($"[CLICK] Stack trace: {ex.StackTrace}");
+            return false;
+        }
+    }
+
+    // Wait for movement completion
+    static void WaitForMovementCompletion(int targetX, int targetY)
+    {
+        DateTime startTime = DateTime.Now;
+        const int TIMEOUT_MS = 5000;
+
+        // Movement tracking variables
+        int lastPosX = -1;
+        int lastPosY = -1;
+        int noMovementCount = 0;
+        const int MAX_NO_MOVEMENT_COUNT = 1;
+
+        while ((DateTime.Now - startTime).TotalMilliseconds < TIMEOUT_MS)
+        {
+            Sleep(500);
+            SendKeyPress(VK_F6);
+
+            lock (memoryLock)
+            {
+                // Check if monster appeared
+                if (targetId != 0)
+                {
+                    return;
+                }
+
+                // Check if character moved
+                if (lastPosX != -1 && lastPosY != -1)
+                {
+                    if (posX == lastPosX && posY == lastPosY)
                     {
-                        if (Math.Abs(failedPoint.X - screenX) < 5 && Math.Abs(failedPoint.Y - screenY) < 5)
+                        noMovementCount++;
+                        Console.WriteLine($"[MOVE] No movement detected. Count: {noMovementCount}/{MAX_NO_MOVEMENT_COUNT}");
+
+                        if (noMovementCount >= MAX_NO_MOVEMENT_COUNT)
                         {
-                            isFailedPoint = true;
-                            break;
+                            Console.WriteLine($"[MOVE] Character hasn't moved for {noMovementCount} checks. Returning early.");
+                            return;
                         }
                     }
-                    if (!isFailedPoint)
+                    else
                     {
-                        potentialRandomPositions.Add(new Coordinate
-                        {
-                            X = randomX,
-                            Y = randomY,
-                            Z = result.Z
-                        });
+                        noMovementCount = 0; // Reset counter if character moved
+                        Console.WriteLine($"[MOVE] Character moved from ({lastPosX},{lastPosY}) to ({posX},{posY})");
                     }
                 }
-            }
-            if (potentialRandomPositions.Count > 0)
-            {
-                int randomIndex = random.Next(potentialRandomPositions.Count);
-                result = potentialRandomPositions[randomIndex];
-            }
-            else
-            {
+
+                // Update last known position
+                lastPosX = posX;
+                lastPosY = posY;
+
+                // Check if we've reached the target
+                int distanceX = Math.Abs(targetX - posX);
+                int distanceY = Math.Abs(targetY - posY);
+                if (distanceX <= 1 && distanceY <= 1)
+                {
+                    Console.WriteLine($"[MOVE] Reached target position ({targetX},{targetY})");
+                    Thread.Sleep(400);
+                    return;
+                }
             }
         }
-        return result;
+
+        Console.WriteLine($"[MOVE] Timeout reached after {TIMEOUT_MS}ms");
     }
+
+    // Helper function to find waypoint index
+    static int FindWaypointIndex(List<Coordinate> waypoints, Coordinate target)
+    {
+        for (int i = 0; i < waypoints.Count; i++)
+        {
+            if (waypoints[i].X == target.X && waypoints[i].Y == target.Y && waypoints[i].Z == target.Z)
+                return i;
+        }
+        return currentCoordIndex;
+    }
+
+    // Navigation action types
+    public enum ActionType
+    {
+        UseKeyboard,    // Walk with arrow keys
+        ClickWaypoint,  // Click on game screen
+        UseF4,          // Press F4 for stairs
+        WaitAtPosition,
+        WaitForTarget
+    }
+
+    // Navigation action structure
+    public class NavigationAction
+    {
+        public ActionType Type { get; set; }
+        public int TargetX { get; set; }
+        public int TargetY { get; set; }
+        public int FromZ { get; set; }
+        public int ToZ { get; set; }
+        public int WaypointIndex { get; set; }
+    }
+    static bool strictZCoordinateMode = true;
+
+    static int globalLastIndex = -1; // Global state for waypoint progression
+    static Coordinate globalLastPosition = null; // Last player position
+    static DateTime lastPositionUpdate = DateTime.MinValue;
+    static int maxBacktrackDistance = 15; // Max allowed backtrack distance
+
+    // Modified FindClosestWaypointIndex with state preservation
     static int FindClosestWaypointIndex(
     List<Coordinate> waypoints,
     int currentX,
@@ -1597,11 +1818,176 @@ class Program
     int currentZ
 )
     {
-        int closestIndex = 0;
+        if (waypoints == null || waypoints.Count == 0)
+        {
+            return 0;
+        }
+
+        // Update global last position if we've moved
+        bool positionChanged = false;
+        if (globalLastPosition == null ||
+            globalLastPosition.X != currentX ||
+            globalLastPosition.Y != currentY ||
+            globalLastPosition.Z != currentZ)
+        {
+            positionChanged = true;
+            globalLastPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
+            lastPositionUpdate = DateTime.Now;
+        }
+
+        // If we have a valid global last index and haven't moved much, prefer forward progression
+        if (globalLastIndex >= 0 && globalLastIndex < waypoints.Count)
+        {
+            var lastWaypoint = waypoints[globalLastIndex];
+            int distanceToLast = Math.Abs(lastWaypoint.X - currentX) + Math.Abs(lastWaypoint.Y - currentY);
+
+            // If we're still close to our last waypoint and on the same Z level, don't backtrack
+            if (distanceToLast <= 3 && lastWaypoint.Z == currentZ)
+            {
+                Console.WriteLine($"[WAYPOINT] Still close to last waypoint {globalLastIndex}, maintaining progression");
+                return globalLastIndex;
+            }
+        }
+
+        // Find closest waypoint with progression awareness
+        int closestIndex = -1;
         int minDistance = int.MaxValue;
+
+        // Calculate search range around current global last index
+        int searchStart = Math.Max(0, globalLastIndex - maxBacktrackDistance);
+        int searchEnd = Math.Min(waypoints.Count - 1, globalLastIndex + maxBacktrackDistance);
+
+        // If no global last index set, search everything
+        if (globalLastIndex < 0)
+        {
+            searchStart = 0;
+            searchEnd = waypoints.Count - 1;
+        }
+
+        Console.WriteLine($"[WAYPOINT] Searching waypoints from {searchStart} to {searchEnd} (current global: {globalLastIndex})");
+
+        // First pass: Look for waypoints on the same Z-level within the search range
+        for (int i = searchStart; i <= searchEnd; i++)
+        {
+            var waypoint = waypoints[i];
+
+            if (waypoint.Z != currentZ)
+            {
+                continue;
+            }
+
+            int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+
+            // Prefer forward progression if distances are similar
+            if (globalLastIndex >= 0 && i > globalLastIndex && distance <= minDistance + 2)
+            {
+                minDistance = distance;
+                closestIndex = i;
+                Console.WriteLine($"[WAYPOINT] Preferring forward waypoint {i} (distance {distance})");
+            }
+            else if (distance < minDistance)
+            {
+                minDistance = distance;
+                closestIndex = i;
+            }
+        }
+
+        // Second pass: If no suitable waypoint found on same Z-level, expand search
+        if (closestIndex == -1)
+        {
+            Console.WriteLine($"[WAYPOINT] No waypoint found on Z-level {currentZ}, expanding search");
+
+            for (int i = searchStart; i <= searchEnd; i++)
+            {
+                var waypoint = waypoints[i];
+                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+
+                if (distance < minDistance)
+                {
+                    minDistance = distance;
+                    closestIndex = i;
+                }
+            }
+        }
+
+        // Third pass: If still nothing found, fall back to full search
+        if (closestIndex == -1)
+        {
+            Console.WriteLine($"[WARNING] No waypoint found in range, doing full search");
+
+            for (int i = 0; i < waypoints.Count; i++)
+            {
+                var waypoint = waypoints[i];
+
+                if (waypoint.Z != currentZ)
+                {
+                    continue;
+                }
+
+                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+                if (distance < minDistance)
+                {
+                    minDistance = distance;
+                    closestIndex = i;
+                }
+            }
+        }
+
+        // Final fallback
+        if (closestIndex == -1)
+        {
+            Console.WriteLine("[WARNING] No waypoints found at all, returning index 0");
+            closestIndex = 0;
+        }
+
+        // Update global state if we found a valid waypoint
+        if (closestIndex >= 0)
+        {
+            // Only update global last index if we're moving forward or within reasonable backtrack distance
+            if (globalLastIndex < 0 ||
+                closestIndex > globalLastIndex ||
+                Math.Abs(closestIndex - globalLastIndex) <= maxBacktrackDistance)
+            {
+                Console.WriteLine($"[WAYPOINT] Updating global last index from {globalLastIndex} to {closestIndex}");
+                globalLastIndex = closestIndex;
+            }
+            else
+            {
+                Console.WriteLine($"[WAYPOINT] Not updating global index - would backtrack too far ({Math.Abs(closestIndex - globalLastIndex)} > {maxBacktrackDistance})");
+            }
+        }
+
+        Console.WriteLine($"[WAYPOINT] Selected index {closestIndex} at ({waypoints[closestIndex].X}, {waypoints[closestIndex].Y}, {waypoints[closestIndex].Z}) distance {minDistance}");
+        return closestIndex;
+    }
+
+    // Alternative version with optional strict Z filtering
+    static int FindClosestWaypointIndex(
+        List<Coordinate> waypoints,
+        int currentX,
+        int currentY,
+        int currentZ,
+        bool strictZFilter = true
+    )
+    {
+        if (waypoints == null || waypoints.Count == 0)
+        {
+            return 0;
+        }
+
+        int closestIndex = -1;
+        int minDistance = int.MaxValue;
+
         for (int i = 0; i < waypoints.Count; i++)
         {
             var waypoint = waypoints[i];
+
+            // Apply Z-filter if strict mode is enabled
+            if (strictZFilter && waypoint.Z != currentZ)
+            {
+                continue;
+            }
+
             int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
             if (distance < minDistance)
             {
@@ -1609,9 +1995,50 @@ class Program
                 closestIndex = i;
             }
         }
+
+        // If no waypoint found with strict Z filtering, try without it
+        if (closestIndex == -1 && strictZFilter)
+        {
+            Console.WriteLine($"[WARNING] No waypoint found on Z-level {currentZ}, trying without Z filter");
+            return FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ, false);
+        }
+
+        // If still no waypoint found, return 0 as last resort
+        if (closestIndex == -1)
+        {
+            Console.WriteLine("[WARNING] No waypoints found at all, returning index 0");
+            closestIndex = 0;
+        }
+
         return closestIndex;
     }
-    static bool waypointRandomizationEnabled = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    static bool waypointRandomizationEnabled = false;
     static int randomizationRange = 1;
     static bool smallWindow = true;
     static bool previousSmallWindowValue = true;
@@ -1627,56 +2054,65 @@ class Program
     static int secondSLotBpY;
     static int closeCorpseX;
     static int closeCorpseY;
-    static (int, int)[] normalCoordinates = new (int, int)[]
-    {
-        (1126, 325),
-        (1165, 325),
-        (1203, 325),
-        (1236, 325),
-        (1126, 340),
-        (1165, 340),
-        (1203, 340),
-        (1236, 340)
-    };
-    static (int, int)[] smallCoordinates = new (int, int)[]
-    {
-        (800, 360),
-        (800+pixelSize, 360),
-        (800+2*pixelSize, 360),
-        (800+3*pixelSize, 360),
-        (800, 400),
-        (800+pixelSize, 400),
-        (800+2*pixelSize, 400),
-        (800+3*pixelSize, 400)
-    };
+    static int squareSizeBP;
+    static (int, int)[] normalCoordinates;
+    static (int, int)[] smallCoordinates;
     static (int, int)[] GetCorspeFoodCoordinates()
     {
         return smallWindow ? smallCoordinates : normalCoordinates;
     }
     static void UpdateUIPositions()
     {
+        
         GetClientRect(targetWindow, out RECT windowRect);
         int windowHeight = windowRect.Bottom - windowRect.Top;
         smallWindow = windowHeight < 1200;
+
+        squareSizeBP = smallWindow ? 40 : 45;
         bool valueChanged = (previousSmallWindowValue != smallWindow);
         previousSmallWindowValue = smallWindow;
-        pixelSize = smallWindow ? 38 : 58;
-        baseYOffset = smallWindow ? 260 : 300;
+        pixelSize = smallWindow ? 39 : 58;
+        baseYOffset = smallWindow ? 225 : 300;
         inventoryX = smallWindow ? 620 : 940;
         inventoryY = 65;
         equipmentX = smallWindow ? 800 : 1115;
         equipmentY = 150;
         secondSlotBpX = smallWindow ? 840 : 1165;
         secondSLotBpY = 250;
-        firstSlotBpX = smallWindow ? 840 - pixelSize : 1165 - pixelSize;
+
+        
+        firstSlotBpX = smallWindow ? 840 - squareSizeBP : 1165 - squareSizeBP;
         firstSlotBpY = 250;
         closeCorpseX = smallWindow ? 944 : 1262;
         closeCorpseY = smallWindow ? 320 : 400;
+
+        smallCoordinates = new (int, int)[]
         {
-        }
+            (800, 460),
+            (800+pixelSize, 460),
+            (800+2*pixelSize, 460),
+            (800+3*pixelSize, 460),
+            (800, 500),
+            (800+pixelSize, 500),
+            (800+2*pixelSize, 500),
+            (800+3*pixelSize, 500)
+        };
+
+        normalCoordinates = new (int, int)[]
+        {
+            (1126, 325),
+            (1165, 325),
+            (1203, 325),
+            (1236, 325),
+            (1126, 340),
+            (1165, 340),
+            (1203, 340),
+            (1236, 340)
+        };
+
         if (threadFlags["spawnwatch"] && SPAWNWATCHER.IsActive())
         {
-            SPAWNWATCHER.UpdateScanArea(targetWindow, pixelSize);
+            SPAWNWATCHER.UpdateScanArea(targetWindow, squareSizeBP);
         }
     }
     const byte VK_ESCAPE = 0x1B;
@@ -1749,10 +2185,10 @@ class Program
             Sleep(1);
         }
     }
-    static int maxItemsToEat = 2;
+    static int maxItemsToEat = 4;
     static void CorpseEatFood(IntPtr hWnd)
     {
-        return;
+        UpdateUIPositions();
         (int x, int y)[] locations = GetCorspeFoodCoordinates();
         GetClientRect(hWnd, out RECT rect);
         if (rect.Right < 1237 || rect.Bottom < 319)
@@ -1766,7 +2202,7 @@ class Program
                 ClientToScreen(hWnd, ref screenPoint);
                 Sleep(1);
                 VirtualRightClick(hWnd, x, y);
-                Sleep(1);
+                Sleep(50);
             }
         }
     }
@@ -1881,10 +2317,6 @@ class Program
                 {
                     lastClickAroundTargetId = currentTargetId;
                     lastClickAroundCompleted = DateTime.Now;
-                    CorpseEatFood(targetWindow);
-                    Sleep(1);
-                    ClickSecondSlotInBackpack(hWnd);
-                    Sleep(1);
                     isClickAroundInProgress = false;
                     return true;
                 }
@@ -1933,7 +2365,7 @@ class Program
         SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lParam);
         SendMessage(hWnd, WM_RBUTTONDOWN, 1, lParam);
         SendMessage(hWnd, WM_RBUTTONUP, IntPtr.Zero, lParam);
-        RecordClickPosition(x, y, false);
+        //RecordClickPosition(x, y, false);
     }
     static int GetTargetId()
     {
@@ -2044,7 +2476,8 @@ class Program
         "Frost Giant",
         "Frost Giantess",
         "Amazon",
-        "Valkryie"
+        "Valkryie",
+        "Dwarf Guard"
     };
     static (int monsterX, int monsterY, int monsterZ, string monsterName) GetTargetMonsterInfo()
     {
@@ -2166,11 +2599,13 @@ class Program
     static readonly int MAX_MONSTER_DISTANCE = 4;
     static void ToggleRing(IntPtr hWnd, bool equip)
     {
+        return;
         ScanRingContainersForMisplacedRings();
         try
         {
             int currentTargetId;
             int invisiblityCodeVar;
+            Thread.Sleep(256);
             lock (memoryLock)
             {
                 currentTargetId = targetId;
@@ -2190,16 +2625,14 @@ class Program
                 Sleep(1);
                 SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lifeRingSourceLParam);
                 Sleep(1);
-                RecordClickPosition(equipmentX, equipmentY, true);
                 IntPtr lifeRingDestLParam = MakeLParam(lifeRingX, lifeRingY);
                 SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lifeRingDestLParam);
                 Sleep(1);
                 SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
                 Sleep(1);
-                RecordClickPosition(lifeRingX, lifeRingY, true);
                 Sleep(1);
             }
-            Sleep(512);
+            Sleep(256);
             if (equip && currentTargetId != 0)
             {
                 var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
@@ -2230,17 +2663,14 @@ class Program
             Sleep(25);
             SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
             Sleep(25);
-            RecordClickPosition(sourceX, sourceY, true);
             IntPtr destLParam = MakeLParam(destX, destY);
             SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
             Sleep(25);
             SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
-            Sleep(1);
-            RecordClickPosition(destX, destY, true);
+            Sleep(128);
             onceLifeRing = true;
             if (!equip && withLifeRing && onceLifeRing && currentTargetId == 0)
             {
-                Sleep(128);
                 onceLifeRing = false;
                 int lifeRingX = inventoryX;
                 int lifeRingY = inventoryY + 3 * pixelSize + 15;
@@ -2262,7 +2692,6 @@ class Program
                     Sleep(25);
                     SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
                     Sleep(1);
-                    RecordClickPosition(equipmentX, equipmentY, true);
                 }
             }
         }
@@ -2483,6 +2912,10 @@ class Program
         private const string MSG_DISTANCE_OK = "DISTANCE_OK";
         private const string MSG_WAYPOINT_INFO = "WAYPOINT_INFO";
         private const string MSG_NO_WAYPOINTS = "NO_WAYPOINTS";
+
+        // Store the approximate index at chase start
+        private int chaseStartWaypointIndex = -1;
+
         public void Update(int currentX, int currentY, int currentZ, int targetId)
         {
             lock (chaseLock)
@@ -2515,6 +2948,7 @@ class Program
                 }
             }
         }
+
         private void StartChase(int x, int y, int z, int targetId)
         {
             string message = $"[DEBUG] Starting chase of monster ID: {targetId}";
@@ -2524,7 +2958,14 @@ class Program
             chaseStartPosition = new Coordinate { X = x, Y = y, Z = z };
             chasePath.Clear();
             chasePath.Add(new Coordinate { X = x, Y = y, Z = z });
+
+            // Store the approximate waypoint index when chase starts
+            if (waypoints != null && waypoints.Count > 0)
+            {
+                chaseStartWaypointIndex = FindClosestWaypointIndex(waypoints, x, y, z);
+            }
         }
+
         private void RecordPosition(int x, int y, int z)
         {
             if (chasePath.Count == 0 ||
@@ -2540,6 +2981,7 @@ class Program
                 }
             }
         }
+
         private void EndChaseSimple(int currentX, int currentY, int currentZ)
         {
             int distanceX = Math.Abs(currentX - chaseStartPosition.X);
@@ -2557,9 +2999,139 @@ class Program
                 ResetChaseState();
             }
         }
+
         private void EndChase(int currentX, int currentY, int currentZ, List<Coordinate> waypoints)
         {
-            int closestIndex = -1;
+            // First check if we're already close to ANY waypoint ahead of our starting position
+            var nearbyWaypoint = FindNearestWaypointInDirection(waypoints, currentX, currentY, currentZ);
+
+            if (nearbyWaypoint.found)
+            {
+                string message = $"[DEBUG] Found nearby waypoint ahead at index {nearbyWaypoint.index} (distance: {nearbyWaypoint.distance}), continuing path without returning to start";
+                DisplayWithCooldown(MSG_WAYPOINT_INFO, message);
+
+                // Update the current waypoint index to the found waypoint
+                Program.currentCoordIndex = nearbyWaypoint.index;
+                ResetChaseState();
+                return;
+            }
+
+            // If no waypoint ahead is close enough, check if we're close to any waypoint at all
+            int closestIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+            int distanceX = Math.Abs(currentX - waypoints[closestIndex].X);
+            int distanceY = Math.Abs(currentY - waypoints[closestIndex].Y);
+
+            if (distanceX < 5 && distanceY < 5)
+            {
+                string message = $"[DEBUG] Already close to waypoint at index {closestIndex} (dx={distanceX}, dy={distanceY}), no need to return";
+                DisplayWithCooldown(MSG_DISTANCE_OK, message);
+                Program.currentCoordIndex = closestIndex;
+                ResetChaseState();
+                return;
+            }
+
+            // Only return to start if we're far from all waypoints
+            string message2 = $"[DEBUG] Far from all waypoints (closest distance: {distanceX + distanceY}), need to return to start position";
+            DisplayWithCooldown(MSG_DISTANCE_EXCEED, message2);
+            needToReturnToStart = true;
+        }
+
+        // Find nearby waypoint that's ahead in the path
+        private (bool found, int index, int distance) FindNearestWaypointInDirection(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
+        {
+            if (waypoints == null || waypoints.Count == 0 || chaseStartWaypointIndex == -1)
+                return (false, -1, int.MaxValue);
+
+            int bestIndex = -1;
+            int bestDistance = int.MaxValue;
+            const int MAX_DISTANCE = 8; // Slightly larger radius for checking
+
+            // Check waypoints ahead of our starting position (prefer forward movement)
+            for (int i = chaseStartWaypointIndex; i < waypoints.Count; i++)
+            {
+                if (waypoints[i].Z != currentZ)
+                    continue;
+
+                int distanceX = Math.Abs(waypoints[i].X - currentX);
+                int distanceY = Math.Abs(waypoints[i].Y - currentY);
+                int totalDistance = distanceX + distanceY;
+
+                if (totalDistance <= MAX_DISTANCE && totalDistance < bestDistance)
+                {
+                    bestIndex = i;
+                    bestDistance = totalDistance;
+                }
+            }
+
+            if (bestIndex != -1)
+            {
+                return (true, bestIndex, bestDistance);
+            }
+
+            // If no forward waypoint found, check a few waypoints behind as well (but with higher preference for forward)
+            int backwardStartIndex = Math.Max(0, chaseStartWaypointIndex - 2);
+            for (int i = backwardStartIndex; i < chaseStartWaypointIndex; i++)
+            {
+                if (waypoints[i].Z != currentZ)
+                    continue;
+
+                int distanceX = Math.Abs(waypoints[i].X - currentX);
+                int distanceY = Math.Abs(waypoints[i].Y - currentY);
+                int totalDistance = distanceX + distanceY;
+
+                if (totalDistance <= MAX_DISTANCE && totalDistance < bestDistance)
+                {
+                    bestIndex = i;
+                    bestDistance = totalDistance;
+                }
+            }
+
+            return bestIndex != -1 ? (true, bestIndex, bestDistance) : (false, -1, int.MaxValue);
+        }
+
+        public bool ShouldReturnToStart()
+        {
+            lock (chaseLock)
+            {
+                return needToReturnToStart;
+            }
+        }
+
+        public Coordinate GetReturnPosition()
+        {
+            lock (chaseLock)
+            {
+                return chaseStartPosition;
+            }
+        }
+
+        public void CompleteReturn()
+        {
+            lock (chaseLock)
+            {
+                ResetChaseState();
+            }
+        }
+
+        private void ResetChaseState()
+        {
+            isChasing = false;
+            needToReturnToStart = false;
+            lastTargetId = 0;
+            chaseStartWaypointIndex = -1;
+        }
+
+        public List<Coordinate> GetChasePath()
+        {
+            lock (chaseLock)
+            {
+                return new List<Coordinate>(chasePath);
+            }
+        }
+
+        private int FindClosestWaypointIndex(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
+        {
+            int closestIndex = 0;
             int minDistance = int.MaxValue;
             for (int i = 0; i < waypoints.Count; i++)
             {
@@ -2571,86 +3143,9 @@ class Program
                     closestIndex = i;
                 }
             }
-            int distanceX = 0;
-            int distanceY = 0;
-            if (closestIndex >= 0)
-            {
-                distanceX = Math.Abs(currentX - waypoints[closestIndex].X);
-                distanceY = Math.Abs(currentY - waypoints[closestIndex].Y);
-                if (distanceX < 5 && distanceY < 5)
-                {
-                    string message = $"[DEBUG] Already close to waypoint (dx={distanceX}, dy={distanceY}), no need to return";
-                    DisplayWithCooldown(MSG_DISTANCE_OK, message);
-                    ResetChaseState();
-                    return;
-                }
-                if (distanceX > 5 || distanceY > 5)
-                {
-                    string message1 = $"[DEBUG] Distance to closest waypoint exceeded threshold (X:{distanceX}, Y:{distanceY}), need to return to start position";
-                    DisplayWithCooldown(MSG_DISTANCE_EXCEED, message1);
-                    string message2 = $"[DEBUG] Current position: ({currentX},{currentY}), Closest waypoint: ({waypoints[closestIndex].X},{waypoints[closestIndex].Y})";
-                    DisplayWithCooldown(MSG_WAYPOINT_INFO, message2);
-                    needToReturnToStart = true;
-                }
-                else
-                {
-                    string message = $"[DEBUG] Distance to closest waypoint within threshold (X:{distanceX}, Y:{distanceY}), no need to return";
-                    DisplayWithCooldown(MSG_DISTANCE_OK, message);
-                    ResetChaseState();
-                }
-            }
-            else
-            {
-                distanceX = Math.Abs(currentX - chaseStartPosition.X);
-                distanceY = Math.Abs(currentY - chaseStartPosition.Y);
-                if (distanceX > 5 || distanceY > 5)
-                {
-                    string message = $"[DEBUG] No waypoints found, distance to chase start exceeded threshold (X:{distanceX}, Y:{distanceY}), need to return to start position";
-                    DisplayWithCooldown(MSG_NO_WAYPOINTS, message);
-                    needToReturnToStart = true;
-                }
-                else
-                {
-                    string message = $"[DEBUG] No waypoints found, distance within threshold (X:{distanceX}, Y:{distanceY}), no need to return";
-                    DisplayWithCooldown(MSG_NO_WAYPOINTS, message);
-                    ResetChaseState();
-                }
-            }
+            return closestIndex;
         }
-        public bool ShouldReturnToStart()
-        {
-            lock (chaseLock)
-            {
-                return needToReturnToStart;
-            }
-        }
-        public Coordinate GetReturnPosition()
-        {
-            lock (chaseLock)
-            {
-                return chaseStartPosition;
-            }
-        }
-        public void CompleteReturn()
-        {
-            lock (chaseLock)
-            {
-                ResetChaseState();
-            }
-        }
-        private void ResetChaseState()
-        {
-            isChasing = false;
-            needToReturnToStart = false;
-            lastTargetId = 0;
-        }
-        public List<Coordinate> GetChasePath()
-        {
-            lock (chaseLock)
-            {
-                return new List<Coordinate>(chasePath);
-            }
-        }
+
         private void DisplayWithCooldown(string messageType, string message)
         {
             DateTime now = DateTime.Now;
@@ -2658,8 +3153,10 @@ class Program
                 (now - messageTypeTimes[messageType]).TotalSeconds >= DISPLAY_COOLDOWN_SECONDS)
             {
                 messageTypeTimes[messageType] = now;
+                Console.WriteLine(message);
             }
         }
+
         public void DisplayMessage(string messageType, string message)
         {
             lock (chaseLock)
@@ -3454,33 +3951,39 @@ class Program
                 Console.WriteLine($"[COLOR] Error handling color change detection: {ex.Message}");
             }
         }
-        private static void TriggerColorChangeAlert()
+        public static CancellationTokenSource? colorAlarmCts = null;
+        public static readonly object colorAlarmLock = new object();
+        public static void TriggerColorChangeAlert()
         {
             try
             {
-                Console.WriteLine("\n[!!!] COLOR CHANGE ALERT - UNUSUAL COLOR DETECTED [!!!]");
-                Console.WriteLine("[!!!] Stopping all threads and sounding alarm [!!!]\n");
-                IntPtr copyWindow = Program.targetWindow;
                 Program.threadFlags["recording"] = false;
                 Program.threadFlags["playing"] = false;
                 Program.threadFlags["autopot"] = false;
                 Program.threadFlags["spawnwatch"] = false;
                 Program.memoryReadActive = false;
                 Program.programRunning = false;
-                Program.StopPositionAlertSound();  
+                IntPtr copyWindow = Program.targetWindow;
+                lock (colorAlarmLock)
+                {
+                    colorAlarmCts = new CancellationTokenSource();
+                }
+                var token = colorAlarmCts.Token;
                 Thread alarmSoundThread = new Thread(() =>
                 {
                     try
                     {
-                        while (true)
+                        while (!token.IsCancellationRequested)
                         {
                             Beep(1400, 200);
-                            Thread.Sleep(150);
+                            if (token.IsCancellationRequested) break;
+                            Thread.Sleep(1);
                             Beep(1800, 200);
-                            Thread.Sleep(150);
+                            if (token.IsCancellationRequested) break;
+                            Thread.Sleep(1);
                             Beep(1400, 200);
-                            Thread.Sleep(500);
-                            Console.WriteLine("[COLOR ALARM] Unusual color detected in game interface!");
+                            if (token.IsCancellationRequested) break;
+                            Thread.Sleep(1);
                         }
                     }
                     catch (Exception ex)
@@ -3490,19 +3993,54 @@ class Program
                 });
                 alarmSoundThread.IsBackground = true;
                 alarmSoundThread.Start();
+                Thread inputMonitorThread = new Thread(() =>
+                {
+                    try
+                    {
+                        while (!token.IsCancellationRequested)
+                        {
+                            if (Console.KeyAvailable)
+                            {
+                                var key = Console.ReadKey(true).Key;
+                                if (key == ConsoleKey.Q)
+                                {
+                                    Console.WriteLine("\n[COLOR ALARM] User pressed Q - stopping alarm...");
+                                    StopColorAlarm();
+                                    break;
+                                }
+                            }
+                            Thread.Sleep(50);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[COLOR ALARM] Error in input monitor: {ex.Message}");
+                    }
+                });
+                inputMonitorThread.IsBackground = true;
+                inputMonitorThread.Start();
                 Thread focusWindowThread = new Thread(() =>
                 {
                     try
                     {
                         FocusGameWindow(copyWindow);
-                        Console.WriteLine("[COLOR ALARM] Color change alert: Window focused, press ESC to exit");
-                        Thread.Sleep(60000); 
-                        Environment.Exit(1);
+                        for (int i = 0; i < 600; i++) 
+                        {
+                            if (token.IsCancellationRequested)
+                            {
+                                break;
+                            }
+                            Thread.Sleep(100);
+                        }
+                        if (!token.IsCancellationRequested)
+                        {
+                            Console.WriteLine("[COLOR ALARM] Timeout reached - exiting program");
+                            Environment.Exit(1);
+                        }
                     }
                     catch (Exception ex)
                     {
                         Console.WriteLine($"[COLOR ALARM] Error in window focus: {ex.Message}");
-                        Environment.Exit(1);
                     }
                 });
                 focusWindowThread.IsBackground = false;
@@ -3511,7 +4049,34 @@ class Program
             catch (Exception ex)
             {
                 Console.WriteLine($"[COLOR ALARM] Error triggering color change alert: {ex.Message}");
-                Environment.Exit(1);
+            }
+        }
+        public static bool IsColorAlarmActive()
+        {
+            lock (colorAlarmLock)
+            {
+                return colorAlarmCts != null;
+            }
+        }
+        public static void StopColorAlarm()
+        {
+            lock (colorAlarmLock)
+            {
+                if (colorAlarmCts != null)
+                {
+                    Console.WriteLine("[COLOR ALARM] Stopping color alarm...");
+                    colorAlarmCts.Cancel();
+                    colorAlarmCts.Dispose();
+                    colorAlarmCts = null;
+                    Program.threadFlags["recording"] = false;
+                    Program.threadFlags["playing"] = false;
+                    Program.threadFlags["autopot"] = false;
+                    Program.threadFlags["spawnwatch"] = false;
+                    Program.memoryReadActive = false;
+                    Program.programRunning = false;
+                    Console.WriteLine("[COLOR ALARM] Alarm stopped. Exiting program...");
+                    Environment.Exit(0);
+                }
             }
         }
         private static void TriggerAlarm(string templateName)
@@ -3720,10 +4285,16 @@ class Program
     const int SWP_NOACTIVATE = 0x0010;
     [DllImport("user32.dll")]
     static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    // Add this with your other overlay configuration variables
+    static int overlayTopOffset = 650;  // Distance from top of game window (change this!)
+    static bool showOverlayDebugInfo = false; // Set to true to see position info
+
+    // Modified EnsureOverlayExists function with configurable top anchor
     static void EnsureOverlayExists()
     {
         if (overlayForm != null && overlayForm.IsHandleCreated && !overlayForm.IsDisposed)
             return;
+
         overlayForm = null;
         Thread overlayThread = new Thread(() =>
         {
@@ -3739,6 +4310,8 @@ class Program
                     threadForm.Opacity = statsOverlayOpacity;
                     threadForm.TransparencyKey = Color.Black;
                     threadForm.BackColor = Color.Black;
+
+                    // Prevent form from taking focus
                     threadForm.Deactivate += (s, e) =>
                     {
                         if (threadForm != null && !threadForm.IsDisposed)
@@ -3747,27 +4320,51 @@ class Program
                             threadForm.TopMost = true;
                         }
                     };
+
+                    // Set initial size
                     int baseWidth = 300;
-                    int baseHeight = 200;
+                    int initialContentLines = 14; // Base content lines
+                    int lineHeight = 18;
+                    int bottomMargin = 20;
+                    int baseHeight = initialContentLines * lineHeight + bottomMargin;
+
                     threadForm.Width = (int)(baseWidth * statsOverlaySizeScale);
                     threadForm.Height = (int)(baseHeight * statsOverlaySizeScale);
                     threadForm.StartPosition = System.Windows.Forms.FormStartPosition.Manual;
+
+                    // Calculate initial position with configurable top offset
                     try
                     {
                         GetWindowRect(targetWindow, out RECT gameWindowRect);
-                        threadForm.Location = new Point(
-                            Math.Max(0, gameWindowRect.Right - threadForm.Width - statsOverlayRightOffset),
-                            gameWindowRect.Bottom - threadForm.Height - statsOverlayBottomOffset);
+                        int overlayX = Math.Max(0, gameWindowRect.Right - threadForm.Width - statsOverlayRightOffset);
+                        int overlayY = gameWindowRect.Top + overlayTopOffset; // Uses configurable offset
+
+                        threadForm.Location = new Point(overlayX, overlayY);
+
+                        if (showOverlayDebugInfo)
+                        {
+                            Console.WriteLine($"[OVERLAY] Initial position: X={overlayX}, Y={overlayY}");
+                            Console.WriteLine($"[OVERLAY] Top offset: {overlayTopOffset}");
+                            Console.WriteLine($"[OVERLAY] Game window: Top={gameWindowRect.Top}, Bottom={gameWindowRect.Bottom}");
+                        }
                     }
                     catch
                     {
+                        // Fallback to screen position
                         threadForm.Location = new Point(
                             Math.Max(0, Screen.PrimaryScreen.WorkingArea.Right - threadForm.Width - statsOverlayRightOffset),
-                            Screen.PrimaryScreen.WorkingArea.Bottom - threadForm.Height - statsOverlayBottomOffset);
+                            overlayTopOffset);
                     }
+
+                    // Set window styles ONCE during creation
                     int exStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
                     exStyle |= WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
                     SetWindowLong(threadForm.Handle, GWL_EXSTYLE, exStyle);
+
+                    // Cache target ID to minimize locking
+                    int lastKnownTargetId = -1;
+                    bool needsRedraw = false;
+
                     threadForm.Paint += (sender, e) =>
                     {
                         try
@@ -3776,15 +4373,20 @@ class Program
                             {
                                 e.Graphics.ScaleTransform(statsOverlaySizeScale, statsOverlaySizeScale);
                             }
+
+                            // Create dark background
                             using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(180, 0, 0, 0)))
                             {
                                 float scaledWidth = threadForm.Width / statsOverlaySizeScale;
                                 float scaledHeight = threadForm.Height / statsOverlaySizeScale;
                                 e.Graphics.FillRectangle(bgBrush, 0, 0, scaledWidth, scaledHeight);
                             }
+
+                            // Font setup
                             float titleFontSize = 10.0f;
                             float statsFontSize = 9.0f;
                             float smallFontSize = 8.0f;
+
                             using (Font titleFont = new Font("Arial", titleFontSize, FontStyle.Bold))
                             using (Font statsFont = new Font("Arial", statsFontSize, FontStyle.Regular))
                             using (Font smallFont = new Font("Arial", smallFontSize, FontStyle.Regular))
@@ -3795,14 +4397,18 @@ class Program
                             using (Brush orangeBrush = new SolidBrush(Color.Orange))
                             using (Brush pinkBrush = new SolidBrush(Color.LightPink))
                             using (Brush redBrush = new SolidBrush(Color.LightCoral))
+                            using (Brush grayBrush = new SolidBrush(Color.LightGray))
                             {
                                 float scaledWidth = threadForm.Width / statsOverlaySizeScale;
                                 int y = 5;
                                 int rightPadding = 20;
                                 int lineSpacing = 18;
+
+                                // Get data once with minimal lock time
                                 double hpPercent, manaPercent;
                                 int currentX, currentY, currentZ, currentTargetId, currentInvisibilityCode, currentOutfitValue;
                                 string currentTargetName = "";
+
                                 lock (memoryLock)
                                 {
                                     hpPercent = (curHP / maxHP) * 100;
@@ -3814,105 +4420,264 @@ class Program
                                     currentInvisibilityCode = invisibilityCode;
                                     currentOutfitValue = currentOutfit;
                                 }
-                                int monsterX = 0, monsterY = 0, monsterZ = 0;
-                                if (currentTargetId != 0)
+
+                                // Show debug info if enabled
+                                if (showOverlayDebugInfo)
                                 {
-                                    var (mX, mY, mZ, mName) = GetTargetMonsterInfo();
-                                    monsterX = mX;
-                                    monsterY = mY;
-                                    monsterZ = mZ;
-                                    currentTargetName = mName;
+                                    DrawRightAlignedStat(e, "Debug - Top Offset:", $"{overlayTopOffset}px",
+                                        smallFont, grayBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                    DrawRightAlignedStat(e, "Debug - Form Y:", $"{threadForm.Top}",
+                                        smallFont, grayBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                    y += 5;
                                 }
+
+                                // Draw title
                                 string titleText = "RealeraDX - Live Stats";
                                 SizeF titleSize = e.Graphics.MeasureString(titleText, titleFont);
                                 e.Graphics.DrawString(titleText, titleFont, whiteBrush,
                                     scaledWidth - titleSize.Width - rightPadding, y);
                                 y += lineSpacing + 2;
+
+                                // Draw HP/Mana
                                 DrawRightAlignedStat(e, "HP:", $"{curHP:F0}/{maxHP:F0} ({hpPercent:F1}%)",
                                     statsFont, hpPercent < 50 ? orangeBrush : greenBrush,
                                     scaledWidth - rightPadding, ref y, lineSpacing);
+
                                 DrawRightAlignedStat(e, "Mana:", $"{curMana:F0}/{maxMana:F0} ({manaPercent:F1}%)",
                                     statsFont, blueBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedStat(e, "X:", $"{currentX}", statsFont, whiteBrush,
-                                    scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedStat(e, "Y:", $"{currentY}", statsFont, whiteBrush,
-                                    scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedStat(e, "Z:", $"{currentZ}", statsFont, whiteBrush,
-                                    scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                // Draw position
+                                DrawRightAlignedStat(e, "Position:", $"({currentX}, {currentY}, {currentZ})",
+                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                // Draw invisibility and outfit
                                 DrawRightAlignedStat(e, "Invisibility:", $"{currentInvisibilityCode} " +
                                     (currentInvisibilityCode == 2 ? "(Ring ON)" : "(Ring OFF)"),
                                     statsFont, pinkBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
                                 DrawRightAlignedStat(e, "Outfit:", $"{currentOutfitValue}",
                                     statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
                                 y += 5;
+
+                                // Target info
                                 if (currentTargetId != 0)
                                 {
+                                    var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
+
                                     string targetHeader = "Target Info:";
                                     SizeF headerSize = e.Graphics.MeasureString(targetHeader, statsFont);
                                     e.Graphics.DrawString(targetHeader, statsFont, redBrush,
                                         scaledWidth - headerSize.Width - rightPadding, y);
                                     y += lineSpacing;
+
                                     DrawRightAlignedStat(e, "ID:", $"{currentTargetId}",
                                         statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                    if (!string.IsNullOrEmpty(currentTargetName))
+
+                                    if (!string.IsNullOrEmpty(monsterName))
                                     {
-                                        DrawRightAlignedStat(e, "Name:", $"{currentTargetName}",
+                                        DrawRightAlignedStat(e, "Name:", $"{monsterName}",
                                             statsFont, redBrush, scaledWidth - rightPadding, ref y, lineSpacing);
                                     }
+
                                     if (monsterX != 0 || monsterY != 0 || monsterZ != 0)
                                     {
                                         DrawRightAlignedStat(e, "Pos:", $"({monsterX}, {monsterY}, {monsterZ})",
                                             statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
                                         int distanceX = Math.Abs(monsterX - currentX);
                                         int distanceY = Math.Abs(monsterY - currentY);
                                         int totalDistance = distanceX + distanceY;
+
                                         DrawRightAlignedStat(e, "Distance:", $"{totalDistance} steps",
                                             statsFont, totalDistance > 5 ? orangeBrush : greenBrush,
                                             scaledWidth - rightPadding, ref y, lineSpacing);
                                     }
+
+                                    // ADD THIS NEW SECTION - Attack Timer Display
+                                    double engagementSeconds = currentTargetEngagementDuration.TotalSeconds;
+                                    double maxSeconds = MAX_TARGET_ENGAGEMENT_TIME.TotalSeconds;
+                                    double timeProgress = Math.Min(engagementSeconds / maxSeconds, 1.0);
+
+                                    // Display attack time with color coding
+                                    Brush timerBrush = timeProgress < 0.5 ? blueBrush :
+                                                      (timeProgress < 0.8 ? orangeBrush : redBrush);
+
+                                    DrawRightAlignedStat(e, "Attack Time:", $"{engagementSeconds:F1}s / {maxSeconds:F0}s",
+                                        statsFont, timerBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                    // Attack timer progress bar
+                                    int timerBarWidth = (int)(scaledWidth - 40 - rightPadding);
+                                    int timerBarHeight = 8;
+                                    int timerBarX = 20;
+                                    int timerFilledWidth = (int)(timerBarWidth * timeProgress);
+
+                                    // Background bar
+                                    e.Graphics.FillRectangle(new SolidBrush(Color.FromArgb(100, Color.DarkGray)),
+                                        timerBarX, y, timerBarWidth, timerBarHeight);
+
+                                    // Foreground progress bar (color changes as time progresses)
+                                    Color timerColor;
+                                    if (timeProgress < 0.5)
+                                        timerColor = Color.LimeGreen;
+                                    else if (timeProgress < 0.8)
+                                        timerColor = Color.Orange;
+                                    else
+                                        timerColor = Color.Red;
+
+                                    if (timerFilledWidth > 0)
+                                    {
+                                        e.Graphics.FillRectangle(new SolidBrush(timerColor),
+                                            timerBarX, y, timerFilledWidth, timerBarHeight);
+                                    }
+
+                                    // Add percentage text on the bar
+                                    string percentText = $"{(timeProgress * 100):F0}%";
+                                    using (Font smallFonty = new Font("Arial", 7.0f, FontStyle.Bold))
+                                    {
+                                        SizeF percentSize = e.Graphics.MeasureString(percentText, smallFonty);
+                                        float textX = timerBarX + (timerBarWidth - percentSize.Width) / 2;
+                                        float textY = y - 1;
+
+                                        // Draw shadow for better visibility
+                                        e.Graphics.DrawString(percentText, smallFonty, new SolidBrush(Color.Black),
+                                            textX + 1, textY + 1);
+                                        e.Graphics.DrawString(percentText, smallFonty, new SolidBrush(Color.White),
+                                            textX, textY);
+                                    }
+
+                                    y += timerBarHeight + 8;
                                 }
                                 else
                                 {
                                     DrawRightAlignedStat(e, "Target:", "None",
-                                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                        statsFont, grayBrush, scaledWidth - rightPadding, ref y, lineSpacing);
                                 }
+
                                 y += 5;
-                                string featuresText = "Active Features:";
-                                SizeF featuresSize = e.Graphics.MeasureString(featuresText, statsFont);
-                                e.Graphics.DrawString(featuresText, statsFont, yellowBrush,
-                                    scaledWidth - featuresSize.Width - rightPadding, y);
+
+                                // Active features
+                                //string featuresText = "Active Features:";
+                                //SizeF featuresSize = e.Graphics.MeasureString(featuresText, statsFont);
+                                //e.Graphics.DrawString(featuresText, statsFont, yellowBrush,
+                                //    scaledWidth - featuresSize.Width - rightPadding, y);
                                 y += lineSpacing;
-                                DrawRightAlignedFeature(e, "Auto-Potions:", threadFlags["autopot"],
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedFeature(e, "Recording:", threadFlags["recording"],
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedFeature(e, "Playback:", threadFlags["playing"],
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedFeature(e, "Click Overlay:", clickOverlayActive,
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                if (threadFlags["playing"] && currentTarget != null)
+
+                                //DrawRightAlignedFeature(e, "Auto-Potions:", threadFlags["autopot"],
+                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                //DrawRightAlignedFeature(e, "Recording:", threadFlags["recording"],
+                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                //DrawRightAlignedFeature(e, "Playback:", threadFlags["playing"],
+                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                //DrawRightAlignedFeature(e, "Click Overlay:", clickOverlayActive,
+                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                // Playback progress - Enhanced
+                                if (threadFlags["playing"])
                                 {
-                                    y += 2;
-                                    int distanceX = Math.Abs(currentTarget.X - currentX);
-                                    int distanceY = Math.Abs(currentTarget.Y - currentY);
-                                    DrawRightAlignedStat(e, "Waypoint:", $"{distanceX + distanceY} steps",
-                                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                    float progress = (float)(currentCoordIndex + 1) / totalCoords;
-                                    string progressText = $"Path: {(progress * 100):F1}% ({currentCoordIndex + 1}/{totalCoords})";
-                                    SizeF progressSize = e.Graphics.MeasureString(progressText, statsFont);
-                                    e.Graphics.DrawString(progressText, statsFont, whiteBrush,
-                                        scaledWidth - progressSize.Width - rightPadding, y);
+                                    y += 5;
+
+                                    // Waypoint status header
+                                    string waypointHeader = "Waypoint Status:";
+                                    SizeF waypointHeaderSize = e.Graphics.MeasureString(waypointHeader, statsFont);
+                                    e.Graphics.DrawString(waypointHeader, statsFont, yellowBrush,
+                                        scaledWidth - waypointHeaderSize.Width - rightPadding, y);
                                     y += lineSpacing;
-                                    int progressWidth = (int)(scaledWidth - 40 - rightPadding);
-                                    int barHeight = 6;
-                                    int barX = 20;
-                                    int filledWidth = (int)(progressWidth * progress);
-                                    e.Graphics.FillRectangle(new SolidBrush(Color.DarkGray), barX, y, progressWidth, barHeight);
-                                    e.Graphics.FillRectangle(new SolidBrush(Color.LimeGreen), barX, y, filledWidth, barHeight);
-                                    y += barHeight + 2;
+
+                                    // Current waypoint information
+                                    if (currentTarget != null)
+                                    {
+                                        int distanceX = Math.Abs(currentTarget.X - currentX);
+                                        int distanceY = Math.Abs(currentTarget.Y - currentY);
+                                        int totalDistance = distanceX + distanceY;
+
+                                        // Current target coordinates
+                                        DrawRightAlignedStat(e, "Current WP:", $"({currentTarget.X}, {currentTarget.Y})",
+                                            statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                        // Distance to current waypoint
+                                        Brush distanceBrush = totalDistance <= 1 ? greenBrush :
+                                                             (totalDistance <= 3 ? orangeBrush : redBrush);
+                                        DrawRightAlignedStat(e, "Distance:", $"{totalDistance} steps",
+                                            statsFont, distanceBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                    }
+
+                                    // Path progress with detailed info
+                                    if (totalCoords > 0)
+                                    {
+                                        float progress = (float)(currentCoordIndex + 1) / totalCoords;
+                                        string progressText = $"Waypoint Progress: {currentCoordIndex + 1} / {totalCoords}";
+                                        SizeF progressSize = e.Graphics.MeasureString(progressText, statsFont);
+                                        e.Graphics.DrawString(progressText, statsFont, whiteBrush,
+                                            scaledWidth - progressSize.Width - rightPadding, y);
+                                        y += lineSpacing;
+
+                                        // Percentage display
+                                        string percentageText = $"Path Complete: {(progress * 100):F1}%";
+                                        SizeF percentageSize = e.Graphics.MeasureString(percentageText, statsFont);
+                                        e.Graphics.DrawString(percentageText, statsFont, blueBrush,
+                                            scaledWidth - percentageSize.Width - rightPadding, y);
+                                        y += lineSpacing;
+
+                                        // Enhanced progress bar
+                                        int progressWidth = (int)(scaledWidth - 40 - rightPadding);
+                                        int barHeight = 10;
+                                        int barX = 20;
+                                        int filledWidth = (int)(progressWidth * progress);
+
+                                        // Background bar with border
+                                        e.Graphics.FillRectangle(new SolidBrush(Color.FromArgb(100, Color.DarkGray)),
+                                            barX, y, progressWidth, barHeight);
+                                        e.Graphics.DrawRectangle(new Pen(Color.Gray, 1),
+                                            barX, y, progressWidth, barHeight);
+
+                                        // Foreground progress bar with gradient effect
+                                        if (filledWidth > 0)
+                                        {
+                                            using (LinearGradientBrush gradientBrush = new LinearGradientBrush(
+                                                new Rectangle(barX, y, filledWidth, barHeight),
+                                                Color.LimeGreen, Color.Green, LinearGradientMode.Horizontal))
+                                            {
+                                                e.Graphics.FillRectangle(gradientBrush, barX, y, filledWidth, barHeight);
+                                            }
+                                        }
+
+                                        // Current position marker (vertical line)
+                                        if (filledWidth > 0)
+                                        {
+                                            int markerX = barX + filledWidth - 1;
+                                            e.Graphics.DrawLine(new Pen(Color.Yellow, 2),
+                                                markerX, y - 2, markerX, y + barHeight + 2);
+                                        }
+
+                                        // Add percentage text overlay on the bar
+                                        string barPercentText = $"{(progress * 100):F0}%";
+                                        using (Font barFont = new Font("Arial", 8.0f, FontStyle.Bold))
+                                        {
+                                            SizeF barTextSize = e.Graphics.MeasureString(barPercentText, barFont);
+                                            float barTextX = barX + (progressWidth - barTextSize.Width) / 2;
+                                            float barTextY = y + (barHeight - barTextSize.Height) / 2;
+
+                                            // Draw shadow for better visibility
+                                            e.Graphics.DrawString(barPercentText, barFont, new SolidBrush(Color.Black),
+                                                barTextX + 1, barTextY + 1);
+                                            e.Graphics.DrawString(barPercentText, barFont, new SolidBrush(Color.White),
+                                                barTextX, barTextY);
+                                        }
+
+                                        y += barHeight + 5;
+
+                                        // Add a small legend for the waypoint info
+                                        using (Font legendFont = new Font("Arial", 7.0f, FontStyle.Italic))
+                                        {
+                                            string legend = "(Green: Close | Orange: Medium | Red: Far)";
+                                            SizeF legendSize = e.Graphics.MeasureString(legend, legendFont);
+                                            e.Graphics.DrawString(legend, legendFont, grayBrush,
+                                                scaledWidth - legendSize.Width - rightPadding, y);
+                                            y += 15;
+                                        }
+                                    }
                                 }
-                                scaledWidth = threadForm.Width / statsOverlaySizeScale;
-                                float scaledHeight = threadForm.Height / statsOverlaySizeScale;
                             }
                         }
                         catch (Exception ex)
@@ -3920,51 +4685,126 @@ class Program
                             Console.WriteLine($"[OVERLAY] Paint error: {ex.Message}");
                         }
                     };
-                    System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer { Interval = 100 };
+
+                    // Optimized update timer with reduced interval
+                    System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer { Interval = 50 };
+
+                    DateTime lastPositionUpdate = DateTime.MinValue;
+                    DateTime lastStyleCheck = DateTime.MinValue;
+                    DateTime lastRegularRefresh = DateTime.MinValue;
+                    const int REGULAR_REFRESH_INTERVAL = 500; // Half a second
+
                     updateTimer.Tick += (sender, e) =>
                     {
                         try
                         {
-                            GetWindowRect(targetWindow, out RECT currentGameRect);
-                            if (currentGameRect.Right > currentGameRect.Left &&
-                                currentGameRect.Bottom > currentGameRect.Top)
+                            DateTime now = DateTime.Now;
+                            bool shouldUpdatePosition = (now - lastPositionUpdate).TotalMilliseconds >= 200;
+                            bool shouldCheckStyle = (now - lastStyleCheck).TotalMilliseconds >= 1000;
+                            bool shouldRegularRefresh = (now - lastRegularRefresh).TotalMilliseconds >= REGULAR_REFRESH_INTERVAL;
+
+                            // Check target ID change (do this every tick for responsiveness)
+                            int currentTargetId;
+                            lock (memoryLock)
                             {
-                                int baseWidth = (currentGameRect.Right - currentGameRect.Left) / 3;
-                                int newWidth = (int)(baseWidth * statsOverlaySizeScale);
-                                int contentLines = 14;
-                                if (threadFlags["playing"] && currentTarget != null)
-                                    contentLines += 3;
-                                if (targetId != 0)
-                                    contentLines += 4;
-                                int lineHeight = 18;
-                                int bottomMargin = 20;
-                                int baseHeight = contentLines * lineHeight + bottomMargin;
-                                int newHeight = (int)(baseHeight * statsOverlaySizeScale);
-                                int newX = Math.Max(0, currentGameRect.Right - newWidth - statsOverlayRightOffset);
-                                int newY = Math.Max(0, currentGameRect.Bottom - newHeight - statsOverlayBottomOffset);
-                                if (newX != threadForm.Left || newY != threadForm.Top ||
-                                    newWidth != threadForm.Width || newHeight != threadForm.Height)
+                                currentTargetId = targetId;
+                            }
+
+                            if (currentTargetId != lastKnownTargetId)
+                            {
+                                lastKnownTargetId = currentTargetId;
+                                needsRedraw = true;
+                                // Force immediate refresh on target change
+                                threadForm.Invalidate();
+                            }
+
+                            // Regular refresh every 500ms (for position updates, etc.)
+                            if (shouldRegularRefresh)
+                            {
+                                lastRegularRefresh = now;
+                                needsRedraw = true;
+                                if (showOverlayDebugInfo)
                                 {
-                                    threadForm.Location = new Point(newX, newY);
-                                    threadForm.Size = new Size(newWidth, newHeight);
+                                    Console.WriteLine($"[OVERLAY] Regular refresh triggered at {now:HH:mm:ss.fff}");
                                 }
                             }
-                            if (threadForm.IsHandleCreated)
+
+                            // Update position and size (less frequently)
+                            if (shouldUpdatePosition)
                             {
+                                lastPositionUpdate = now;
+
+                                GetWindowRect(targetWindow, out RECT currentGameRect);
+                                if (currentGameRect.Right > currentGameRect.Left &&
+                                    currentGameRect.Bottom > currentGameRect.Top)
+                                {
+                                    // Calculate new size based on content
+                                    int contentLines = 14; // Base lines
+                                    if (showOverlayDebugInfo)
+                                        contentLines += 2; // Debug info lines
+                                    if (threadFlags["playing"])
+                                        contentLines += 8; // Enhanced waypoint info (header + target + distance + progress + percentage + bar + legend)
+                                    if (lastKnownTargetId != 0)
+                                        contentLines += 6; // Enhanced target info (name + pos + distance + attack time + timer bar)
+
+                                    int lineHeight = 18;
+                                    int bottomMargin = 20;
+                                    int newHeight = (int)((contentLines * lineHeight + bottomMargin) * statsOverlaySizeScale);
+
+                                    int baseWidth = 300;
+                                    int newWidth = (int)(baseWidth * statsOverlaySizeScale);
+
+                                    // ALWAYS calculate X position from the right edge
+                                    int newX = Math.Max(0, currentGameRect.Right - newWidth - statsOverlayRightOffset);
+
+                                    // USE CONFIGURABLE TOP OFFSET
+                                    int newY = currentGameRect.Top + overlayTopOffset;
+
+                                    // Only update if position/size actually changed
+                                    if (newX != threadForm.Left || newY != threadForm.Top ||
+                                        newWidth != threadForm.Width || newHeight != threadForm.Height)
+                                    {
+                                        if (showOverlayDebugInfo)
+                                        {
+                                            Console.WriteLine($"[OVERLAY] Position update: X={newX}, Y={newY}, Width={newWidth}, Height={newHeight}");
+                                        }
+
+                                        threadForm.Location = new Point(newX, newY);
+                                        threadForm.Size = new Size(newWidth, newHeight);
+                                        needsRedraw = true;
+                                    }
+                                }
+                            }
+
+                            // Check window styles less frequently
+                            if (shouldCheckStyle && threadForm.IsHandleCreated)
+                            {
+                                lastStyleCheck = now;
+
+                                // Only check styles if we haven't been destroyed/recreated
                                 int currentExStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
-                                if ((currentExStyle & (WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW))
-                                    != (WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW))
+                                int expectedStyle = WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+
+                                if ((currentExStyle & expectedStyle) != expectedStyle)
                                 {
-                                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE,
-                                        currentExStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+                                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE, currentExStyle | expectedStyle);
                                 }
-                                SetWindowPos(threadForm.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+                                // Ensure topmost less frequently
+                                if (!threadForm.TopMost)
+                                {
+                                    threadForm.TopMost = true;
+                                }
                             }
-                            threadForm.Invalidate();
-                            if (!threadForm.TopMost)
+
+                            // Invalidate if needed
+                            if (needsRedraw)
                             {
-                                threadForm.TopMost = true;
+                                needsRedraw = false;
+                                threadForm.Invalidate();
                             }
+
+                            // Check if overlay should be closed
                             if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
                                 overlayForm != threadForm)
                             {
@@ -3977,23 +4817,33 @@ class Program
                             Console.WriteLine($"[OVERLAY] Update error: {ex.Message}");
                         }
                     };
+
                     overlayForm = threadForm;
                     updateTimer.Start();
                     threadForm.Show();
+
+                    // Main event loop with optimized timing
                     DateTime lastCheckTime = DateTime.MinValue;
+                    const int EVENT_LOOP_SLEEP = 10;
+
                     while (!threadForm.IsDisposed && programRunning && memoryReadActive &&
                            threadFlags["overlay"] && overlayForm == threadForm)
                     {
                         System.Windows.Forms.Application.DoEvents();
-                        Thread.Sleep(10);
+                        Thread.Sleep(EVENT_LOOP_SLEEP);
+
                         DateTime now = DateTime.Now;
                         if ((now - lastCheckTime).TotalSeconds >= 1)
                         {
                             lastCheckTime = now;
+
+                            // Ensure we're still topmost
                             if (!threadForm.TopMost)
                             {
                                 threadForm.TopMost = true;
                             }
+
+                            // Final check for exit conditions
                             if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
                                 overlayForm != threadForm)
                             {
@@ -4001,12 +4851,15 @@ class Program
                             }
                         }
                     }
+
                     updateTimer.Stop();
                     updateTimer.Dispose();
+
                     if (overlayForm == threadForm)
                     {
                         overlayForm = null;
                     }
+
                     if (!threadForm.IsDisposed)
                     {
                         threadForm.Close();
@@ -4024,6 +4877,7 @@ class Program
                         }
                         catch { }
                     }
+
                     if (overlayForm == threadForm)
                     {
                         overlayForm = null;
@@ -4036,10 +4890,31 @@ class Program
                 overlayForm = null;
             }
         });
+
         overlayThread.IsBackground = true;
         overlayThread.SetApartmentState(ApartmentState.STA);
         overlayThread.Start();
         Sleep(100);
+    }
+
+    // Helper function to change overlay position while running
+    static void SetOverlayTopOffset(int newOffset)
+    {
+        if (newOffset >= 0 && newOffset <= 1000) // Reasonable range
+        {
+            overlayTopOffset = newOffset;
+            Console.WriteLine($"[OVERLAY] Top offset changed to {overlayTopOffset}px");
+
+            // Force immediate position update if overlay is active
+            if (overlayForm != null && !overlayForm.IsDisposed)
+            {
+                overlayForm.Invalidate();
+            }
+        }
+        else
+        {
+            Console.WriteLine($"[OVERLAY] Invalid offset: {newOffset}. Must be between 0 and 1000.");
+        }
     }
     static void DrawRightAlignedStat(PaintEventArgs e, string label, string value, Font font,
        Brush brush, float rightEdge, ref int y, int lineSpacing)
@@ -4843,7 +5718,7 @@ class Program
             if (hdcWindow != IntPtr.Zero) ReleaseDC(hWnd, hdcWindow);
         }
     }
-    static bool shouldScanInventoryForPlatinum = false;
+    static bool shouldScanInventoryForPlatinum = true;
     static readonly string PLATINUM_TEMPLATE_NAME = "100platinum";
     static readonly TimeSpan PLATINUM_SCAN_DELAY = TimeSpan.FromMilliseconds(1500);
     static DateTime lastInventoryScanTime = DateTime.MinValue;
@@ -4880,9 +5755,11 @@ class Program
     {
         try
         {
+            Sleep(1024);
+            UpdateUIPositions();
             int invScanLeft = inventoryX - (pixelSize / 2);
             int invScanTop = inventoryY - (pixelSize / 2);
-            int invScanWidth = pixelSize * 2;
+            int invScanWidth = pixelSize * 4;
             int invScanHeight = pixelSize * 3;
             GetClientRect(targetWindow, out RECT windowRect);
             int windowWidth = windowRect.Right - windowRect.Left;
@@ -4910,7 +5787,7 @@ class Program
                             int platinumX = invScanLeft + maxLoc.X + (platinumTemplate.Width / 2);
                             int platinumY = invScanTop + maxLoc.Y + (platinumTemplate.Height / 2);
                             VirtualRightClick(targetWindow, platinumX, platinumY);
-                            shouldScanInventoryForPlatinum = false;
+                            shouldScanInventoryForPlatinum = true;
                         }
                         else
                         {
@@ -4928,7 +5805,7 @@ class Program
         }
         finally
         {
-            shouldScanInventoryForPlatinum = false;
+            shouldScanInventoryForPlatinum = true;
         }
     }
     static readonly TimeSpan RING_OPERATION_COOLDOWN = TimeSpan.FromSeconds(2);
@@ -5027,7 +5904,7 @@ class Program
                             }
                         }
                     }
-                }
+                }//hej to ja rysiu to moj kod prosze nie krasc//
             }
             return false;
         }
@@ -5105,4 +5982,6 @@ class Program
             Console.WriteLine($"[RING CORRECTOR] Error swapping rings: {ex.Message}");
         }
     }
+
+
 }
