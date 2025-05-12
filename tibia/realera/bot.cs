@@ -1167,6 +1167,7 @@ class Program
         // Find the furthest reachable waypoint (max distance = 5)
         Coordinate target = FindFurthestReachableWaypoint(waypoints, currentX, currentY, currentZ);
 
+
         // Check if we need to change floors
         if (target.Z != currentZ)
         {
@@ -1222,6 +1223,11 @@ class Program
     // Add these static variables to track progression
     static int lastTargetedIndex = -1; // Remember the last waypoint we actually targeted
     static Coordinate lastTargetedWaypoint = null;
+
+
+    static HashSet<string> visitedWaypoints = new HashSet<string>();
+    static string MakeCoordKey(Coordinate coord) => $"{coord.X}_{coord.Y}_{coord.Z}";
+
 
     // Fixed FindFurthestReachableWaypoint with proper Z-level handling
     static Coordinate FindFurthestReachableWaypoint(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
