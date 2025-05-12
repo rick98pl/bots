@@ -1541,10 +1541,8 @@ class Program
             }
         }
 
-        // Keep track of the best reachable waypoint found so far
-        Coordinate furthest = null;
-        int bestIndex = -1;
-        int maxDistance = 0;
+        // Keep track of the best reachable waypoints found (for random selection)
+        List<(Coordinate waypoint, int index, int distance)> reachableWaypoints = new List<(Coordinate, int, int)>();
 
         // Look forward through the waypoint list (only forward, never backward)
         for (int i = 1; i < Math.Min(15, waypoints.Count); i++) // Start from i=1 to skip current waypoint
@@ -1554,7 +1552,7 @@ class Program
             Coordinate check = waypoints[checkIndex];
             Console.WriteLine($"[NAV] Checking waypoint {checkIndex}: ({check.X},{check.Y},{check.Z})");
 
-            // NEW LOGIC: Only consider Z-level changes if this is the very next waypoint (i == 1)
+            // Handle Z-level changes for the very next waypoint (i == 1)
             if (check.Z != currentZ)
             {
                 if (i == 1)
@@ -1638,24 +1636,19 @@ class Program
             // Check if this waypoint is reachable
             if (distanceX <= MAX_DISTANCE && distanceY <= MAX_DISTANCE)
             {
-                // This waypoint is reachable, update our best choice
-                if (totalDistance > maxDistance || furthest == null)
-                {
-                    furthest = check;
-                    bestIndex = checkIndex;
-                    maxDistance = totalDistance;
-                    Console.WriteLine($"[NAV] New best waypoint: {checkIndex} at distance {totalDistance}");
-                }
+                // This waypoint is reachable, add it to our list
+                reachableWaypoints.Add((check, checkIndex, totalDistance));
+                Console.WriteLine($"[NAV] Reachable waypoint added: {checkIndex} at distance {totalDistance}");
             }
             else
             {
                 // We've reached a waypoint that's too far, so we should stop
                 Console.WriteLine($"[NAV] Waypoint {checkIndex} too far (dx={distanceX}, dy={distanceY}), stopping search");
 
-                // If we found a reachable waypoint, break and return it
-                if (furthest != null)
+                // If we found reachable waypoints, break and process them
+                if (reachableWaypoints.Count > 0)
                 {
-                    Console.WriteLine($"[NAV] Returning previously found reachable waypoint {bestIndex}");
+                    Console.WriteLine($"[NAV] Found {reachableWaypoints.Count} reachable waypoints, processing for random selection");
                     break;
                 }
                 else
@@ -1667,8 +1660,40 @@ class Program
             }
         }
 
-        // If we still haven't found any reachable waypoint, return a coordinate 1 square away in the direction of the next waypoint
-        if (furthest == null)
+        // Process reachable waypoints for random selection
+        Coordinate selectedWaypoint = null;
+        int selectedIndex = -1;
+        int selectedDistance = 0;
+
+        if (reachableWaypoints.Count > 0)
+        {
+            // Sort by distance (descending) to get the furthest waypoints first
+            reachableWaypoints.Sort((a, b) => b.distance.CompareTo(a.distance));
+
+            // Get top 3 (or as many as we have)
+            int topCount = Math.Min(3, reachableWaypoints.Count);
+            var topWaypoints = reachableWaypoints.Take(topCount).ToList();
+
+            // Randomly select from the top waypoints
+            Random rand = new Random();
+            int selectedIdx = rand.Next(topCount);
+            var selected = topWaypoints[selectedIdx];
+
+            selectedWaypoint = selected.waypoint;
+            selectedIndex = selected.index;
+            selectedDistance = selected.distance;
+
+            Console.WriteLine($"[NAV] Selected waypoint {selectedIndex} from top {topCount} reachable waypoints (distance={selectedDistance})");
+            Console.WriteLine($"[NAV] Available top waypoints were:");
+            for (int i = 0; i < topWaypoints.Count; i++)
+            {
+                var wp = topWaypoints[i];
+                Console.WriteLine($"[NAV]   {i}: Index {wp.index}, distance {wp.distance}");
+            }
+        }
+
+        // If still no waypoint found, create a directional step
+        if (selectedWaypoint == null)
         {
             Console.WriteLine($"[NAV] No reachable waypoint found, calculating direction to next waypoint");
 
@@ -1710,31 +1735,30 @@ class Program
             }
 
             // Create coordinate 1 square away in the chosen direction
-            furthest = new Coordinate
+            selectedWaypoint = new Coordinate
             {
                 X = currentX + stepX,
                 Y = currentY + stepY,
                 Z = currentZ
             };
 
-            bestIndex = -1;
-            maxDistance = 1;
+            selectedIndex = -1;
+            selectedDistance = 1;
 
-            Console.WriteLine($"[NAV] Returning directional step: ({furthest.X},{furthest.Y},{furthest.Z}) toward waypoint {nextIndex}");
+            Console.WriteLine($"[NAV] Returning directional step: ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) toward waypoint {nextIndex}");
         }
 
         // Remember what we're targeting
-        if (bestIndex != currentCoordIndex)
+        if (selectedIndex != currentCoordIndex)
         {
-            lastTargetedIndex = bestIndex;
-            lastTargetedWaypoint = furthest;
-            Console.WriteLine($"[NAV] Targeting waypoint {bestIndex} at ({furthest.X},{furthest.Y},{furthest.Z})");
+            lastTargetedIndex = selectedIndex;
+            lastTargetedWaypoint = selectedWaypoint;
+            Console.WriteLine($"[NAV] Targeting waypoint {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z})");
         }
 
-        Console.WriteLine($"[NAV] Selected furthest reachable waypoint: {bestIndex} at ({furthest.X},{furthest.Y},{furthest.Z}) distance={maxDistance}");
-        return furthest;
+        Console.WriteLine($"[NAV] Selected reachable waypoint: {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) distance={selectedDistance}");
+        return selectedWaypoint;
     }
-
     // Handle floor changes
     static NavigationAction HandleZLevelChange(Coordinate target, List<Coordinate> waypoints)
     {
