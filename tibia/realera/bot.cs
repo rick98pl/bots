@@ -4191,10 +4191,16 @@ class Program
     const int SWP_NOACTIVATE = 0x0010;
     [DllImport("user32.dll")]
     static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    // Add this with your other overlay configuration variables
+    static int overlayTopOffset = 650;  // Distance from top of game window (change this!)
+    static bool showOverlayDebugInfo = false; // Set to true to see position info
+
+    // Modified EnsureOverlayExists function with configurable top anchor
     static void EnsureOverlayExists()
     {
         if (overlayForm != null && overlayForm.IsHandleCreated && !overlayForm.IsDisposed)
             return;
+
         overlayForm = null;
         Thread overlayThread = new Thread(() =>
         {
@@ -4210,6 +4216,8 @@ class Program
                     threadForm.Opacity = statsOverlayOpacity;
                     threadForm.TransparencyKey = Color.Black;
                     threadForm.BackColor = Color.Black;
+
+                    // Prevent form from taking focus
                     threadForm.Deactivate += (s, e) =>
                     {
                         if (threadForm != null && !threadForm.IsDisposed)
@@ -4218,27 +4226,51 @@ class Program
                             threadForm.TopMost = true;
                         }
                     };
+
+                    // Set initial size
                     int baseWidth = 300;
-                    int baseHeight = 200;
+                    int initialContentLines = 14; // Base content lines
+                    int lineHeight = 18;
+                    int bottomMargin = 20;
+                    int baseHeight = initialContentLines * lineHeight + bottomMargin;
+
                     threadForm.Width = (int)(baseWidth * statsOverlaySizeScale);
                     threadForm.Height = (int)(baseHeight * statsOverlaySizeScale);
                     threadForm.StartPosition = System.Windows.Forms.FormStartPosition.Manual;
+
+                    // Calculate initial position with configurable top offset
                     try
                     {
                         GetWindowRect(targetWindow, out RECT gameWindowRect);
-                        threadForm.Location = new Point(
-                            Math.Max(0, gameWindowRect.Right - threadForm.Width - statsOverlayRightOffset),
-                            gameWindowRect.Bottom - threadForm.Height - statsOverlayBottomOffset);
+                        int overlayX = Math.Max(0, gameWindowRect.Right - threadForm.Width - statsOverlayRightOffset);
+                        int overlayY = gameWindowRect.Top + overlayTopOffset; // Uses configurable offset
+
+                        threadForm.Location = new Point(overlayX, overlayY);
+
+                        if (showOverlayDebugInfo)
+                        {
+                            Console.WriteLine($"[OVERLAY] Initial position: X={overlayX}, Y={overlayY}");
+                            Console.WriteLine($"[OVERLAY] Top offset: {overlayTopOffset}");
+                            Console.WriteLine($"[OVERLAY] Game window: Top={gameWindowRect.Top}, Bottom={gameWindowRect.Bottom}");
+                        }
                     }
                     catch
                     {
+                        // Fallback to screen position
                         threadForm.Location = new Point(
                             Math.Max(0, Screen.PrimaryScreen.WorkingArea.Right - threadForm.Width - statsOverlayRightOffset),
-                            Screen.PrimaryScreen.WorkingArea.Bottom - threadForm.Height - statsOverlayBottomOffset);
+                            overlayTopOffset);
                     }
+
+                    // Set window styles ONCE during creation
                     int exStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
                     exStyle |= WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
                     SetWindowLong(threadForm.Handle, GWL_EXSTYLE, exStyle);
+
+                    // Cache target ID to minimize locking
+                    int lastKnownTargetId = -1;
+                    bool needsRedraw = false;
+
                     threadForm.Paint += (sender, e) =>
                     {
                         try
@@ -4247,15 +4279,20 @@ class Program
                             {
                                 e.Graphics.ScaleTransform(statsOverlaySizeScale, statsOverlaySizeScale);
                             }
+
+                            // Create dark background
                             using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(180, 0, 0, 0)))
                             {
                                 float scaledWidth = threadForm.Width / statsOverlaySizeScale;
                                 float scaledHeight = threadForm.Height / statsOverlaySizeScale;
                                 e.Graphics.FillRectangle(bgBrush, 0, 0, scaledWidth, scaledHeight);
                             }
+
+                            // Font setup
                             float titleFontSize = 10.0f;
                             float statsFontSize = 9.0f;
                             float smallFontSize = 8.0f;
+
                             using (Font titleFont = new Font("Arial", titleFontSize, FontStyle.Bold))
                             using (Font statsFont = new Font("Arial", statsFontSize, FontStyle.Regular))
                             using (Font smallFont = new Font("Arial", smallFontSize, FontStyle.Regular))
@@ -4266,14 +4303,18 @@ class Program
                             using (Brush orangeBrush = new SolidBrush(Color.Orange))
                             using (Brush pinkBrush = new SolidBrush(Color.LightPink))
                             using (Brush redBrush = new SolidBrush(Color.LightCoral))
+                            using (Brush grayBrush = new SolidBrush(Color.LightGray))
                             {
                                 float scaledWidth = threadForm.Width / statsOverlaySizeScale;
                                 int y = 5;
                                 int rightPadding = 20;
                                 int lineSpacing = 18;
+
+                                // Get data once with minimal lock time
                                 double hpPercent, manaPercent;
                                 int currentX, currentY, currentZ, currentTargetId, currentInvisibilityCode, currentOutfitValue;
                                 string currentTargetName = "";
+
                                 lock (memoryLock)
                                 {
                                     hpPercent = (curHP / maxHP) * 100;
@@ -4285,58 +4326,75 @@ class Program
                                     currentInvisibilityCode = invisibilityCode;
                                     currentOutfitValue = currentOutfit;
                                 }
-                                int monsterX = 0, monsterY = 0, monsterZ = 0;
-                                if (currentTargetId != 0)
+
+                                // Show debug info if enabled
+                                if (showOverlayDebugInfo)
                                 {
-                                    var (mX, mY, mZ, mName) = GetTargetMonsterInfo();
-                                    monsterX = mX;
-                                    monsterY = mY;
-                                    monsterZ = mZ;
-                                    currentTargetName = mName;
+                                    DrawRightAlignedStat(e, "Debug - Top Offset:", $"{overlayTopOffset}px",
+                                        smallFont, grayBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                    DrawRightAlignedStat(e, "Debug - Form Y:", $"{threadForm.Top}",
+                                        smallFont, grayBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                    y += 5;
                                 }
+
+                                // Draw title
                                 string titleText = "RealeraDX - Live Stats";
                                 SizeF titleSize = e.Graphics.MeasureString(titleText, titleFont);
                                 e.Graphics.DrawString(titleText, titleFont, whiteBrush,
                                     scaledWidth - titleSize.Width - rightPadding, y);
                                 y += lineSpacing + 2;
+
+                                // Draw HP/Mana
                                 DrawRightAlignedStat(e, "HP:", $"{curHP:F0}/{maxHP:F0} ({hpPercent:F1}%)",
                                     statsFont, hpPercent < 50 ? orangeBrush : greenBrush,
                                     scaledWidth - rightPadding, ref y, lineSpacing);
+
                                 DrawRightAlignedStat(e, "Mana:", $"{curMana:F0}/{maxMana:F0} ({manaPercent:F1}%)",
                                     statsFont, blueBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedStat(e, "X:", $"{currentX}", statsFont, whiteBrush,
-                                    scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedStat(e, "Y:", $"{currentY}", statsFont, whiteBrush,
-                                    scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedStat(e, "Z:", $"{currentZ}", statsFont, whiteBrush,
-                                    scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                // Draw position
+                                DrawRightAlignedStat(e, "Position:", $"({currentX}, {currentY}, {currentZ})",
+                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                // Draw invisibility and outfit
                                 DrawRightAlignedStat(e, "Invisibility:", $"{currentInvisibilityCode} " +
                                     (currentInvisibilityCode == 2 ? "(Ring ON)" : "(Ring OFF)"),
                                     statsFont, pinkBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
                                 DrawRightAlignedStat(e, "Outfit:", $"{currentOutfitValue}",
                                     statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
                                 y += 5;
+
+                                // Target info
                                 if (currentTargetId != 0)
                                 {
+                                    var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
+
                                     string targetHeader = "Target Info:";
                                     SizeF headerSize = e.Graphics.MeasureString(targetHeader, statsFont);
                                     e.Graphics.DrawString(targetHeader, statsFont, redBrush,
                                         scaledWidth - headerSize.Width - rightPadding, y);
                                     y += lineSpacing;
+
                                     DrawRightAlignedStat(e, "ID:", $"{currentTargetId}",
                                         statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                    if (!string.IsNullOrEmpty(currentTargetName))
+
+                                    if (!string.IsNullOrEmpty(monsterName))
                                     {
-                                        DrawRightAlignedStat(e, "Name:", $"{currentTargetName}",
+                                        DrawRightAlignedStat(e, "Name:", $"{monsterName}",
                                             statsFont, redBrush, scaledWidth - rightPadding, ref y, lineSpacing);
                                     }
+
                                     if (monsterX != 0 || monsterY != 0 || monsterZ != 0)
                                     {
                                         DrawRightAlignedStat(e, "Pos:", $"({monsterX}, {monsterY}, {monsterZ})",
                                             statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
                                         int distanceX = Math.Abs(monsterX - currentX);
                                         int distanceY = Math.Abs(monsterY - currentY);
                                         int totalDistance = distanceX + distanceY;
+
                                         DrawRightAlignedStat(e, "Distance:", $"{totalDistance} steps",
                                             statsFont, totalDistance > 5 ? orangeBrush : greenBrush,
                                             scaledWidth - rightPadding, ref y, lineSpacing);
@@ -4347,12 +4405,16 @@ class Program
                                     DrawRightAlignedStat(e, "Target:", "None",
                                         statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
                                 }
+
                                 y += 5;
+
+                                // Active features
                                 string featuresText = "Active Features:";
                                 SizeF featuresSize = e.Graphics.MeasureString(featuresText, statsFont);
                                 e.Graphics.DrawString(featuresText, statsFont, yellowBrush,
                                     scaledWidth - featuresSize.Width - rightPadding, y);
                                 y += lineSpacing;
+
                                 DrawRightAlignedFeature(e, "Auto-Potions:", threadFlags["autopot"],
                                     statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
                                 DrawRightAlignedFeature(e, "Recording:", threadFlags["recording"],
@@ -4361,29 +4423,34 @@ class Program
                                     statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
                                 DrawRightAlignedFeature(e, "Click Overlay:", clickOverlayActive,
                                     statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                // Playback progress
                                 if (threadFlags["playing"] && currentTarget != null)
                                 {
                                     y += 2;
                                     int distanceX = Math.Abs(currentTarget.X - currentX);
                                     int distanceY = Math.Abs(currentTarget.Y - currentY);
+
                                     DrawRightAlignedStat(e, "Waypoint:", $"{distanceX + distanceY} steps",
                                         statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
                                     float progress = (float)(currentCoordIndex + 1) / totalCoords;
                                     string progressText = $"Path: {(progress * 100):F1}% ({currentCoordIndex + 1}/{totalCoords})";
                                     SizeF progressSize = e.Graphics.MeasureString(progressText, statsFont);
                                     e.Graphics.DrawString(progressText, statsFont, whiteBrush,
                                         scaledWidth - progressSize.Width - rightPadding, y);
                                     y += lineSpacing;
+
+                                    // Progress bar
                                     int progressWidth = (int)(scaledWidth - 40 - rightPadding);
                                     int barHeight = 6;
                                     int barX = 20;
                                     int filledWidth = (int)(progressWidth * progress);
+
                                     e.Graphics.FillRectangle(new SolidBrush(Color.DarkGray), barX, y, progressWidth, barHeight);
                                     e.Graphics.FillRectangle(new SolidBrush(Color.LimeGreen), barX, y, filledWidth, barHeight);
                                     y += barHeight + 2;
                                 }
-                                scaledWidth = threadForm.Width / statsOverlaySizeScale;
-                                float scaledHeight = threadForm.Height / statsOverlaySizeScale;
                             }
                         }
                         catch (Exception ex)
@@ -4391,51 +4458,126 @@ class Program
                             Console.WriteLine($"[OVERLAY] Paint error: {ex.Message}");
                         }
                     };
-                    System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer { Interval = 100 };
+
+                    // Optimized update timer with reduced interval
+                    System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer { Interval = 50 };
+
+                    DateTime lastPositionUpdate = DateTime.MinValue;
+                    DateTime lastStyleCheck = DateTime.MinValue;
+                    DateTime lastRegularRefresh = DateTime.MinValue;
+                    const int REGULAR_REFRESH_INTERVAL = 500; // Half a second
+
                     updateTimer.Tick += (sender, e) =>
                     {
                         try
                         {
-                            GetWindowRect(targetWindow, out RECT currentGameRect);
-                            if (currentGameRect.Right > currentGameRect.Left &&
-                                currentGameRect.Bottom > currentGameRect.Top)
+                            DateTime now = DateTime.Now;
+                            bool shouldUpdatePosition = (now - lastPositionUpdate).TotalMilliseconds >= 200;
+                            bool shouldCheckStyle = (now - lastStyleCheck).TotalMilliseconds >= 1000;
+                            bool shouldRegularRefresh = (now - lastRegularRefresh).TotalMilliseconds >= REGULAR_REFRESH_INTERVAL;
+
+                            // Check target ID change (do this every tick for responsiveness)
+                            int currentTargetId;
+                            lock (memoryLock)
                             {
-                                int baseWidth = (currentGameRect.Right - currentGameRect.Left) / 3;
-                                int newWidth = (int)(baseWidth * statsOverlaySizeScale);
-                                int contentLines = 14;
-                                if (threadFlags["playing"] && currentTarget != null)
-                                    contentLines += 3;
-                                if (targetId != 0)
-                                    contentLines += 4;
-                                int lineHeight = 18;
-                                int bottomMargin = 20;
-                                int baseHeight = contentLines * lineHeight + bottomMargin;
-                                int newHeight = (int)(baseHeight * statsOverlaySizeScale);
-                                int newX = Math.Max(0, currentGameRect.Right - newWidth - statsOverlayRightOffset);
-                                int newY = Math.Max(0, currentGameRect.Bottom - newHeight - statsOverlayBottomOffset);
-                                if (newX != threadForm.Left || newY != threadForm.Top ||
-                                    newWidth != threadForm.Width || newHeight != threadForm.Height)
+                                currentTargetId = targetId;
+                            }
+
+                            if (currentTargetId != lastKnownTargetId)
+                            {
+                                lastKnownTargetId = currentTargetId;
+                                needsRedraw = true;
+                                // Force immediate refresh on target change
+                                threadForm.Invalidate();
+                            }
+
+                            // Regular refresh every 500ms (for position updates, etc.)
+                            if (shouldRegularRefresh)
+                            {
+                                lastRegularRefresh = now;
+                                needsRedraw = true;
+                                if (showOverlayDebugInfo)
                                 {
-                                    threadForm.Location = new Point(newX, newY);
-                                    threadForm.Size = new Size(newWidth, newHeight);
+                                    Console.WriteLine($"[OVERLAY] Regular refresh triggered at {now:HH:mm:ss.fff}");
                                 }
                             }
-                            if (threadForm.IsHandleCreated)
+
+                            // Update position and size (less frequently)
+                            if (shouldUpdatePosition)
                             {
+                                lastPositionUpdate = now;
+
+                                GetWindowRect(targetWindow, out RECT currentGameRect);
+                                if (currentGameRect.Right > currentGameRect.Left &&
+                                    currentGameRect.Bottom > currentGameRect.Top)
+                                {
+                                    // Calculate new size based on content
+                                    int contentLines = 14; // Base lines
+                                    if (showOverlayDebugInfo)
+                                        contentLines += 2; // Debug info lines
+                                    if (threadFlags["playing"] && currentTarget != null)
+                                        contentLines += 3;
+                                    if (lastKnownTargetId != 0)
+                                        contentLines += 4;
+
+                                    int lineHeight = 18;
+                                    int bottomMargin = 20;
+                                    int newHeight = (int)((contentLines * lineHeight + bottomMargin) * statsOverlaySizeScale);
+
+                                    int baseWidth = 300;
+                                    int newWidth = (int)(baseWidth * statsOverlaySizeScale);
+
+                                    // ALWAYS calculate X position from the right edge
+                                    int newX = Math.Max(0, currentGameRect.Right - newWidth - statsOverlayRightOffset);
+
+                                    // USE CONFIGURABLE TOP OFFSET
+                                    int newY = currentGameRect.Top + overlayTopOffset;
+
+                                    // Only update if position/size actually changed
+                                    if (newX != threadForm.Left || newY != threadForm.Top ||
+                                        newWidth != threadForm.Width || newHeight != threadForm.Height)
+                                    {
+                                        if (showOverlayDebugInfo)
+                                        {
+                                            Console.WriteLine($"[OVERLAY] Position update: X={newX}, Y={newY}, Width={newWidth}, Height={newHeight}");
+                                        }
+
+                                        threadForm.Location = new Point(newX, newY);
+                                        threadForm.Size = new Size(newWidth, newHeight);
+                                        needsRedraw = true;
+                                    }
+                                }
+                            }
+
+                            // Check window styles less frequently
+                            if (shouldCheckStyle && threadForm.IsHandleCreated)
+                            {
+                                lastStyleCheck = now;
+
+                                // Only check styles if we haven't been destroyed/recreated
                                 int currentExStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
-                                if ((currentExStyle & (WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW))
-                                    != (WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW))
+                                int expectedStyle = WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+
+                                if ((currentExStyle & expectedStyle) != expectedStyle)
                                 {
-                                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE,
-                                        currentExStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+                                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE, currentExStyle | expectedStyle);
                                 }
-                                SetWindowPos(threadForm.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+                                // Ensure topmost less frequently
+                                if (!threadForm.TopMost)
+                                {
+                                    threadForm.TopMost = true;
+                                }
                             }
-                            threadForm.Invalidate();
-                            if (!threadForm.TopMost)
+
+                            // Invalidate if needed
+                            if (needsRedraw)
                             {
-                                threadForm.TopMost = true;
+                                needsRedraw = false;
+                                threadForm.Invalidate();
                             }
+
+                            // Check if overlay should be closed
                             if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
                                 overlayForm != threadForm)
                             {
@@ -4448,23 +4590,33 @@ class Program
                             Console.WriteLine($"[OVERLAY] Update error: {ex.Message}");
                         }
                     };
+
                     overlayForm = threadForm;
                     updateTimer.Start();
                     threadForm.Show();
+
+                    // Main event loop with optimized timing
                     DateTime lastCheckTime = DateTime.MinValue;
+                    const int EVENT_LOOP_SLEEP = 10;
+
                     while (!threadForm.IsDisposed && programRunning && memoryReadActive &&
                            threadFlags["overlay"] && overlayForm == threadForm)
                     {
                         System.Windows.Forms.Application.DoEvents();
-                        Thread.Sleep(10);
+                        Thread.Sleep(EVENT_LOOP_SLEEP);
+
                         DateTime now = DateTime.Now;
                         if ((now - lastCheckTime).TotalSeconds >= 1)
                         {
                             lastCheckTime = now;
+
+                            // Ensure we're still topmost
                             if (!threadForm.TopMost)
                             {
                                 threadForm.TopMost = true;
                             }
+
+                            // Final check for exit conditions
                             if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
                                 overlayForm != threadForm)
                             {
@@ -4472,12 +4624,15 @@ class Program
                             }
                         }
                     }
+
                     updateTimer.Stop();
                     updateTimer.Dispose();
+
                     if (overlayForm == threadForm)
                     {
                         overlayForm = null;
                     }
+
                     if (!threadForm.IsDisposed)
                     {
                         threadForm.Close();
@@ -4495,6 +4650,7 @@ class Program
                         }
                         catch { }
                     }
+
                     if (overlayForm == threadForm)
                     {
                         overlayForm = null;
@@ -4507,10 +4663,31 @@ class Program
                 overlayForm = null;
             }
         });
+
         overlayThread.IsBackground = true;
         overlayThread.SetApartmentState(ApartmentState.STA);
         overlayThread.Start();
         Sleep(100);
+    }
+
+    // Helper function to change overlay position while running
+    static void SetOverlayTopOffset(int newOffset)
+    {
+        if (newOffset >= 0 && newOffset <= 1000) // Reasonable range
+        {
+            overlayTopOffset = newOffset;
+            Console.WriteLine($"[OVERLAY] Top offset changed to {overlayTopOffset}px");
+
+            // Force immediate position update if overlay is active
+            if (overlayForm != null && !overlayForm.IsDisposed)
+            {
+                overlayForm.Invalidate();
+            }
+        }
+        else
+        {
+            Console.WriteLine($"[OVERLAY] Invalid offset: {newOffset}. Must be between 0 and 1000.");
+        }
     }
     static void DrawRightAlignedStat(PaintEventArgs e, string label, string value, Font font,
        Brush brush, float rightEdge, ref int y, int lineSpacing)
