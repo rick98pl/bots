@@ -990,6 +990,20 @@ class Program
     static bool boolInit = true;
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     static void PlayCoordinates()
     {
         UpdateUIPositions();
@@ -1209,6 +1223,7 @@ class Program
     static int lastTargetedIndex = -1; // Remember the last waypoint we actually targeted
     static Coordinate lastTargetedWaypoint = null;
 
+    // Fixed FindFurthestReachableWaypoint with proper Z-level handling
     static Coordinate FindFurthestReachableWaypoint(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
     {
         const int MAX_DISTANCE = 5;
@@ -1253,78 +1268,68 @@ class Program
             Coordinate check = waypoints[checkIndex];
             Console.WriteLine($"[NAV] Checking waypoint {checkIndex}: ({check.X},{check.Y},{check.Z})");
 
-            // If we've reached a different Z level, we must handle floor change
+            // NEW LOGIC: Only consider Z-level changes if this is the very next waypoint (i == 1)
             if (check.Z != currentZ)
             {
-                Console.WriteLine($"[NAV] Waypoint {checkIndex} requires floor change (Z={check.Z} vs current Z={currentZ})");
-
-                // Find the closest waypoint with the appropriate Z level for transition
-                Coordinate transitionWaypoint = null;
-                int transitionIndex = -1;
-                int minTransitionDistance = int.MaxValue;
-
-                if (check.Z > currentZ)
+                if (i == 1)
                 {
-                    // Need to go UP - find closest waypoint with higher Z
-                    Console.WriteLine($"[NAV] Need to go UP to Z={check.Z}");
-                    for (int j = 0; j < waypoints.Count; j++)
+                    // This is the next waypoint and it has a different Z level
+                    Console.WriteLine($"[NAV] Next waypoint {checkIndex} requires floor change (Z={check.Z} vs current Z={currentZ})");
+
+                    // Handle the floor change for the next waypoint
+                    Coordinate transitionWaypoint = null;
+                    int transitionIndex = -1;
+                    int minTransitionDistance = int.MaxValue;
+
+                    if (check.Z > currentZ)
                     {
-                        var candidate = waypoints[j];
-                        if (candidate.Z == check.Z)
+                        // Need to go UP - find closest waypoint with higher Z
+                        Console.WriteLine($"[NAV] Need to go UP to Z={check.Z}");
+                        for (int j = 0; j < waypoints.Count; j++)
                         {
-                            int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
-                            if (distance < minTransitionDistance)
+                            var candidate = waypoints[j];
+                            if (candidate.Z == check.Z)
                             {
-                                minTransitionDistance = distance;
-                                transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
-                                transitionIndex = j;
+                                int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
+                                if (distance < minTransitionDistance)
+                                {
+                                    minTransitionDistance = distance;
+                                    transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
+                                    transitionIndex = j;
+                                }
                             }
                         }
                     }
-                    if (transitionWaypoint != null)
+                    else
                     {
-                        Console.WriteLine($"[NAV] Found transition waypoint for going UP: index {transitionIndex} at ({transitionWaypoint.X},{transitionWaypoint.Y},{transitionWaypoint.Z})");
-                    }
-                }
-                else
-                {
-                    // Need to go DOWN - find closest waypoint with lower Z
-                    Console.WriteLine($"[NAV] Need to go DOWN to Z={check.Z}");
-                    for (int j = 0; j < waypoints.Count; j++)
-                    {
-                        var candidate = waypoints[j];
-                        if (candidate.Z == check.Z)
+                        // Need to go DOWN - find closest waypoint with lower Z
+                        Console.WriteLine($"[NAV] Need to go DOWN to Z={check.Z}");
+                        for (int j = 0; j < waypoints.Count; j++)
                         {
-                            int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
-                            if (distance < minTransitionDistance)
+                            var candidate = waypoints[j];
+                            if (candidate.Z == check.Z)
                             {
-                                minTransitionDistance = distance;
-                                transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
-                                transitionIndex = j;
+                                int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
+                                if (distance < minTransitionDistance)
+                                {
+                                    minTransitionDistance = distance;
+                                    transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
+                                    transitionIndex = j;
+                                }
                             }
                         }
                     }
-                    if (transitionWaypoint != null)
-                    {
-                        Console.WriteLine($"[NAV] Found transition waypoint for going DOWN: index {transitionIndex} at ({transitionWaypoint.X},{transitionWaypoint.Y},{transitionWaypoint.Z})");
-                    }
-                }
 
-                // If this is our next waypoint in sequence or we haven't found anything reachable yet
-                if (i == 1 || furthest == null)
-                {
                     if (transitionWaypoint != null)
                     {
-                        Console.WriteLine($"[NAV] Next waypoint requires floor change - returning transition waypoint");
-                        // Remember the original waypoint as our target
+                        Console.WriteLine($"[NAV] Found transition waypoint: index {transitionIndex} at ({transitionWaypoint.X},{transitionWaypoint.Y},{transitionWaypoint.Z})");
                         lastTargetedIndex = checkIndex;
                         lastTargetedWaypoint = check;
                         return transitionWaypoint;
                     }
                     else
                     {
-                        // No transition waypoint found, use the original logic
-                        Console.WriteLine($"[NAV] No transition waypoint found - must go to original waypoint");
+                        Console.WriteLine($"[NAV] No transition waypoint found - returning the next waypoint directly");
                         lastTargetedIndex = checkIndex;
                         lastTargetedWaypoint = check;
                         return check;
@@ -1332,21 +1337,13 @@ class Program
                 }
                 else
                 {
-                    // We found a good waypoint before the floor change
-                    if (transitionWaypoint != null && furthest == null)
-                    {
-                        // Use the transition waypoint if we haven't found any other reachable waypoint
-                        Console.WriteLine($"[NAV] Using transition waypoint before continuing search");
-                        furthest = transitionWaypoint;
-                        bestIndex = transitionIndex;
-                        maxDistance = minTransitionDistance;
-                    }
-                    Console.WriteLine($"[NAV] Found waypoint before floor change, stopping search");
-                    break;
+                    // This is not the next waypoint and has different Z - skip it entirely
+                    Console.WriteLine($"[NAV] Skipping waypoint {checkIndex} - different Z level (Z={check.Z}) and not next waypoint");
+                    continue;
                 }
             }
 
-            // Calculate distance to this waypoint (same Z level)
+            // Calculate distance to this waypoint (same Z level as current)
             int distanceX = Math.Abs(check.X - currentX);
             int distanceY = Math.Abs(check.Y - currentY);
             int totalDistance = distanceX + distanceY;
@@ -1384,7 +1381,6 @@ class Program
             }
         }
 
-        // If we still haven't found any reachable waypoint, return current waypoint as fallback
         // If we still haven't found any reachable waypoint, return a coordinate 1 square away in the direction of the next waypoint
         if (furthest == null)
         {
@@ -1398,20 +1394,36 @@ class Program
             int deltaX = nextWaypoint.X - currentX;
             int deltaY = nextWaypoint.Y - currentY;
 
-            // Normalize direction to 1 square meter
             int stepX = 0;
             int stepY = 0;
 
-            if (deltaX != 0)
+            bool canMoveX = deltaX != 0;
+            bool canMoveY = deltaY != 0;
+
+            Random rand = new Random();
+
+            if (canMoveX && canMoveY)
+            {
+                // Randomly choose one axis to step in
+                if (rand.Next(2) == 0)
+                {
+                    stepX = deltaX > 0 ? 1 : -1;
+                }
+                else
+                {
+                    stepY = deltaY > 0 ? 1 : -1;
+                }
+            }
+            else if (canMoveX)
             {
                 stepX = deltaX > 0 ? 1 : -1;
             }
-            if (deltaY != 0)
+            else if (canMoveY)
             {
                 stepY = deltaY > 0 ? 1 : -1;
             }
 
-            // Create coordinate 1 square away in the direction of next waypoint
+            // Create coordinate 1 square away in the chosen direction
             furthest = new Coordinate
             {
                 X = currentX + stepX,
@@ -1419,7 +1431,7 @@ class Program
                 Z = currentZ
             };
 
-            bestIndex = -1; // Special index to indicate this is a directional step
+            bestIndex = -1;
             maxDistance = 1;
 
             Console.WriteLine($"[NAV] Returning directional step: ({furthest.X},{furthest.Y},{furthest.Z}) toward waypoint {nextIndex}");
@@ -1436,7 +1448,6 @@ class Program
         Console.WriteLine($"[NAV] Selected furthest reachable waypoint: {bestIndex} at ({furthest.X},{furthest.Y},{furthest.Z}) distance={maxDistance}");
         return furthest;
     }
-
 
     // Handle floor changes
     static NavigationAction HandleZLevelChange(Coordinate target, int currentX, int currentY, int currentZ, List<Coordinate> waypoints)
@@ -1651,55 +1662,13 @@ class Program
                 if (distanceX <= 1 && distanceY <= 1)
                 {
                     Console.WriteLine($"[MOVE] Reached target position ({targetX},{targetY})");
+                    Thread.Sleep(400);
                     return;
                 }
             }
         }
 
         Console.WriteLine($"[MOVE] Timeout reached after {TIMEOUT_MS}ms");
-    }
-
-    // Debug function to log navigation decisions
-    static void LogNavigationDecision(NavigationAction action, int currentX, int currentY, int currentZ)
-    {
-        int distanceX = Math.Abs(action.TargetX - currentX);
-        int distanceY = Math.Abs(action.TargetY - currentY);
-        int totalDistance = distanceX + distanceY;
-
-        string reason = "";
-        string actionName = "";
-
-        switch (action.Type)
-        {
-            case ActionType.UseKeyboard:
-                actionName = "KEYBOARD";
-                reason = $"Distance {totalDistance} ≤ 3 tiles - using keyboard movement";
-                break;
-
-            case ActionType.ClickWaypoint:
-                actionName = "CLICK";
-                if (action.FromZ != action.ToZ)
-                {
-                    reason = $"Floor change from Z={action.FromZ} to Z={action.ToZ} - clicking waypoint";
-                }
-                else
-                {
-                    reason = $"Distance {totalDistance} > 3 tiles - clicking waypoint";
-                }
-                break;
-
-            case ActionType.UseF4:
-                actionName = "F4";
-                reason = $"At F4 position - pressing F4 to go from Z={action.FromZ} to Z={action.ToZ}";
-                break;
-
-            case ActionType.WaitAtPosition:
-                actionName = "WAIT";
-                reason = $"Already at position ({currentX},{currentY}) - waiting and looking for targets";
-                break;
-        }
-
-        Console.WriteLine($"[NAV] {actionName}: Moving from ({currentX},{currentY},{currentZ}) to ({action.TargetX},{action.TargetY}) - {reason} [Waypoint {action.WaypointIndex}]");
     }
 
     // Helper function to find waypoint index
@@ -1942,6 +1911,30 @@ class Program
 
         return closestIndex;
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     static bool waypointRandomizationEnabled = false;
