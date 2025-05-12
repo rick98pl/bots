@@ -1080,7 +1080,10 @@ class Program
     static Dictionary<int, int> monsterStepCounter = new Dictionary<int, int>();
     static int MAX_STEPS_PER_MONSTER = 3;
 
-    // Add this method to your Program class
+    static Dictionary<int, DateTime> monsterDetectionTimes = new Dictionary<int, DateTime>();
+    static readonly TimeSpan MONSTER_APPROACH_DELAY = TimeSpan.FromMilliseconds(800);
+
+    // Add this method to your Program class (replace the existing TryMoveTowardsMonster method)
     static bool TryMoveTowardsMonster(int currentTargetId)
     {
         try
@@ -1121,7 +1124,25 @@ class Program
 
             if (monsterStepCounter[currentTargetId] >= MAX_STEPS_PER_MONSTER)
             {
-                //Console.WriteLine($"[COMBAT] Already took {MAX_STEPS_PER_MONSTER} steps towards monster {currentTargetId}, stopping approach");
+                return false;
+            }
+
+            // NEW: Check if enough time has passed since the monster was first detected
+            if (!monsterDetectionTimes.ContainsKey(currentTargetId))
+            {
+                // First time seeing this monster - record the time
+                monsterDetectionTimes[currentTargetId] = DateTime.Now;
+                Console.WriteLine($"[COMBAT] Monster {currentTargetId} detected, waiting {MONSTER_APPROACH_DELAY.TotalMilliseconds}ms before approach");
+                return false;
+            }
+
+            // Check if the delay has passed
+            DateTime detectionTime = monsterDetectionTimes[currentTargetId];
+            if (DateTime.Now - detectionTime < MONSTER_APPROACH_DELAY)
+            {
+                // Still within the delay period
+                double remainingMs = (MONSTER_APPROACH_DELAY - (DateTime.Now - detectionTime)).TotalMilliseconds;
+                Console.WriteLine($"[COMBAT] Monster {currentTargetId} approach delayed, {remainingMs:F0}ms remaining");
                 return false;
             }
 
@@ -1206,7 +1227,26 @@ class Program
         }
     }
 
-    // Add this method to clean up old monster entries
+    // Add this method to clean up old detection times (place it near CleanupOldMonsterSteps)
+    static void CleanupOldMonsterDetectionTimes()
+    {
+        if (monsterDetectionTimes.Count > 50) // Prevent memory leak
+        {
+            // Remove entries older than 30 seconds
+            var now = DateTime.Now;
+            var oldEntries = monsterDetectionTimes
+                .Where(kvp => (now - kvp.Value).TotalSeconds > 30)
+                .Select(kvp => kvp.Key)
+                .ToList();
+
+            foreach (var key in oldEntries)
+            {
+                monsterDetectionTimes.Remove(key);
+            }
+        }
+    }
+
+    // Update the existing CleanupOldMonsterSteps method to also clean up detection times
     static void CleanupOldMonsterSteps()
     {
         if (monsterStepCounter.Count > 50) // Prevent memory leak
@@ -1218,8 +1258,10 @@ class Program
                 monsterStepCounter.Remove(key);
             }
         }
-    }
 
+        // Also clean up old detection times
+        CleanupOldMonsterDetectionTimes();
+    }
 
     static void PlayCoordinates()
     {
