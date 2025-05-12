@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -541,6 +542,7 @@ class Program
                             }
                         }
                     }
+
                     if (loadedCoords != null && loadedCoords.cords.Count > 0 && threadFlags["playing"])
                     {
                         CheckPositionDistance(loadedCoords.cords);
@@ -570,6 +572,79 @@ class Program
                 }
                 Sleep(500);
             }
+        }
+    }
+
+    static Dictionary<int, DateTime> targetEngagementTimes = new Dictionary<int, DateTime>();
+    static readonly TimeSpan MAX_TARGET_ENGAGEMENT_TIME = TimeSpan.FromSeconds(10);
+    static DateTime lastTargetChangeTime = DateTime.MinValue;
+    static int currentTargetEngagementId = 0;
+    static TimeSpan currentTargetEngagementDuration = TimeSpan.Zero;
+    static bool shouldForceTargetChange = false;
+
+    // Add this method to handle target engagement tracking
+    static void UpdateTargetEngagement()
+    {
+        int currentTargetId;
+        lock (memoryLock)
+        {
+            currentTargetId = targetId;
+        }
+
+        DateTime now = DateTime.Now;
+
+        // If we have a new target
+        if (currentTargetId != 0 && currentTargetId != currentTargetEngagementId)
+        {
+            // Record when we started attacking this target
+            if (!targetEngagementTimes.ContainsKey(currentTargetId))
+            {
+                targetEngagementTimes[currentTargetId] = now;
+                Console.WriteLine($"[COMBAT] Started engaging target {currentTargetId}");
+            }
+
+            currentTargetEngagementId = currentTargetId;
+            lastTargetChangeTime = now;
+        }
+
+        // If we currently have a target
+        if (currentTargetId != 0 && targetEngagementTimes.ContainsKey(currentTargetId))
+        {
+            DateTime engagementStart = targetEngagementTimes[currentTargetId];
+            currentTargetEngagementDuration = now - engagementStart;
+
+            // Check if we've been attacking too long
+            if (currentTargetEngagementDuration >= MAX_TARGET_ENGAGEMENT_TIME)
+            {
+                Console.WriteLine($"[COMBAT] Target {currentTargetId} engagement timeout after {currentTargetEngagementDuration.TotalSeconds:F1}s");
+                shouldForceTargetChange = true;
+
+                // Force target change by pressing F6
+                InstantSendKeyPress(VK_F6);
+
+                // Clean up this target from our tracking
+                targetEngagementTimes.Remove(currentTargetId);
+                currentTargetEngagementId = 0;
+                currentTargetEngagementDuration = TimeSpan.Zero;
+            }
+        }
+        else if (currentTargetId == 0)
+        {
+            // No target - reset engagement tracking
+            currentTargetEngagementId = 0;
+            currentTargetEngagementDuration = TimeSpan.Zero;
+            shouldForceTargetChange = false;
+        }
+
+        // Clean up old target entries (older than 30 seconds)
+        var oldTargets = targetEngagementTimes
+            .Where(kvp => (now - kvp.Value).TotalSeconds > 30)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var oldTarget in oldTargets)
+        {
+            targetEngagementTimes.Remove(oldTarget);
         }
     }
     static void ChangeOutfit(int change)
@@ -1001,7 +1076,149 @@ class Program
 
 
 
+    // Add these static variables near the top of your Program class
+    static Dictionary<int, int> monsterStepCounter = new Dictionary<int, int>();
+    static int MAX_STEPS_PER_MONSTER = 3;
 
+    // Add this method to your Program class
+    static bool TryMoveTowardsMonster(int currentTargetId)
+    {
+        try
+        {
+            // Get current position
+            int currentX, currentY, currentZ;
+            lock (memoryLock)
+            {
+                currentX = posX;
+                currentY = posY;
+                currentZ = posZ;
+            }
+
+            // Get monster coordinates
+            var (monsterX, monsterY, monsterZ) = GetTargetMonsterCoordinates();
+
+            if (monsterX == 0 && monsterY == 0) // Monster coordinates not available
+            {
+                return false;
+            }
+
+            // Calculate distance
+            int distanceX = Math.Abs(monsterX - currentX);
+            int distanceY = Math.Abs(monsterY - currentY);
+            int totalDistance = distanceX + distanceY;
+
+            // Only move if monster is more than 1 square away
+            if (totalDistance <= 1)
+            {
+                return false;
+            }
+
+            // Check if we've already taken 3 steps towards this monster
+            if (!monsterStepCounter.ContainsKey(currentTargetId))
+            {
+                monsterStepCounter[currentTargetId] = 0;
+            }
+
+            if (monsterStepCounter[currentTargetId] >= MAX_STEPS_PER_MONSTER)
+            {
+                //Console.WriteLine($"[COMBAT] Already took {MAX_STEPS_PER_MONSTER} steps towards monster {currentTargetId}, stopping approach");
+                return false;
+            }
+
+            // Calculate direction to move
+            int stepX = 0;
+            int stepY = 0;
+            int directionX = monsterX - currentX;
+            int directionY = monsterY - currentY;
+
+            // Determine which direction to move (prioritize larger distance)
+            if (Math.Abs(directionX) >= Math.Abs(directionY))
+            {
+                // Move horizontally
+                if (directionX > 0)
+                {
+                    stepX = 1;
+                }
+                else if (directionX < 0)
+                {
+                    stepX = -1;
+                }
+            }
+            else
+            {
+                // Move vertically
+                if (directionY > 0)
+                {
+                    stepY = 1;
+                }
+                else if (directionY < 0)
+                {
+                    stepY = -1;
+                }
+            }
+
+            // Send the appropriate key press
+            bool keyPressed = false;
+            if (stepX == 1)
+            {
+                SendKeyPress(VK_RIGHT);
+                keyPressed = true;
+                Console.WriteLine($"[COMBAT] Moving RIGHT towards monster {currentTargetId} (step {monsterStepCounter[currentTargetId] + 1}/{MAX_STEPS_PER_MONSTER})");
+            }
+            else if (stepX == -1)
+            {
+                SendKeyPress(VK_LEFT);
+                keyPressed = true;
+                Console.WriteLine($"[COMBAT] Moving LEFT towards monster {currentTargetId} (step {monsterStepCounter[currentTargetId] + 1}/{MAX_STEPS_PER_MONSTER})");
+            }
+            else if (stepY == 1)
+            {
+                SendKeyPress(VK_DOWN);
+                keyPressed = true;
+                Console.WriteLine($"[COMBAT] Moving DOWN towards monster {currentTargetId} (step {monsterStepCounter[currentTargetId] + 1}/{MAX_STEPS_PER_MONSTER})");
+            }
+            else if (stepY == -1)
+            {
+                SendKeyPress(VK_UP);
+                keyPressed = true;
+                Console.WriteLine($"[COMBAT] Moving UP towards monster {currentTargetId} (step {monsterStepCounter[currentTargetId] + 1}/{MAX_STEPS_PER_MONSTER})");
+            }
+
+            if (keyPressed)
+            {
+                monsterStepCounter[currentTargetId]++;
+
+                // Add a small delay after movement
+                Sleep(400);
+
+                // Clean up old entries to prevent memory leak
+                CleanupOldMonsterSteps();
+
+                return true;
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[COMBAT] Error in TryMoveTowardsMonster: {ex.Message}");
+            return false;
+        }
+    }
+
+    // Add this method to clean up old monster entries
+    static void CleanupOldMonsterSteps()
+    {
+        if (monsterStepCounter.Count > 50) // Prevent memory leak
+        {
+            // Remove random 25% of entries
+            var keysToRemove = monsterStepCounter.Keys.Take(monsterStepCounter.Count / 4).ToList();
+            foreach (var key in keysToRemove)
+            {
+                monsterStepCounter.Remove(key);
+            }
+        }
+    }
 
 
     static void PlayCoordinates()
@@ -1067,6 +1284,7 @@ class Program
                 }
 
                 // Check if combat is active
+                UpdateTargetEngagement();
                 int currentTargetId;
                 lock (memoryLock)
                 {
@@ -1086,11 +1304,13 @@ class Program
                 // If combat is active, wait until target is killed
                 if (currentTargetId != 0)
                 {
+                    
                     Console.WriteLine($"[COMBAT] Fighting target {currentTargetId}...");
 
                     // Wait until target is killed
                     while (threadFlags["playing"])
                     {
+                        UpdateTargetEngagement();
                         lock (memoryLock)
                         {
                             if (targetId == 0)
@@ -1100,6 +1320,24 @@ class Program
                                 ClickAroundCharacter(targetWindow);
                                 break;
                             }
+
+                            if (shouldForceTargetChange)
+                            {
+                                Console.WriteLine($"[COMBAT] Target timeout during combat - switching target");
+                                SendKeyPress(VK_F6);
+                                shouldForceTargetChange = false;
+                                currentTargetEngagementId = 0;
+                                currentTargetEngagementDuration = TimeSpan.Zero;
+                                Thread.Sleep(150);
+                                break; // Exit combat loop to recheck targets
+                            }
+                        }
+
+
+                        // Try to move towards monster if it's more than 1 square away
+                        if (currentTargetId != 0)
+                        {
+                            TryMoveTowardsMonster(currentTargetId);
                         }
                         Sleep(100);
                     }
@@ -1551,11 +1789,11 @@ class Program
         Console.WriteLine($"[F4] Warning: Z change may have failed or taken longer than expected");
     }
 
-    // Simplified click waypoint function
     static bool ClickWaypoint(int targetX, int targetY)
     {
         try
         {
+            SendKeyPress(VK_ESCAPE);
             UpdateUIPositions();
 
             // Get window dimensions
@@ -4404,57 +4642,190 @@ class Program
                                             statsFont, totalDistance > 5 ? orangeBrush : greenBrush,
                                             scaledWidth - rightPadding, ref y, lineSpacing);
                                     }
+
+                                    // ADD THIS NEW SECTION - Attack Timer Display
+                                    double engagementSeconds = currentTargetEngagementDuration.TotalSeconds;
+                                    double maxSeconds = MAX_TARGET_ENGAGEMENT_TIME.TotalSeconds;
+                                    double timeProgress = Math.Min(engagementSeconds / maxSeconds, 1.0);
+
+                                    // Display attack time with color coding
+                                    Brush timerBrush = timeProgress < 0.5 ? blueBrush :
+                                                      (timeProgress < 0.8 ? orangeBrush : redBrush);
+
+                                    DrawRightAlignedStat(e, "Attack Time:", $"{engagementSeconds:F1}s / {maxSeconds:F0}s",
+                                        statsFont, timerBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                    // Attack timer progress bar
+                                    int timerBarWidth = (int)(scaledWidth - 40 - rightPadding);
+                                    int timerBarHeight = 8;
+                                    int timerBarX = 20;
+                                    int timerFilledWidth = (int)(timerBarWidth * timeProgress);
+
+                                    // Background bar
+                                    e.Graphics.FillRectangle(new SolidBrush(Color.FromArgb(100, Color.DarkGray)),
+                                        timerBarX, y, timerBarWidth, timerBarHeight);
+
+                                    // Foreground progress bar (color changes as time progresses)
+                                    Color timerColor;
+                                    if (timeProgress < 0.5)
+                                        timerColor = Color.LimeGreen;
+                                    else if (timeProgress < 0.8)
+                                        timerColor = Color.Orange;
+                                    else
+                                        timerColor = Color.Red;
+
+                                    if (timerFilledWidth > 0)
+                                    {
+                                        e.Graphics.FillRectangle(new SolidBrush(timerColor),
+                                            timerBarX, y, timerFilledWidth, timerBarHeight);
+                                    }
+
+                                    // Add percentage text on the bar
+                                    string percentText = $"{(timeProgress * 100):F0}%";
+                                    using (Font smallFonty = new Font("Arial", 7.0f, FontStyle.Bold))
+                                    {
+                                        SizeF percentSize = e.Graphics.MeasureString(percentText, smallFonty);
+                                        float textX = timerBarX + (timerBarWidth - percentSize.Width) / 2;
+                                        float textY = y - 1;
+
+                                        // Draw shadow for better visibility
+                                        e.Graphics.DrawString(percentText, smallFonty, new SolidBrush(Color.Black),
+                                            textX + 1, textY + 1);
+                                        e.Graphics.DrawString(percentText, smallFonty, new SolidBrush(Color.White),
+                                            textX, textY);
+                                    }
+
+                                    y += timerBarHeight + 8;
                                 }
                                 else
                                 {
                                     DrawRightAlignedStat(e, "Target:", "None",
-                                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                        statsFont, grayBrush, scaledWidth - rightPadding, ref y, lineSpacing);
                                 }
 
                                 y += 5;
 
                                 // Active features
-                                string featuresText = "Active Features:";
-                                SizeF featuresSize = e.Graphics.MeasureString(featuresText, statsFont);
-                                e.Graphics.DrawString(featuresText, statsFont, yellowBrush,
-                                    scaledWidth - featuresSize.Width - rightPadding, y);
+                                //string featuresText = "Active Features:";
+                                //SizeF featuresSize = e.Graphics.MeasureString(featuresText, statsFont);
+                                //e.Graphics.DrawString(featuresText, statsFont, yellowBrush,
+                                //    scaledWidth - featuresSize.Width - rightPadding, y);
                                 y += lineSpacing;
 
-                                DrawRightAlignedFeature(e, "Auto-Potions:", threadFlags["autopot"],
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedFeature(e, "Recording:", threadFlags["recording"],
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedFeature(e, "Playback:", threadFlags["playing"],
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                DrawRightAlignedFeature(e, "Click Overlay:", clickOverlayActive,
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                //DrawRightAlignedFeature(e, "Auto-Potions:", threadFlags["autopot"],
+                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                //DrawRightAlignedFeature(e, "Recording:", threadFlags["recording"],
+                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                //DrawRightAlignedFeature(e, "Playback:", threadFlags["playing"],
+                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                //DrawRightAlignedFeature(e, "Click Overlay:", clickOverlayActive,
+                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
 
-                                // Playback progress
-                                if (threadFlags["playing"] && currentTarget != null)
+                                // Playback progress - Enhanced
+                                if (threadFlags["playing"])
                                 {
-                                    y += 2;
-                                    int distanceX = Math.Abs(currentTarget.X - currentX);
-                                    int distanceY = Math.Abs(currentTarget.Y - currentY);
+                                    y += 5;
 
-                                    DrawRightAlignedStat(e, "Waypoint:", $"{distanceX + distanceY} steps",
-                                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                    float progress = (float)(currentCoordIndex + 1) / totalCoords;
-                                    string progressText = $"Path: {(progress * 100):F1}% ({currentCoordIndex + 1}/{totalCoords})";
-                                    SizeF progressSize = e.Graphics.MeasureString(progressText, statsFont);
-                                    e.Graphics.DrawString(progressText, statsFont, whiteBrush,
-                                        scaledWidth - progressSize.Width - rightPadding, y);
+                                    // Waypoint status header
+                                    string waypointHeader = "Waypoint Status:";
+                                    SizeF waypointHeaderSize = e.Graphics.MeasureString(waypointHeader, statsFont);
+                                    e.Graphics.DrawString(waypointHeader, statsFont, yellowBrush,
+                                        scaledWidth - waypointHeaderSize.Width - rightPadding, y);
                                     y += lineSpacing;
 
-                                    // Progress bar
-                                    int progressWidth = (int)(scaledWidth - 40 - rightPadding);
-                                    int barHeight = 6;
-                                    int barX = 20;
-                                    int filledWidth = (int)(progressWidth * progress);
+                                    // Current waypoint information
+                                    if (currentTarget != null)
+                                    {
+                                        int distanceX = Math.Abs(currentTarget.X - currentX);
+                                        int distanceY = Math.Abs(currentTarget.Y - currentY);
+                                        int totalDistance = distanceX + distanceY;
 
-                                    e.Graphics.FillRectangle(new SolidBrush(Color.DarkGray), barX, y, progressWidth, barHeight);
-                                    e.Graphics.FillRectangle(new SolidBrush(Color.LimeGreen), barX, y, filledWidth, barHeight);
-                                    y += barHeight + 2;
+                                        // Current target coordinates
+                                        DrawRightAlignedStat(e, "Current WP:", $"({currentTarget.X}, {currentTarget.Y})",
+                                            statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+
+                                        // Distance to current waypoint
+                                        Brush distanceBrush = totalDistance <= 1 ? greenBrush :
+                                                             (totalDistance <= 3 ? orangeBrush : redBrush);
+                                        DrawRightAlignedStat(e, "Distance:", $"{totalDistance} steps",
+                                            statsFont, distanceBrush, scaledWidth - rightPadding, ref y, lineSpacing);
+                                    }
+
+                                    // Path progress with detailed info
+                                    if (totalCoords > 0)
+                                    {
+                                        float progress = (float)(currentCoordIndex + 1) / totalCoords;
+                                        string progressText = $"Waypoint Progress: {currentCoordIndex + 1} / {totalCoords}";
+                                        SizeF progressSize = e.Graphics.MeasureString(progressText, statsFont);
+                                        e.Graphics.DrawString(progressText, statsFont, whiteBrush,
+                                            scaledWidth - progressSize.Width - rightPadding, y);
+                                        y += lineSpacing;
+
+                                        // Percentage display
+                                        string percentageText = $"Path Complete: {(progress * 100):F1}%";
+                                        SizeF percentageSize = e.Graphics.MeasureString(percentageText, statsFont);
+                                        e.Graphics.DrawString(percentageText, statsFont, blueBrush,
+                                            scaledWidth - percentageSize.Width - rightPadding, y);
+                                        y += lineSpacing;
+
+                                        // Enhanced progress bar
+                                        int progressWidth = (int)(scaledWidth - 40 - rightPadding);
+                                        int barHeight = 10;
+                                        int barX = 20;
+                                        int filledWidth = (int)(progressWidth * progress);
+
+                                        // Background bar with border
+                                        e.Graphics.FillRectangle(new SolidBrush(Color.FromArgb(100, Color.DarkGray)),
+                                            barX, y, progressWidth, barHeight);
+                                        e.Graphics.DrawRectangle(new Pen(Color.Gray, 1),
+                                            barX, y, progressWidth, barHeight);
+
+                                        // Foreground progress bar with gradient effect
+                                        if (filledWidth > 0)
+                                        {
+                                            using (LinearGradientBrush gradientBrush = new LinearGradientBrush(
+                                                new Rectangle(barX, y, filledWidth, barHeight),
+                                                Color.LimeGreen, Color.Green, LinearGradientMode.Horizontal))
+                                            {
+                                                e.Graphics.FillRectangle(gradientBrush, barX, y, filledWidth, barHeight);
+                                            }
+                                        }
+
+                                        // Current position marker (vertical line)
+                                        if (filledWidth > 0)
+                                        {
+                                            int markerX = barX + filledWidth - 1;
+                                            e.Graphics.DrawLine(new Pen(Color.Yellow, 2),
+                                                markerX, y - 2, markerX, y + barHeight + 2);
+                                        }
+
+                                        // Add percentage text overlay on the bar
+                                        string barPercentText = $"{(progress * 100):F0}%";
+                                        using (Font barFont = new Font("Arial", 8.0f, FontStyle.Bold))
+                                        {
+                                            SizeF barTextSize = e.Graphics.MeasureString(barPercentText, barFont);
+                                            float barTextX = barX + (progressWidth - barTextSize.Width) / 2;
+                                            float barTextY = y + (barHeight - barTextSize.Height) / 2;
+
+                                            // Draw shadow for better visibility
+                                            e.Graphics.DrawString(barPercentText, barFont, new SolidBrush(Color.Black),
+                                                barTextX + 1, barTextY + 1);
+                                            e.Graphics.DrawString(barPercentText, barFont, new SolidBrush(Color.White),
+                                                barTextX, barTextY);
+                                        }
+
+                                        y += barHeight + 5;
+
+                                        // Add a small legend for the waypoint info
+                                        using (Font legendFont = new Font("Arial", 7.0f, FontStyle.Italic))
+                                        {
+                                            string legend = "(Green: Close | Orange: Medium | Red: Far)";
+                                            SizeF legendSize = e.Graphics.MeasureString(legend, legendFont);
+                                            e.Graphics.DrawString(legend, legendFont, grayBrush,
+                                                scaledWidth - legendSize.Width - rightPadding, y);
+                                            y += 15;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -4520,10 +4891,10 @@ class Program
                                     int contentLines = 14; // Base lines
                                     if (showOverlayDebugInfo)
                                         contentLines += 2; // Debug info lines
-                                    if (threadFlags["playing"] && currentTarget != null)
-                                        contentLines += 3;
+                                    if (threadFlags["playing"])
+                                        contentLines += 8; // Enhanced waypoint info (header + target + distance + progress + percentage + bar + legend)
                                     if (lastKnownTargetId != 0)
-                                        contentLines += 4;
+                                        contentLines += 6; // Enhanced target info (name + pos + distance + attack time + timer bar)
 
                                     int lineHeight = 18;
                                     int bottomMargin = 20;
