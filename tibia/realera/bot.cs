@@ -1178,7 +1178,7 @@ class Program
         int distanceX = Math.Abs(target.X - currentX);
         int distanceY = Math.Abs(target.Y - currentY);
 
-        if (distanceX <= 1 && distanceY <= 1)
+        if (distanceX == 0 && distanceY == 0)
         {
             Console.WriteLine($"[NAV] Already at target position - distance X={distanceX}, Y={distanceY}");
             return new NavigationAction
