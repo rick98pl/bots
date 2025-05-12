@@ -1385,12 +1385,44 @@ class Program
         }
 
         // If we still haven't found any reachable waypoint, return current waypoint as fallback
+        // If we still haven't found any reachable waypoint, return a coordinate 1 square away in the direction of the next waypoint
         if (furthest == null)
         {
-            Console.WriteLine($"[NAV] No reachable waypoint found, returning current waypoint {currentCoordIndex}");
-            furthest = waypoints[currentCoordIndex];
-            bestIndex = currentCoordIndex;
-            maxDistance = 0;
+            Console.WriteLine($"[NAV] No reachable waypoint found, calculating direction to next waypoint");
+
+            // Get the next waypoint in sequence
+            int nextIndex = (currentCoordIndex + 1) % waypoints.Count;
+            Coordinate nextWaypoint = waypoints[nextIndex];
+
+            // Calculate direction to the next waypoint
+            int deltaX = nextWaypoint.X - currentX;
+            int deltaY = nextWaypoint.Y - currentY;
+
+            // Normalize direction to 1 square meter
+            int stepX = 0;
+            int stepY = 0;
+
+            if (deltaX != 0)
+            {
+                stepX = deltaX > 0 ? 1 : -1;
+            }
+            if (deltaY != 0)
+            {
+                stepY = deltaY > 0 ? 1 : -1;
+            }
+
+            // Create coordinate 1 square away in the direction of next waypoint
+            furthest = new Coordinate
+            {
+                X = currentX + stepX,
+                Y = currentY + stepY,
+                Z = currentZ
+            };
+
+            bestIndex = -1; // Special index to indicate this is a directional step
+            maxDistance = 1;
+
+            Console.WriteLine($"[NAV] Returning directional step: ({furthest.X},{furthest.Y},{furthest.Z}) toward waypoint {nextIndex}");
         }
 
         // Remember what we're targeting
@@ -1502,27 +1534,21 @@ class Program
         try
         {
             UpdateUIPositions();
-            Console.WriteLine($"[CLICK] Starting waypoint click to target: ({targetX}, {targetY})");
 
             // Get window dimensions
             GetClientRect(targetWindow, out RECT rect);
-            Console.WriteLine($"[CLICK] Window rect - Left: {rect.Left}, Top: {rect.Top}, Right: {rect.Right}, Bottom: {rect.Bottom}");
 
             // Calculate center coordinates
             int centerX = (rect.Right - rect.Left) / 2 - 186;
             int centerY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
-            Console.WriteLine($"[CLICK] Window dimensions: {rect.Right - rect.Left} x {rect.Bottom - rect.Top}");
-            Console.WriteLine($"[CLICK] Center calculations:");
-            Console.WriteLine($"[CLICK]   centerX = ({rect.Right} - {rect.Left}) / 2 - 186 = {(rect.Right - rect.Left) / 2} - 186 = {centerX}");
-            Console.WriteLine($"[CLICK]   centerY = ({rect.Bottom} - {rect.Top}) / 2 - {baseYOffset} = {(rect.Bottom - rect.Top) / 2} - {baseYOffset} = {centerY}");
-
+            
             // Initial lParam calculation (this gets overwritten)
             int lParam = (centerX << 16) | (centerY & 0xFFFF);
-            Console.WriteLine($"[CLICK] Initial lParam (unused): {lParam} (0x{lParam:X8})");
+           
 
             // Record center waypoint
             RecordWaypointClick(centerX, centerY);
-            Console.WriteLine($"[CLICK] Recorded center waypoint: ({centerX}, {centerY})");
+
 
             // Get current position
             int currentX, currentY;
@@ -1531,46 +1557,33 @@ class Program
                 currentX = posX;
                 currentY = posY;
             }
-            Console.WriteLine($"[CLICK] Current player position: ({currentX}, {currentY})");
+        
 
             // Calculate differences
             int diffX = targetX - currentX;
             int diffY = targetY - currentY;
-            Console.WriteLine($"[CLICK] Position differences:");
-            Console.WriteLine($"[CLICK]   diffX = {targetX} - {currentX} = {diffX}");
-            Console.WriteLine($"[CLICK]   diffY = {targetY} - {currentY} = {diffY}");
+          
 
             // Calculate screen coordinates
             int screenX = centerX + (diffX * pixelSize);
             int screenY = centerY + (diffY * pixelSize);
-            Console.WriteLine($"[CLICK] Screen coordinate calculations (pixelSize = {pixelSize}):");
-            Console.WriteLine($"[CLICK]   screenX = {centerX} + ({diffX} * {pixelSize}) = {centerX} + {diffX * pixelSize} = {screenX}");
-            Console.WriteLine($"[CLICK]   screenY = {centerY} + ({diffY} * {pixelSize}) = {centerY} + {diffY * pixelSize} = {screenY}");
-
+         
             // Create the lParam for the screen coordinates
             lParam = (screenY << 16) | (screenX & 0xFFFF);
-            Console.WriteLine($"[CLICK] Creating lParam for screen coordinates:");
-            Console.WriteLine($"[CLICK]   screenY << 16 = {screenY} << 16 = {screenY << 16} (0x{(screenY << 16):X8})");
-            Console.WriteLine($"[CLICK]   screenX & 0xFFFF = {screenX} & 0xFFFF = {screenX & 0xFFFF} (0x{(screenX & 0xFFFF):X4})");
-            Console.WriteLine($"[CLICK]   Final lParam = {lParam} (0x{lParam:X8})");
-
-            // Move mouse to position first
-            Console.WriteLine($"[CLICK] Sending WM_MOUSEMOVE to ({screenX}, {screenY})");
+          
             SendMessage(targetWindow, WM_MOUSEMOVE, IntPtr.Zero, lParam);
             Sleep(1);
 
             // Send the click
-            Console.WriteLine($"[CLICK] Sending WM_LBUTTONDOWN");
+          
             SendMessage(targetWindow, WM_LBUTTONDOWN, 1, lParam);
             Sleep(1);
 
-            Console.WriteLine($"[CLICK] Sending WM_LBUTTONUP");
+         
             SendMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, lParam);
 
             // Record the click
             RecordWaypointClick(screenX, screenY);
-            Console.WriteLine($"[CLICK] Recorded screen click at: ({screenX}, {screenY})");
-            Console.WriteLine($"[CLICK] Waypoint click completed successfully");
 
             return true;
         }
