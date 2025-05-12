@@ -4439,6 +4439,7 @@ class Program
     static bool showOverlayDebugInfo = false; // Set to true to see position info
 
     // Modified EnsureOverlayExists function with configurable top anchor
+    static DateTime lastEnsureTopmost = DateTime.MinValue;
     static void EnsureOverlayExists()
     {
         if (overlayForm != null && overlayForm.IsHandleCreated && !overlayForm.IsDisposed)
@@ -4851,6 +4852,7 @@ class Program
                             bool shouldUpdatePosition = (now - lastPositionUpdate).TotalMilliseconds >= 200;
                             bool shouldCheckStyle = (now - lastStyleCheck).TotalMilliseconds >= 1000;
                             bool shouldRegularRefresh = (now - lastRegularRefresh).TotalMilliseconds >= REGULAR_REFRESH_INTERVAL;
+                            bool shouldEnsureTopmost = (now - lastEnsureTopmost).TotalMilliseconds >= 2000; // Add this line
 
                             // Check target ID change (do this every tick for responsiveness)
                             int currentTargetId;
@@ -4892,9 +4894,9 @@ class Program
                                     if (showOverlayDebugInfo)
                                         contentLines += 2; // Debug info lines
                                     if (threadFlags["playing"])
-                                        contentLines += 8; // Enhanced waypoint info (header + target + distance + progress + percentage + bar + legend)
+                                        contentLines += 8; // Enhanced waypoint info
                                     if (lastKnownTargetId != 0)
-                                        contentLines += 6; // Enhanced target info (name + pos + distance + attack time + timer bar)
+                                        contentLines += 6; // Enhanced target info
 
                                     int lineHeight = 18;
                                     int bottomMargin = 20;
@@ -4943,6 +4945,27 @@ class Program
                                 if (!threadForm.TopMost)
                                 {
                                     threadForm.TopMost = true;
+                                }
+                            }
+
+                            // ADD THIS NEW SECTION - Ensure window stays on top using SetWindowPos
+                            if (shouldEnsureTopmost && threadForm.IsHandleCreated)
+                            {
+                                lastEnsureTopmost = now;
+                                try
+                                {
+                                    // Use SetWindowPos to force the window to stay on top
+                                    SetWindowPos(threadForm.Handle, HWND_TOPMOST, 0, 0, 0, 0,
+                                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+                                    if (showOverlayDebugInfo)
+                                    {
+                                        Console.WriteLine($"[OVERLAY] Enforced topmost status via SetWindowPos");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"[OVERLAY] Error enforcing topmost: {ex.Message}");
                                 }
                             }
 
