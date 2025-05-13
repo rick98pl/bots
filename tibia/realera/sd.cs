@@ -576,7 +576,7 @@ class Program
         actionSequence.Add(new MoveAction(baseX + 22, baseY + 15, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 24, baseY + 20, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 23, baseY + 24, baseZ + 0));
-        actionSequence.Add(new MoveAction(baseX + 21, baseY + 24, baseZ + 0));
+        //actionSequence.Add(new MoveAction(baseX + 21, baseY + 24, baseZ + 0));
 
 
         actionSequence.Add(new MoveAction(32624, 32769, 7));
@@ -823,7 +823,7 @@ class Program
         actionSequence.Add(new MoveAction(baseX + 22, baseY + 15, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 24, baseY + 20, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 23, baseY + 24, baseZ + 0));
-        actionSequence.Add(new MoveAction(baseX + 21, baseY + 24, baseZ + 0));
+        //actionSequence.Add(new MoveAction(baseX + 21, baseY + 24, baseZ + 0));
 
 
         actionSequence.Add(new MoveAction(32624, 32769, 7));
@@ -1582,6 +1582,12 @@ class Program
                 {
                     InitializeMiddleSequence();
                     ExecuteActionSequence();
+                    SendKeyPress(VK_F2);
+                    lastManaAction = DateTime.Now;
+                    Console.WriteLine($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
+                    SendKeyPress(VK_F2);
+                    lastManaAction = DateTime.Now;
+                    Console.WriteLine($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
                 }
                 else if (curMana >= MANA_THRESHOLD && curSoul >= 0 && curSoul <= 4)
                 {
