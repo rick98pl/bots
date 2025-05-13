@@ -1346,7 +1346,7 @@ class Program
                             Console.WriteLine("[MOTION] Retrying utana vid (previous attempt failed)");
                         }
 
-                        if (shouldCastUtanaVid)
+                        if (shouldCastUtanaVid && curMana > 440)
                         {
                             lastUtanaVidAttemptTime = now;
 
@@ -1382,7 +1382,7 @@ class Program
                             Console.WriteLine("[MOTION] Retrying utani gran hur (previous attempt failed)");
                         }
 
-                        if (currentZ != 8 && shouldCastUtaniGranHur)
+                        if (currentZ != 8 && shouldCastUtaniGranHur && curMana > 100)
                         {
                             lastUtaniGranHurAttemptTime = now;
 
