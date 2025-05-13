@@ -551,6 +551,113 @@ class Program
     // Static array of actions
     static List<Action> actionSequence = new List<Action>();
 
+    static void tarantulaSeqeunce()
+    {
+        // Clear any existing actions
+        actionSequence.Clear();
+
+        //// Base coordinates
+        int baseX = 32597, baseY = 32747, baseZ = 7;
+
+  
+        actionSequence.Add(new FightTarantulasAction());
+
+
+
+        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
+        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
+
+
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200)); //down the hole
+
+        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
+        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
+
+        //actionSequence.Add(new HotkeyAction(VK_F11, 800)); //utana vid
+
+        actionSequence.Add(new MoveAction(32817, 32809, 7));
+
+        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
+
+        actionSequence.Add(new MoveAction(32814, 32809, 7));
+        actionSequence.Add(new MoveAction(32807, 32810, 7));
+        actionSequence.Add(new MoveAction(32801, 32811, 7));
+        actionSequence.Add(new MoveAction(32795, 32809, 7));
+        actionSequence.Add(new MoveAction(32789, 32807, 7));
+        actionSequence.Add(new MoveAction(32782, 32803, 7));
+        actionSequence.Add(new MoveAction(32776, 32803, 7));
+        actionSequence.Add(new MoveAction(32769, 32805, 7));
+        actionSequence.Add(new MoveAction(32762, 32807, 7));
+        actionSequence.Add(new MoveAction(32755, 32807, 7));
+        actionSequence.Add(new MoveAction(32748, 32811, 7));
+        actionSequence.Add(new MoveAction(32741, 32807, 7));
+        actionSequence.Add(new MoveAction(32735, 32803, 7));
+        actionSequence.Add(new MoveAction(32728, 32799, 7));
+        actionSequence.Add(new MoveAction(32723, 32794, 7));
+        actionSequence.Add(new MoveAction(32716, 32791, 7));
+        actionSequence.Add(new MoveAction(32713, 32786, 7));
+        actionSequence.Add(new MoveAction(32710, 32788, 7));
+        actionSequence.Add(new MoveAction(32706, 32785, 7));
+        actionSequence.Add(new MoveAction(32699, 32784, 7));
+        actionSequence.Add(new MoveAction(32692, 32783, 7));
+        actionSequence.Add(new MoveAction(32685, 32781, 7));
+        actionSequence.Add(new MoveAction(32679, 32777, 7));
+
+
+        actionSequence.Add(new HotkeyAction(VK_F8, 800)); //bring me to centre
+
+        actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
+      DragAction.DragBackpack.MANAS, 8, 100)); //water
+
+        actionSequence.Add(new MoveAction(32622, 32769, 7));
+
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 19, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 21, baseY + 14, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 9, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 31, baseY + 2, baseZ + 0));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Right, 200));
+        actionSequence.Add(new MoveAction(baseX + 35, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 39, baseY - 6, baseZ - 1));
+
+        actionSequence.Add(new HotkeyAction(VK_F4, 800)); //money withdraw
+
+        actionSequence.Add(new MoveAction(baseX + 33, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 5, baseZ - 1));
+        actionSequence.Add(new RightClickAction(200));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY - 6, baseZ - 2));
+
+        actionSequence.Add(new HotkeyAction(VK_F5, 800)); //blanks
+
+        actionSequence.Add(new HotkeyAction(VK_F9, 800)); //fluids
+
+        for (int i = 0; i < 20; i++)
+        {
+            actionSequence.Add(new ScanBackpackAction());
+        }
+
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+        actionSequence.Add(new MoveAction(baseX + 33, baseY + 0, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 32, baseY + 1, baseZ - 1));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+        actionSequence.Add(new MoveAction(baseX + 25, baseY + 8, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 20, baseY + 13, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 13, baseY + 15, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 8, baseY + 10, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 1, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 0, baseY + 3, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX - 2, baseY - 2, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 2, baseY - 4, baseZ + 0));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+
+        Console.WriteLine($"Initialized action sequence with {actionSequence.Count} actions:");
+        for (int i = 0; i < actionSequence.Count; i++)
+        {
+            Console.WriteLine($"  {i + 1}: {actionSequence[i].GetDescription()}");
+        }
+    }
+
     static void InitializeActionSequence()
     {
         // Clear any existing actions
@@ -1058,8 +1165,8 @@ class Program
 
     const int UTANI_GRAN_HUR_INTERVAL_SECONDS = 20;
     const int UTANA_VID_INTERVAL_SECONDS = 180; // 3 minutes
-    const int UTANA_VID_RETRY_INTERVAL_SECONDS = 5; // Retry failed utana vid after 5 seconds
-    const int UTANI_GRAN_HUR_RETRY_INTERVAL_SECONDS = 5; // Retry failed utani gran hur after 5 seconds
+    const int UTANA_VID_RETRY_INTERVAL_SECONDS = 3; // Retry failed utana vid after 5 seconds
+    const int UTANI_GRAN_HUR_RETRY_INTERVAL_SECONDS = 3; // Retry failed utani gran hur after 5 seconds
     const int POSITION_CHECK_INTERVAL_MS = 1000; // Check position every second
     const int MIN_SPELL_INTERVAL_SECONDS = 3; // Minimum 3 seconds between spells
     const double MIN_SPEED_FOR_UTANI_GRAN_HUR = 400.0; // Speed threshold for successful utani gran hur
@@ -1126,16 +1233,12 @@ class Program
     static bool CheckUtanaVidSuccess()
     {
         ReadMemoryValues();
-        Thread.Sleep(500);
-        ReadMemoryValues();
         return invisibilityCode != 1;
     }
 
     // Helper method to check if utani gran hur was successful
     static bool CheckUtaniGranHurSuccess()
     {
-        ReadMemoryValues();
-        Thread.Sleep(500);
         ReadMemoryValues();
         bool success = speed >= MIN_SPEED_FOR_UTANI_GRAN_HUR;
         Console.WriteLine($"[MOTION] Utani Gran Hur validation - Speed: {speed:F1}, Success: {success}");
@@ -1279,7 +1382,7 @@ class Program
                             Console.WriteLine("[MOTION] Retrying utani gran hur (previous attempt failed)");
                         }
 
-                        if (shouldCastUtaniGranHur)
+                        if (currentZ != 8 && shouldCastUtaniGranHur)
                         {
                             lastUtaniGranHurAttemptTime = now;
 
@@ -1570,12 +1673,12 @@ class Program
                     {
                         SendKeyPress(VK_F2);
                         lastManaAction = DateTime.Now;
-                        Console.WriteLine($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
+                        Console.WriteLine($"Mana>900 ({curMana:F0}), Soul: ({curSoul:F1}) - pressed F2");
                     }
                 }
                 if(currentZ == 8)
                 {
-                    InitializeActionSequence();
+                    tarantulaSeqeunce();
                     ExecuteActionSequence();
                 }
                 if (curSoul >= 96 && curSoul <= 101)
