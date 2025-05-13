@@ -1928,6 +1928,7 @@ class Program
                 }
 
                 if (f2ClickCount >= MAX_F2_CLICKS || curSoul <= 4 || (attempts >= 3 && curMana >= 880)) {
+                    attempts = 0;
                     if (curSoul >= 100)
                     {
                         InitializeMiddleSequence();
