@@ -841,7 +841,7 @@ class Program
         actionSequence.Add(new MoveAction(baseX + 15, baseY + 15, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 22, baseY + 15, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 24, baseY + 20, baseZ + 0));
-        actionSequence.Add(new MoveAction(baseX + 23, baseY + 24, baseZ + 0));
+        //actionSequence.Add(new MoveAction(baseX + 23, baseY + 24, baseZ + 0));
         //actionSequence.Add(new MoveAction(baseX + 21, baseY + 24, baseZ + 0));
 
 
@@ -1088,7 +1088,7 @@ class Program
         actionSequence.Add(new MoveAction(baseX + 15, baseY + 15, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 22, baseY + 15, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 24, baseY + 20, baseZ + 0));
-        actionSequence.Add(new MoveAction(baseX + 23, baseY + 24, baseZ + 0));
+        //actionSequence.Add(new MoveAction(baseX + 23, baseY + 24, baseZ + 0));
         //actionSequence.Add(new MoveAction(baseX + 21, baseY + 24, baseZ + 0));
 
 
@@ -1747,6 +1747,13 @@ class Program
         }
     }
 
+    static int f2ClickCount = 0;
+    const int MAX_F2_CLICKS = 20;
+    static DateTime lastF2AttemptTime = DateTime.MinValue;
+    static double lastManaBeforeF2 = 0;
+    static bool hasExecutedSequencesAfterF2Limit = false; // Flag to track if we've executed sequences after F2 limit
+
+
     static void Main()
     {
         Debugger("Starting RealeraDX Auto-Potions...");
@@ -1908,33 +1915,37 @@ class Program
                 {
                     if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
                     {
-                        SendKeyPress(VK_F2);
-                        lastManaAction = DateTime.Now;
-                        Debugger($"Mana>900 ({curMana:F0}), Soul: ({curSoul:F1}) - pressed F2");
+                        PressF2WithValidation();
+                        Debugger($"Mana>900 ({curMana:F0}), Soul: ({curSoul:F1}) - attempted F2");
                     }
                 }
+
                 if (currentZ == 8)
                 {
                     tarantulaSeqeunce();
                     ExecuteActionSequence();
                 }
-                if (curSoul >= 96 && curSoul <= 101)
-                {
-                    InitializeMiddleSequence();
-                    ExecuteActionSequence();
-                    SendKeyPress(VK_F2);
-                    lastManaAction = DateTime.Now;
-                    Debugger($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
-                    SendKeyPress(VK_F2);
-                    lastManaAction = DateTime.Now;
-                    Debugger($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
-                }
-                else if (curMana >= MANA_THRESHOLD && curSoul >= 0 && curSoul <= 4)
-                {
-                    InitializeActionSequence();
-                    ExecuteActionSequence();
-                }
 
+                if (f2ClickCount >= MAX_F2_CLICKS) {
+                    if (curSoul >= 100)
+                    {
+                        InitializeMiddleSequence();
+                        ExecuteActionSequence();
+                        SendKeyPress(VK_F2);
+                        lastManaAction = DateTime.Now;
+                        Debugger($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
+                        SendKeyPress(VK_F2);
+                        lastManaAction = DateTime.Now;
+                        Debugger($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
+                        f2ClickCount = 0;
+                    }
+                    else
+                    {
+                        InitializeActionSequence();
+                        ExecuteActionSequence();
+                        f2ClickCount = 0;
+                    }
+                }
                 Thread.Sleep(100);
             }
             catch (Exception ex)
@@ -1944,6 +1955,46 @@ class Program
             }
         }
     }
+
+    static void PressF2WithValidation()
+    {
+        if (f2ClickCount >= MAX_F2_CLICKS)
+        {
+            Debugger($"[F2] F2 limit reached ({f2ClickCount}/{MAX_F2_CLICKS}). Skipping F2 press.");
+            return;
+        }
+
+        // Record mana before F2 press
+        ReadMemoryValues();
+        double manaBeforeF2 = curMana;
+        DateTime attemptTime = DateTime.Now;
+
+        // Press F2
+        SendKeyPress(VK_F2);
+        lastManaAction = DateTime.Now;
+        Debugger($"[F2] Pressed F2. Mana before: {manaBeforeF2:F0}");
+
+        // Wait for the effect to apply
+        Thread.Sleep(1000); // Give it a bit more time to register
+
+        // Read mana after F2
+        ReadMemoryValues();
+        double manaAfterF2 = curMana;
+        double manaDrop = manaBeforeF2 - manaAfterF2;
+
+        // Validate the click
+        if (manaDrop >= 800)
+        {
+            f2ClickCount++;
+            Debugger($"[F2] F2 validated successfully! Mana dropped by {manaDrop:F0}. Total F2 clicks: {f2ClickCount}/{MAX_F2_CLICKS}");
+        }
+        else
+        {
+            Debugger($"[F2] F2 failed validation! Mana only dropped by {manaDrop:F0} (expected at least 800). Not counting this click.");
+        }
+    }
+
+  
 
     // [All remaining methods stay the same]
     static bool ClickWaypoint(int targetX, int targetY)
@@ -4007,7 +4058,137 @@ class Program
         }
     }
 
-    // Add this method as the main monitoring worker
+    // Add these additional P/Invoke declarations at the top with your other imports
+    [DllImport("user32.dll")]
+    static extern bool CloseWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+
+    // Add this function to your Program class
+    const int PROCESS_TERMINATE = 0x0001;
+
+    // Add this function to your Program class
+    static void ForceCloseGameProcessAndWindow()
+    {
+        try
+        {
+            Debugger("[CLOSE] Starting FORCEFUL game closure process...");
+
+            // Step 1: Close the process handle if it exists
+            if (processHandle != IntPtr.Zero)
+            {
+                Debugger("[CLOSE] Closing process handle...");
+                CloseHandle(processHandle);
+                processHandle = IntPtr.Zero;
+            }
+
+            // Step 2: Find and FORCE KILL all game processes immediately
+            var processes = Process.GetProcesses()
+                .Where(p => p.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
+            foreach (var process in processes)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        Debugger($"[CLOSE] FORCE KILLING process: {process.ProcessName} (ID: {process.Id})");
+
+                        // Method 1: Try using Windows API TerminateProcess
+                        try
+                        {
+                            IntPtr hProcess = OpenProcess(PROCESS_TERMINATE, false, process.Id);
+
+                            if (hProcess != IntPtr.Zero)
+                            {
+                                bool terminated = TerminateProcess(hProcess, 1);
+                                CloseHandle(hProcess);
+
+                                if (terminated)
+                                {
+                                    Debugger($"[CLOSE] Process {process.Id} terminated via WinAPI");
+                                    continue;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debugger($"[CLOSE] WinAPI termination failed: {ex.Message}");
+                        }
+
+                        // Method 2: Fallback to Process.Kill()
+                        try
+                        {
+                            process.Kill();
+                            Debugger($"[CLOSE] Process {process.Id} killed via Process.Kill()");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debugger($"[CLOSE] Process.Kill() failed: {ex.Message}");
+                        }
+
+                        // Method 3: Alternative kill using command line (last resort)
+                        try
+                        {
+                            ProcessStartInfo psi = new ProcessStartInfo();
+                            psi.FileName = "taskkill";
+                            psi.Arguments = $"/F /PID {process.Id}";
+                            psi.WindowStyle = ProcessWindowStyle.Hidden;
+                            psi.UseShellExecute = false;
+
+                            Process killProcess = Process.Start(psi);
+                            killProcess.WaitForExit(2000);
+
+                            Debugger($"[CLOSE] Process {process.Id} killed via taskkill command");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debugger($"[CLOSE] Taskkill failed: {ex.Message}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debugger($"[CLOSE] Error force killing process {process.Id}: {ex.Message}");
+                }
+                finally
+                {
+                    try
+                    {
+                        process.Dispose();
+                    }
+                    catch { }
+                }
+            }
+
+            // Step 3: Force close any remaining windows
+            if (targetWindow != IntPtr.Zero && IsWindow(targetWindow))
+            {
+                Debugger("[CLOSE] Force closing game window...");
+
+                // Send WM_DESTROY to bypass confirmation dialogs
+                SendMessage(targetWindow, 0x0002, IntPtr.Zero, IntPtr.Zero); // WM_DESTROY
+
+                // Also try close window
+                CloseWindow(targetWindow);
+            }
+
+            Debugger("[CLOSE] FORCEFUL game closure process completed");
+        }
+        catch (Exception ex)
+        {
+            Debugger($"[CLOSE] Error during forceful game closure: {ex.Message}");
+        }
+    }
+
     static void SoulPositionMonitorWorker()
     {
         Debugger("[MONITOR] Soul and position monitor worker started");
@@ -4080,12 +4261,19 @@ class Program
                         Debugger($"\n[MONITOR] SHUTTING DOWN PROGRAM - {shutdownReason}");
                         Debugger("[MONITOR] This usually indicates the program is stuck or not functioning properly");
 
+                        // FORCEFULLY close the game process and window before exiting
+                        ForceCloseGameProcessAndWindow();
+
                         // Set the global flag to stop the program
                         programRunning = false;
                         cancellationTokenSource.Cancel();
 
-                        // Force exit after a short delay
-                        Thread.Sleep(2000);
+                        // Stop other threads
+                        StopMotionDetectionThread();
+                        StopSoulPositionMonitorThread();
+
+                        // Minimal delay before exit
+                        Thread.Sleep(500);
                         Environment.Exit(0);
                     }
 
