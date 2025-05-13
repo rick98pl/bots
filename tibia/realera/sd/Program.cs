@@ -323,13 +323,21 @@ class Program
             GroundToBackpack
         }
 
+        public enum DragBackpack
+        {
+            MANAS,
+            SD
+        }
+
         public DragDirection Direction { get; set; }
+        public DragBackpack Backpack { get; set; }
         public int ItemCount { get; set; }
         public int DelayBetweenDrags { get; set; }
 
-        public DragAction(DragDirection direction, int itemCount = 8, int delayBetweenDrags = 100)
+        public DragAction(DragDirection direction, DragBackpack backpack, int itemCount = 8, int delayBetweenDrags = 100)
         {
             Direction = direction;
+            Backpack = backpack;
             ItemCount = itemCount;
             DelayBetweenDrags = delayBetweenDrags;
         }
@@ -343,21 +351,38 @@ class Program
 
             try
             {
-                RECT clientRect;
-                GetClientRect(targetWindow, out clientRect);
+                
+
+                int groundYLocal = groundY;
+                if(directionName == "backpack to ground" && Backpack == DragBackpack.MANAS)
+                {
+                    groundYLocal = groundY + 4 * WAYPOINT_SIZE + 5;
+                }
+
                 int localX = backpackX;
                 int localY = backpackY;
+                if (Backpack == DragBackpack.SD)
+                {
+                    localX = 800;
+                    localY = 245;
+                }
+                RECT clientRect;
+                GetClientRect(targetWindow, out clientRect);
+               
                 if (reverseDirection)
                 {
                     localX += 125;
                     localY += 125;
                 }
 
-                POINT groundPoint = new POINT { X = groundX, Y = groundY };
+                POINT groundPoint = new POINT { X = groundX, Y = groundYLocal };
                 POINT backpackPoint = new POINT { X = localX, Y = localY };
 
                 ClientToScreen(targetWindow, ref groundPoint);
                 ClientToScreen(targetWindow, ref backpackPoint);
+
+                //SetCursorPos(backpackPoint.X, backpackPoint.Y);
+                //Thread.Sleep(4000);
 
                 POINT sourcePoint, destPoint;
                 if (reverseDirection)
@@ -518,73 +543,84 @@ class Program
         // Clear any existing actions
         actionSequence.Clear();
 
+        // Base coordinates
+        int baseX = 32597, baseY = 32747, baseZ = 7;
+
         // Inside InitializeActionSequence()
         for (int i = 0; i < 20; i++)
         {
             actionSequence.Add(new ScanBackpackAction());
         }
-
-        actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround, 8, 100));
-
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
-        actionSequence.Add(new MoveAction(32597, 32747, 7));
-        actionSequence.Add(new MoveAction(32597, 32752, 7));
-        actionSequence.Add(new MoveAction(32604, 32753, 7));
-        actionSequence.Add(new MoveAction(32606, 32758, 7));
-        actionSequence.Add(new MoveAction(32612, 32762, 7));
-        actionSequence.Add(new MoveAction(32619, 32762, 7));
-        actionSequence.Add(new MoveAction(32621, 32767, 7));
-        actionSequence.Add(new MoveAction(32620, 32771, 7));
-        actionSequence.Add(new MoveAction(32618, 32771, 7));
+        actionSequence.Add(new MoveAction(baseX + 0, baseY + 0, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 0, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 7, baseY + 6, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 9, baseY + 11, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 15, baseY + 15, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 22, baseY + 15, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 20, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 23, baseY + 24, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 21, baseY + 24, baseZ + 0));
 
-        actionSequence.Add(new RightClickAction(200));
-        //actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround, 8, 100));
+        actionSequence.Add(new RightClickAction(200)); //up the ladder 
+        actionSequence.Add(new RightClickAction(200)); //up the ladder 
+        actionSequence.Add(new RightClickAction(200)); //up the ladder 
 
-        actionSequence.Add(new MoveAction(32624, 32773, 6));
-        actionSequence.Add(new MoveAction(32627, 32772, 6));
-        actionSequence.Add(new MoveAction(32625, 32769, 6));
+        actionSequence.Add(new MoveAction(baseX + 27, baseY + 26, baseZ - 1));
 
-        actionSequence.Add(new MoveAction(32627, 32772, 6));
-        actionSequence.Add(new MoveAction(32624, 32773, 6));
-        actionSequence.Add(new MoveAction(32618, 32772, 6));
+        actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
+            DragAction.DragBackpack.MANAS, 8, 100)); //water
+
+        actionSequence.Add(new MoveAction(baseX + 30, baseY + 25, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 28, baseY + 23, baseZ - 1));
+
+        actionSequence.Add(new MoveAction(baseX + 28, baseY + 22, baseZ - 1)); //SD place in house
+        actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
+            DragAction.DragBackpack.SD, 2, 100));
+
+        actionSequence.Add(new MoveAction(baseX + 30, baseY + 25, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 27, baseY + 26, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 21, baseY + 25, baseZ - 1));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Up, 200));
-
-        actionSequence.Add(new MoveAction(32621, 32766, 7));
-        actionSequence.Add(new MoveAction(32618, 32761, 7));
-        actionSequence.Add(new MoveAction(32621, 32756, 7));
-        actionSequence.Add(new MoveAction(32626, 32752, 7));
-        actionSequence.Add(new MoveAction(32628, 32749, 7));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 19, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 21, baseY + 14, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 9, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 31, baseY + 2, baseZ + 0));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Right, 200));
+        actionSequence.Add(new MoveAction(baseX + 35, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 39, baseY - 6, baseZ - 1));
 
+        actionSequence.Add(new HotkeyAction(VK_F4, 800)); //money withdraw
 
-        actionSequence.Add(new MoveAction(32632, 32744, 6));
-        actionSequence.Add(new MoveAction(32636, 32741, 6));
-        actionSequence.Add(new HotkeyAction(VK_F4, 800));
-        actionSequence.Add(new MoveAction(32630, 32744, 6));
-        actionSequence.Add(new MoveAction(32626, 32742, 6));
+        actionSequence.Add(new MoveAction(baseX + 33, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 5, baseZ - 1));
         actionSequence.Add(new RightClickAction(200));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY - 6, baseZ - 2));
 
-        actionSequence.Add(new MoveAction(32621, 32741, 5));
-        actionSequence.Add(new HotkeyAction(VK_F5, 800));
-        actionSequence.Add(new HotkeyAction(VK_F6, 800));
+        actionSequence.Add(new HotkeyAction(VK_F5, 800)); //blanks
 
-        actionSequence.Add(new MoveAction(32626, 32741, 5));
+        actionSequence.Add(new HotkeyAction(VK_F6, 800)); //fluids
+
+        for (int i = 0; i < 20; i++)
+        {
+            actionSequence.Add(new ScanBackpackAction());
+        }
+
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
-        actionSequence.Add(new MoveAction(32630, 32747, 6));
-        actionSequence.Add(new MoveAction(32629, 32748, 6));
+        actionSequence.Add(new MoveAction(baseX + 33, baseY + 0, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 32, baseY + 1, baseZ - 1));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
-
-        actionSequence.Add(new MoveAction(32622, 32755, 7));
-        actionSequence.Add(new MoveAction(32617, 32760, 7));
-        actionSequence.Add(new MoveAction(32610, 32762, 7));
-        actionSequence.Add(new MoveAction(32605, 32757, 7));
-        actionSequence.Add(new MoveAction(32598, 32752, 7));
-        actionSequence.Add(new MoveAction(32597, 32750, 7));
-        actionSequence.Add(new MoveAction(32595, 32745, 7));
-        actionSequence.Add(new MoveAction(32599, 32743, 7));
+        actionSequence.Add(new MoveAction(baseX + 25, baseY + 8, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 20, baseY + 13, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 13, baseY + 15, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 8, baseY + 10, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 1, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 0, baseY + 3, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX - 2, baseY - 2, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 2, baseY - 4, baseZ + 0));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
-
-
 
         Console.WriteLine($"Initialized action sequence with {actionSequence.Count} actions:");
         for (int i = 0; i < actionSequence.Count; i++)
@@ -828,6 +864,11 @@ class Program
                         lastManaAction = DateTime.Now;
                         Console.WriteLine($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
                     }
+                }
+
+                if(curSoul <= SOUL_THRESHOLD)
+                {
+                    ExecuteActionSequence();
                 }
 
                 Thread.Sleep(100);
