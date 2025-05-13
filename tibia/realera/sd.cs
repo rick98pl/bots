@@ -1563,6 +1563,7 @@ class Program
         Console.WriteLine("- Minimum 3 seconds between any spells");
 
         StartMotionDetectionThread();
+        StartSoulPositionMonitorThread();
 
         while (programRunning)
         {
@@ -1580,6 +1581,7 @@ class Program
                         programRunning = false;
                         cancellationTokenSource.Cancel();
                         StopMotionDetectionThread(); // Add this line
+                        StopSoulPositionMonitorThread();  // Add this line
                         Environment.Exit(0);
                     }
                     else if (key == ConsoleKey.E)
@@ -3714,5 +3716,197 @@ class Program
             Console.WriteLine($"[WAYPOINT] Selected index {closestIndex} at ({waypoints[closestIndex].X}, {waypoints[closestIndex].Y}, {waypoints[closestIndex].Z}) distance {minDistance}");
             return closestIndex;
         }
+        }
+
+
+    // Add these variables at the top of the Program class
+    static Thread soulPositionMonitorThread;
+    static bool soulPositionMonitorRunning = false;
+    static DateTime lastSoulChangeTime = DateTime.Now;
+    static DateTime lastPositionChangeTime = DateTime.Now;
+    static double lastSoulCount = 0;
+    static Coordinate lastMonitoredPosition = null;
+    static readonly object monitorLock = new object();
+
+    const int MONITOR_INTERVAL_MS = 1000; // Check every second
+    const int MAX_UNCHANGED_SECONDS = 45; // Stop program if no change for 5 seconds
+
+    // Add this method to start the monitoring thread
+    static void StartSoulPositionMonitorThread()
+    {
+        ReadMemoryValues();
+        if (soulPositionMonitorThread != null && soulPositionMonitorThread.IsAlive)
+        {
+            Console.WriteLine("[MONITOR] Soul and position monitor thread already running");
+            return;
+        }
+
+        soulPositionMonitorRunning = true;
+        lastSoulCount = curSoul;
+        lastMonitoredPosition = new Coordinate
+        {
+            X = currentX,
+            Y = currentY,
+            Z = currentZ
+        };
+        lastSoulChangeTime = DateTime.Now;
+        lastPositionChangeTime = DateTime.Now;
+
+        soulPositionMonitorThread = new Thread(SoulPositionMonitorWorker)
+        {
+            IsBackground = true,
+            Name = "SoulPositionMonitorThread"
+        };
+        soulPositionMonitorThread.Start();
+        Console.WriteLine("[MONITOR] Soul and position monitor thread started");
     }
+
+    // Add this method to stop the monitoring thread
+    static void StopSoulPositionMonitorThread()
+    {
+        soulPositionMonitorRunning = false;
+        if (soulPositionMonitorThread != null && soulPositionMonitorThread.IsAlive)
+        {
+            soulPositionMonitorThread.Join(2000);
+            Console.WriteLine("[MONITOR] Soul and position monitor thread stopped");
+        }
     }
+
+    // Add this method as the main monitoring worker
+    static void SoulPositionMonitorWorker()
+    {
+        Console.WriteLine("[MONITOR] Soul and position monitor worker started");
+
+        try
+        {
+            while (soulPositionMonitorRunning && programRunning)
+            {
+                try
+                {
+                    ReadMemoryValues();
+                    DateTime now = DateTime.Now;
+                    bool shouldShutdown = false;
+                    string shutdownReason = "";
+
+                    lock (monitorLock)
+                    {
+                        // Check if soul has changed
+                        if (Math.Abs(curSoul - lastSoulCount) > 0.1) // Allow small floating point differences
+                        {
+                            lastSoulCount = curSoul;
+                            lastSoulChangeTime = now;
+                            Console.WriteLine($"[MONITOR] Soul changed to {curSoul:F1}");
+                        }
+
+                        // Check if position has changed
+                        bool positionChanged = lastMonitoredPosition == null ||
+                                               lastMonitoredPosition.X != currentX ||
+                                               lastMonitoredPosition.Y != currentY ||
+                                               lastMonitoredPosition.Z != currentZ;
+
+                        if (positionChanged)
+                        {
+                            if (lastMonitoredPosition != null)
+                            {
+                                Console.WriteLine($"[MONITOR] Position changed from ({lastMonitoredPosition.X}, {lastMonitoredPosition.Y}, {lastMonitoredPosition.Z}) to ({currentX}, {currentY}, {currentZ})");
+                            }
+
+                            lastMonitoredPosition = new Coordinate
+                            {
+                                X = currentX,
+                                Y = currentY,
+                                Z = currentZ
+                            };
+                            lastPositionChangeTime = now;
+                        }
+
+                        // Check if too much time has passed without changes
+                        double timeSinceLastSoulChange = (now - lastSoulChangeTime).TotalSeconds;
+                        double timeSinceLastPositionChange = (now - lastPositionChangeTime).TotalSeconds;
+
+                        // Only shut down if BOTH soul AND position haven't changed
+                        if (timeSinceLastSoulChange >= MAX_UNCHANGED_SECONDS &&
+                            timeSinceLastPositionChange >= MAX_UNCHANGED_SECONDS)
+                        {
+                            shouldShutdown = true;
+                            shutdownReason = $"Both soul count and position haven't changed for {Math.Min(timeSinceLastSoulChange, timeSinceLastPositionChange):F1} seconds";
+                        }
+
+                        // Log status every 2 seconds
+                        if ((DateTime.Now.Second % 2) == 0)
+                        {
+                            Console.WriteLine($"[MONITOR] Status - Soul: {curSoul:F1} (unchanged for {timeSinceLastSoulChange:F1} sec), " +
+                                            $"Position: ({currentX}, {currentY}, {currentZ}) (unchanged for {timeSinceLastPositionChange:F1} sec)");
+                        }
+                    }
+
+                    if (shouldShutdown)
+                    {
+                        Console.WriteLine($"\n[MONITOR] SHUTTING DOWN PROGRAM - {shutdownReason}");
+                        Console.WriteLine("[MONITOR] This usually indicates the program is stuck or not functioning properly");
+
+                        // Set the global flag to stop the program
+                        programRunning = false;
+                        cancellationTokenSource.Cancel();
+
+                        // Force exit after a short delay
+                        Thread.Sleep(2000);
+                        Environment.Exit(0);
+                    }
+
+                    Thread.Sleep(MONITOR_INTERVAL_MS);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[MONITOR] Error in monitoring loop: {ex.Message}");
+                    Thread.Sleep(1000);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MONITOR] Fatal error in monitor thread: {ex.Message}");
+        }
+        finally
+        {
+            Console.WriteLine("[MONITOR] Soul and position monitor worker stopped");
+        }
+    }
+
+    // Add this method to manually reset the monitor timers (useful after teleporting/traveling)
+    static void ResetSoulPositionMonitor()
+    {
+        lock (monitorLock)
+        {
+            lastSoulChangeTime = DateTime.Now;
+            lastPositionChangeTime = DateTime.Now;
+            ReadMemoryValues();
+            lastSoulCount = curSoul;
+            lastMonitoredPosition = new Coordinate
+            {
+                X = currentX,
+                Y = currentY,
+                Z = currentZ
+            };
+            Console.WriteLine("[MONITOR] Soul and position monitor timers reset");
+        }
+    }
+
+    // Add this method to check the current monitor status
+    static void PrintMonitorStatus()
+    {
+        lock (monitorLock)
+        {
+            DateTime now = DateTime.Now;
+            double timeSinceLastSoulChange = (now - lastSoulChangeTime).TotalSeconds;
+            double timeSinceLastPositionChange = (now - lastPositionChangeTime).TotalSeconds;
+
+            Console.WriteLine("[MONITOR] Current Status:");
+            Console.WriteLine($"  Soul: {curSoul:F1} (last changed {timeSinceLastSoulChange:F1} seconds ago)");
+            Console.WriteLine($"  Position: ({currentX}, {currentY}, {currentZ}) (last changed {timeSinceLastPositionChange:F1} seconds ago)");
+            Console.WriteLine($"  Monitor running: {soulPositionMonitorRunning}");
+            Console.WriteLine($"  Time until shutdown: {Math.Max(0, MAX_UNCHANGED_SECONDS - timeSinceLastSoulChange):F1} sec (soul), {Math.Max(0, MAX_UNCHANGED_SECONDS - timeSinceLastPositionChange):F1} sec (position)");
+        }
+    }
+
+}
