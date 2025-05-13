@@ -169,6 +169,7 @@ class Program
     static int MAX_MANA_OFFSET = 1248;
     static int SOUL_OFFSET = 1280;
     static int INVIS_OFFSET = 84;
+    static int SPEED_OFFSET = 176;
 
     static IntPtr POSITION_X_OFFSET = 0x009435FC;
     static IntPtr POSITION_Y_OFFSET = 0x00943600;
@@ -177,7 +178,7 @@ class Program
     static double curHP = 0, maxHP = 1;
     static double curMana = 0, maxMana = 1;
     static double curSoul = 0;
-    static int currentX = 0, currentY = 0, currentZ = 0, targetId = 0, invisibilityCode = 0;
+    static int currentX = 0, currentY = 0, currentZ = 0, targetId = 0, invisibilityCode = 0, speed = 0;
     static string processName = "RealeraDX";
     static DateTime lastHpAction = DateTime.MinValue;
     static DateTime lastManaAction = DateTime.MinValue;
@@ -565,7 +566,7 @@ class Program
         }
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
 
-        actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
+        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
         actionSequence.Add(new MoveAction(baseX + 0, baseY + 0, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 0, baseY + 5, baseZ + 0));
@@ -610,7 +611,7 @@ class Program
         actionSequence.Add(new MoveAction(32638, 32770, 6));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Up, 200)); //down the ladder
 
-        actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
+        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
         actionSequence.Add(new MoveAction(32631, 32768, 7));
         actionSequence.Add(new MoveAction(32624, 32769, 7));
@@ -639,7 +640,7 @@ class Program
             actionSequence.Add(new ScanBackpackAction());
         }
 
-        actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
+        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
         actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
@@ -657,12 +658,12 @@ class Program
 
         actionSequence.Add(new HotkeyAction(VK_F7, 800)); //bring me to east
 
-        actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
+        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
 
         actionSequence.Add(new MoveAction(32685, 32781, 7));
 
-        actionSequence.Add(new HotkeyAction(VK_F11, 800)); //utana vid
+        //actionSequence.Add(new HotkeyAction(VK_F11, 800)); //utana vid
 
         actionSequence.Add(new MoveAction(32692, 32783, 7));
         actionSequence.Add(new MoveAction(32699, 32784, 7));
@@ -676,7 +677,7 @@ class Program
         actionSequence.Add(new MoveAction(32735, 32803, 7));
         actionSequence.Add(new MoveAction(32741, 32807, 7));
 
-        actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
+        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
         actionSequence.Add(new MoveAction(32748, 32811, 7));
         actionSequence.Add(new MoveAction(32755, 32807, 7));
@@ -687,7 +688,7 @@ class Program
         actionSequence.Add(new MoveAction(32789, 32807, 7));
         actionSequence.Add(new MoveAction(32795, 32809, 7));
 
-        actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
+        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
         actionSequence.Add(new MoveAction(32801, 32811, 7));
         actionSequence.Add(new MoveAction(32807, 32810, 7));
@@ -712,11 +713,11 @@ class Program
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
-        actionSequence.Add(new HotkeyAction(VK_F11, 800)); //utana vid
+        //actionSequence.Add(new HotkeyAction(VK_F11, 800)); //utana vid
 
         actionSequence.Add(new MoveAction(32817, 32809, 7));
 
-        actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
+        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
         actionSequence.Add(new MoveAction(32814, 32809, 7));
         actionSequence.Add(new MoveAction(32807, 32810, 7));
@@ -812,7 +813,7 @@ class Program
         }
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
 
-        actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
+        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
         actionSequence.Add(new MoveAction(baseX + 0, baseY + 0, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 0, baseY + 5, baseZ + 0));
@@ -845,7 +846,7 @@ class Program
         }
 
         actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
-            DragAction.DragBackpack.MANAS, 10, 100)); //water
+            DragAction.DragBackpack.MANAS, 8, 100)); //water
 
         actionSequence.Add(new MoveAction(32625, 32769, 6));
         actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
@@ -1040,6 +1041,375 @@ class Program
 
     static DateTime lastDropScanTime = DateTime.MinValue;
     static readonly TimeSpan DROP_SCAN_INTERVAL = TimeSpan.FromSeconds(1);
+
+    static Thread motionDetectionThread;
+    static bool motionDetectionRunning = false;
+    static DateTime lastMotionTime = DateTime.MinValue;
+    static DateTime lastUtaniGranHurTime = DateTime.MinValue;
+    static DateTime lastUtaniGranHurAttemptTime = DateTime.MinValue;
+    static DateTime lastUtanaVidTime = DateTime.MinValue;
+    static DateTime lastUtanaVidAttemptTime = DateTime.MinValue;
+    static Coordinate lastKnownPosition = null;
+    static readonly object positionLock = new object();
+    static readonly object spellCastingLock = new object();
+    static bool characterIsMoving = false;
+    static bool movementDetectedSinceStart = false;
+    static int lastInvisibilityCode = -1;
+
+    const int UTANI_GRAN_HUR_INTERVAL_SECONDS = 20;
+    const int UTANA_VID_INTERVAL_SECONDS = 180; // 3 minutes
+    const int UTANA_VID_RETRY_INTERVAL_SECONDS = 5; // Retry failed utana vid after 5 seconds
+    const int UTANI_GRAN_HUR_RETRY_INTERVAL_SECONDS = 5; // Retry failed utani gran hur after 5 seconds
+    const int POSITION_CHECK_INTERVAL_MS = 1000; // Check position every second
+    const int MIN_SPELL_INTERVAL_SECONDS = 3; // Minimum 3 seconds between spells
+    const double MIN_SPEED_FOR_UTANI_GRAN_HUR = 400.0; // Speed threshold for successful utani gran hur
+
+    // Add this method to start the motion detection thread
+    static void StartMotionDetectionThread()
+    {
+        ReadMemoryValues();
+        if (motionDetectionThread != null && motionDetectionThread.IsAlive)
+        {
+            Console.WriteLine("[MOTION] Motion detection thread already running");
+            return;
+        }
+
+        motionDetectionRunning = true;
+        movementDetectedSinceStart = false;
+        motionDetectionThread = new Thread(MotionDetectionWorker)
+        {
+            IsBackground = true,
+            Name = "MotionDetectionThread"
+        };
+        motionDetectionThread.Start();
+        Console.WriteLine("[MOTION] Motion detection thread started");
+    }
+
+    // Add this method to stop the motion detection thread
+    static void StopMotionDetectionThread()
+    {
+        motionDetectionRunning = false;
+        if (motionDetectionThread != null && motionDetectionThread.IsAlive)
+        {
+            motionDetectionThread.Join(2000);
+            Console.WriteLine("[MOTION] Motion detection thread stopped");
+        }
+    }
+
+    // Helper method to safely cast spells with coordination
+    static bool TryCastSpell(int keyCode, string spellName, ref DateTime lastCastTime, int intervalSeconds)
+    {
+        lock (spellCastingLock)
+        {
+            DateTime now = DateTime.Now;
+
+            if ((now - lastCastTime).TotalSeconds < intervalSeconds)
+            {
+                return false;
+            }
+
+            DateTime lastAnySpell = GetLatestSpellTime();
+            if ((now - lastAnySpell).TotalSeconds < MIN_SPELL_INTERVAL_SECONDS)
+            {
+                Console.WriteLine($"[MOTION] Delaying {spellName} cast - too close to previous spell");
+                return false;
+            }
+
+            Console.WriteLine($"[MOTION] Casting {spellName}");
+            SendKeyPress(keyCode);
+            lastCastTime = now;
+            return true;
+        }
+    }
+
+    // Helper method to check if utana vid was successful
+    static bool CheckUtanaVidSuccess()
+    {
+        ReadMemoryValues();
+        Thread.Sleep(500);
+        ReadMemoryValues();
+        return invisibilityCode != 1;
+    }
+
+    // Helper method to check if utani gran hur was successful
+    static bool CheckUtaniGranHurSuccess()
+    {
+        ReadMemoryValues();
+        Thread.Sleep(500);
+        ReadMemoryValues();
+        bool success = speed >= MIN_SPEED_FOR_UTANI_GRAN_HUR;
+        Console.WriteLine($"[MOTION] Utani Gran Hur validation - Speed: {speed:F1}, Success: {success}");
+        return success;
+    }
+
+    // Helper method to get the most recent spell cast time
+    static DateTime GetLatestSpellTime()
+    {
+        DateTime latest = DateTime.MinValue;
+
+        if (lastUtaniGranHurTime > latest)
+            latest = lastUtaniGranHurTime;
+        if (lastUtanaVidTime > latest)
+            latest = lastUtanaVidTime;
+
+        return latest;
+    }
+
+    static void MotionDetectionWorker()
+    {
+        Console.WriteLine("[MOTION] Motion detection worker started");
+
+        try
+        {
+            while (motionDetectionRunning && programRunning)
+            {
+                try
+                {
+                    ReadMemoryValues();
+                    Coordinate currentPosition = new Coordinate
+                    {
+                        X = currentX,
+                        Y = currentY,
+                        Z = currentZ
+                    };
+
+                    lock (positionLock)
+                    {
+                        if (lastKnownPosition == null)
+                        {
+                            lastKnownPosition = new Coordinate
+                            {
+                                X = currentPosition.X,
+                                Y = currentPosition.Y,
+                                Z = currentPosition.Z
+                            };
+                            Console.WriteLine($"[MOTION] Initial position set: ({currentPosition.X}, {currentPosition.Y}, {currentPosition.Z})");
+                        }
+                        else
+                        {
+                            bool hasMoved = lastKnownPosition.X != currentPosition.X ||
+                                           lastKnownPosition.Y != currentPosition.Y ||
+                                           lastKnownPosition.Z != currentPosition.Z;
+
+                            if (hasMoved)
+                            {
+                                characterIsMoving = true;
+                                lastMotionTime = DateTime.Now;
+
+                                if (!movementDetectedSinceStart)
+                                {
+                                    movementDetectedSinceStart = true;
+                                    Console.WriteLine("[MOTION] First movement detected since start - utana vid now eligible");
+                                }
+
+                                int distanceX = Math.Abs(currentPosition.X - lastKnownPosition.X);
+                                int distanceY = Math.Abs(currentPosition.Y - lastKnownPosition.Y);
+                                if (distanceX > 1 || distanceY > 1 || currentPosition.Z != lastKnownPosition.Z)
+                                {
+                                    Console.WriteLine($"[MOTION] Significant movement detected: ({lastKnownPosition.X}, {lastKnownPosition.Y}, {lastKnownPosition.Z}) -> ({currentPosition.X}, {currentPosition.Y}, {currentPosition.Z})");
+                                }
+
+                                lastKnownPosition.X = currentPosition.X;
+                                lastKnownPosition.Y = currentPosition.Y;
+                                lastKnownPosition.Z = currentPosition.Z;
+                            }
+                            else
+                            {
+                                if (characterIsMoving && (DateTime.Now - lastMotionTime).TotalSeconds > 3)
+                                {
+                                    characterIsMoving = false;
+                                    Console.WriteLine("[MOTION] Character stopped moving");
+                                }
+                            }
+                        }
+                    }
+
+                    DateTime now = DateTime.Now;
+                    bool needsUtanaVid = invisibilityCode == 1;
+
+                    // Check if we need to cast utana vid (F11)
+                    if (movementDetectedSinceStart && needsUtanaVid)
+                    {
+                        bool shouldCastUtanaVid = false;
+
+                        if ((now - lastUtanaVidTime).TotalSeconds >= UTANA_VID_INTERVAL_SECONDS)
+                        {
+                            shouldCastUtanaVid = true;
+                        }
+                        else if ((now - lastUtanaVidAttemptTime).TotalSeconds >= UTANA_VID_RETRY_INTERVAL_SECONDS &&
+                                 lastUtanaVidAttemptTime > lastUtanaVidTime)
+                        {
+                            shouldCastUtanaVid = true;
+                            Console.WriteLine("[MOTION] Retrying utana vid (previous attempt failed)");
+                        }
+
+                        if (shouldCastUtanaVid)
+                        {
+                            lastUtanaVidAttemptTime = now;
+
+                            if (TryCastSpell(VK_F11, "utana vid", ref lastUtanaVidTime, 0))
+                            {
+                                lastUtanaVidTime = now; // Update the successful cast time
+
+                                if (CheckUtanaVidSuccess())
+                                {
+                                    Console.WriteLine("[MOTION] Utana vid successful - invisibility removed");
+                                }
+                                else
+                                {
+                                    Console.WriteLine("[MOTION] Utana vid failed - still invisible, will retry");
+                                    lastUtanaVidTime = lastUtanaVidAttemptTime - TimeSpan.FromSeconds(UTANA_VID_INTERVAL_SECONDS);
+                                }
+                            }
+                        }
+                    }
+                    // Check if we need to cast utani gran hur (backslash)
+                    else if (characterIsMoving)
+                    {
+                        bool shouldCastUtaniGranHur = false;
+
+                        if ((now - lastUtaniGranHurTime).TotalSeconds >= UTANI_GRAN_HUR_INTERVAL_SECONDS)
+                        {
+                            shouldCastUtaniGranHur = true;
+                        }
+                        else if ((now - lastUtaniGranHurAttemptTime).TotalSeconds >= UTANI_GRAN_HUR_RETRY_INTERVAL_SECONDS &&
+                                 lastUtaniGranHurAttemptTime > lastUtaniGranHurTime)
+                        {
+                            shouldCastUtaniGranHur = true;
+                            Console.WriteLine("[MOTION] Retrying utani gran hur (previous attempt failed)");
+                        }
+
+                        if (shouldCastUtaniGranHur)
+                        {
+                            lastUtaniGranHurAttemptTime = now;
+
+                            if (TryCastSpell(BACKSLASH, "utani gran hur", ref lastUtaniGranHurTime, 0))
+                            {
+                                lastUtaniGranHurTime = now; // Update the successful cast time
+
+                                if (CheckUtaniGranHurSuccess())
+                                {
+                                    Console.WriteLine("[MOTION] Utani gran hur successful - speed increased");
+                                }
+                                else
+                                {
+                                    Console.WriteLine("[MOTION] Utani gran hur failed - speed too low, will retry");
+                                    lastUtaniGranHurTime = lastUtaniGranHurAttemptTime - TimeSpan.FromSeconds(UTANI_GRAN_HUR_INTERVAL_SECONDS);
+                                }
+                            }
+                        }
+                    }
+
+                    Thread.Sleep(POSITION_CHECK_INTERVAL_MS);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[MOTION] Error in motion detection loop: {ex.Message}");
+                    Thread.Sleep(1000);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MOTION] Fatal error in motion detection thread: {ex.Message}");
+        }
+        finally
+        {
+            Console.WriteLine("[MOTION] Motion detection worker stopped");
+        }
+    }
+
+    // Add a method to manually reset motion detection (useful when teleporting/traveling)
+    static void ResetMotionDetection()
+    {
+        lock (positionLock)
+        {
+            lastKnownPosition = null;
+            characterIsMoving = false;
+            lastMotionTime = DateTime.MinValue;
+            movementDetectedSinceStart = false;
+            Console.WriteLine("[MOTION] Motion detection reset - movement eligibility reset");
+        }
+    }
+
+    // Add a method to manually reset spell timers
+    static void ResetSpellTimers()
+    {
+        lock (spellCastingLock)
+        {
+            lastUtaniGranHurTime = DateTime.MinValue;
+            lastUtaniGranHurAttemptTime = DateTime.MinValue;
+            lastUtanaVidTime = DateTime.MinValue;
+            lastUtanaVidAttemptTime = DateTime.MinValue;
+            Console.WriteLine("[MOTION] Spell timers reset");
+        }
+    }
+
+    // Add a method to check if character is currently moving
+    static bool IsCharacterMoving()
+    {
+        lock (positionLock)
+        {
+            return characterIsMoving;
+        }
+    }
+
+
+    // Add a method to get spell status information
+    static void PrintSpellStatus()
+    {
+        lock (spellCastingLock)
+        {
+            DateTime now = DateTime.Now;
+            double utaniGranHurCooldown = UTANI_GRAN_HUR_INTERVAL_SECONDS - (now - lastUtaniGranHurTime).TotalSeconds;
+            double utanaVidCooldown = UTANA_VID_INTERVAL_SECONDS - (now - lastUtanaVidTime).TotalSeconds;
+            double utanaVidRetryCooldown = UTANA_VID_RETRY_INTERVAL_SECONDS - (now - lastUtanaVidAttemptTime).TotalSeconds;
+            double utaniGranHurRetryCooldown = UTANI_GRAN_HUR_RETRY_INTERVAL_SECONDS - (now - lastUtaniGranHurAttemptTime).TotalSeconds;
+
+            Console.WriteLine("[MOTION] Spell Status:");
+
+            // Utani Gran Hur status
+            if (lastUtaniGranHurAttemptTime > lastUtaniGranHurTime && speed < MIN_SPEED_FOR_UTANI_GRAN_HUR)
+            {
+                Console.WriteLine($"  Utani Gran Hur: {(utaniGranHurRetryCooldown > 0 ? $"{utaniGranHurRetryCooldown:F1}s retry cooldown" : "Ready to retry")} (last attempt failed)");
+            }
+            else
+            {
+                Console.WriteLine($"  Utani Gran Hur: {(utaniGranHurCooldown > 0 ? $"{utaniGranHurCooldown:F1}s cooldown" : "Ready")}");
+            }
+
+            // Utana Vid status
+            if (movementDetectedSinceStart)
+            {
+                if (lastUtanaVidAttemptTime > lastUtanaVidTime && invisibilityCode == 1)
+                {
+                    Console.WriteLine($"  Utana Vid: {(utanaVidRetryCooldown > 0 ? $"{utanaVidRetryCooldown:F1}s retry cooldown" : "Ready to retry")} (last attempt failed)");
+                }
+                else
+                {
+                    Console.WriteLine($"  Utana Vid: {(utanaVidCooldown > 0 ? $"{utanaVidCooldown:F1}s cooldown" : "Ready")}");
+                }
+            }
+            else
+            {
+                Console.WriteLine("  Utana Vid: Waiting for movement before becoming eligible");
+            }
+
+            Console.WriteLine($"  Character moving: {IsCharacterMoving()}");
+            Console.WriteLine($"  Movement detected since start: {movementDetectedSinceStart}");
+            Console.WriteLine($"  Current speed: {speed:F1}");
+            Console.WriteLine($"  Invisibility code: {invisibilityCode}");
+        }
+    }
+
+    // Modify your Main method to start the motion detection thread
+    // Add this line after you find the window handle and before the main loop:
+    // StartMotionDetectionThread();
+
+    // Also modify the quit section in your Main method:
+    // Before Environment.Exit(0), add:
+    // StopMotionDetectionThread();
+
     static void Main()
     {
         Console.WriteLine("Starting RealeraDX Auto-Potions...");
@@ -1074,11 +1444,22 @@ class Program
         Console.WriteLine($"Y: {currentY} (absolute value)");
         Console.WriteLine($"Z: {currentZ} (absolute value)");
         Console.WriteLine($"InvisibilityCode: {invisibilityCode}");
+        Console.WriteLine($"Speed: {speed}");
         Console.WriteLine("\nControls:");
         Console.WriteLine("Q - Quit");
         Console.WriteLine("E - Drag items from backpack to ground (8x)");
         Console.WriteLine("R - Drag items from ground to backpack (8x)");
         Console.WriteLine("P - Execute action sequence");
+        Console.WriteLine("M - Reset motion detection");
+        Console.WriteLine("N - Check if character is moving");
+        Console.WriteLine("T - Reset spell timers");
+        Console.WriteLine("S - Show spell status");
+        Console.WriteLine("\nAuto-spells:");
+        Console.WriteLine("- Utani Gran Hur (\\): Every 20 seconds when moving");
+        Console.WriteLine("- Utana Vid (F11): Every 3 minutes when invisible");
+        Console.WriteLine("- Minimum 3 seconds between any spells");
+
+        StartMotionDetectionThread();
 
         while (programRunning)
         {
@@ -1095,6 +1476,7 @@ class Program
                         Console.WriteLine("\nQuitting...");
                         programRunning = false;
                         cancellationTokenSource.Cancel();
+                        StopMotionDetectionThread(); // Add this line
                         Environment.Exit(0);
                     }
                     else if (key == ConsoleKey.E)
@@ -1134,6 +1516,25 @@ class Program
                         {
                             Console.WriteLine("Action sequence already in progress...");
                         }
+                    }
+                    else if (key == ConsoleKey.S)
+                    {
+                        PrintSpellStatus();
+                    }
+                    else if (key == ConsoleKey.M)
+                    {
+                        Console.WriteLine("Resetting motion detection...");
+                        ResetMotionDetection();
+                    }
+                    else if (key == ConsoleKey.N)
+                    {
+                        bool moving = IsCharacterMoving();
+                        Console.WriteLine($"Character is currently moving: {moving}");
+                    }
+                    else if (key == ConsoleKey.T)
+                    {
+                        Console.WriteLine("Resetting spell timers...");
+                        ResetSpellTimers();
                     }
                 }
 
@@ -1451,6 +1852,7 @@ class Program
 
         targetId = ReadInt32(TARGET_ID_OFFSET);
         invisibilityCode = ReadIntFromPointerOffset(INVIS_OFFSET);
+        speed = ReadIntFromPointerOffset(SPEED_OFFSET);
     }
 
 
@@ -1889,11 +2291,11 @@ class Program
                     // Re-read position
                     ReadMemoryValues();
 
-                    // Handle invisibility
-                    if (invisibilityCode == 1)
-                    {
-                        SendKeyPress(VK_F11);
-                    }
+                    //// Handle invisibility
+                    //if (invisibilityCode == 1)
+                    //{
+                    //    SendKeyPress(VK_F11);
+                    //}
 
                     double hpPercent = (curHP / maxHP) * 100;
                     double manaPercent = (curMana / maxMana) * 100;
@@ -2178,11 +2580,11 @@ class Program
                 }
 
                 ReadMemoryValues();
-                if(invisibilityCode == 1)
-                {
-                    SendKeyPress(VK_F11);
-                    Thread.Sleep(1000);
-                }
+                //if(invisibilityCode == 1)
+                //{
+                //    SendKeyPress(VK_F11);
+                //    Thread.Sleep(1000);
+                //}
 
                 double hpPercent = (curHP / maxHP) * 100;
                 double manaPercent = (curMana / maxMana) * 100;
@@ -2257,9 +2659,9 @@ class Program
                         }
 
                         ReadMemoryValues();
-                        if (invisibilityCode == 1){
-                            SendKeyPress(VK_F11);
-                        }
+                        //if (invisibilityCode == 1){
+                        //    SendKeyPress(VK_F11);
+                        //}
 
                         hpPercent = (curHP / maxHP) * 100;
                         manaPercent = (curMana / maxMana) * 100;
