@@ -218,7 +218,7 @@ class Program
 
         public override bool Execute()
         {
-            Console.WriteLine("Scanning backpack for recognized items");
+            //Debugger("Scanning backpack for recognized items");
             ScanBackpackForRecognizedItems();
             return true;
         }
@@ -254,13 +254,13 @@ class Program
 
         public override bool Execute()
         {
-            Console.WriteLine($"Moving to position ({TargetX}, {TargetY}, {TargetZ})");
+            Debugger($"Moving to position ({TargetX}, {TargetY}, {TargetZ})");
 
             // Click on the waypoint
             ClickWaypoint(TargetX, TargetY);
 
             // Wait a moment for the click to register
-            Thread.Sleep(500);
+            //Thread.Sleep(500);
 
             return true; // We'll verify success separately
         }
@@ -275,14 +275,14 @@ class Program
                 ReadMemoryValues();
                 if (IsAtPosition(TargetX, TargetY, TargetZ))
                 {
-                    Console.WriteLine($"Successfully reached position ({TargetX}, {TargetY}, {TargetZ})");
-                    Thread.Sleep(600);
+                    Debugger($"Successfully reached position ({TargetX}, {TargetY}, {TargetZ})");
+                    //Thread.Sleep(600);
                     return true;
                 }
-                
+
             }
 
-            Console.WriteLine($"Failed to reach position ({TargetX}, {TargetY}, {TargetZ}) within {TimeoutMs}ms");
+            Debugger($"Failed to reach position ({TargetX}, {TargetY}, {TargetZ}) within {TimeoutMs}ms");
             return false;
         }
 
@@ -304,7 +304,7 @@ class Program
 
         public override bool Execute()
         {
-            Console.WriteLine("Right-clicking on character position");
+            Debugger("Right-clicking on character position");
             RightClickOnCharacter();
             return true;
         }
@@ -358,14 +358,14 @@ class Program
             bool reverseDirection = Direction == DragDirection.GroundToBackpack;
             string directionName = reverseDirection ? "ground to backpack" : "backpack to ground";
 
-            Console.WriteLine($"Dragging {ItemCount} items from {directionName}");
+            Debugger($"Dragging {ItemCount} items from {directionName}");
 
             try
             {
-                
+
 
                 int groundYLocal = groundY;
-                if(directionName == "backpack to ground" && Backpack == DragBackpack.MANAS)
+                if (directionName == "backpack to ground" && Backpack == DragBackpack.MANAS)
                 {
                     groundYLocal = groundY + 4 * WAYPOINT_SIZE + 5;
                 }
@@ -379,7 +379,7 @@ class Program
                 }
                 RECT clientRect;
                 GetClientRect(targetWindow, out clientRect);
-               
+
                 if (reverseDirection)
                 {
                     localX += 125;
@@ -410,7 +410,7 @@ class Program
                 for (int i = 1; i <= ItemCount; i++)
                 {
                     DragItem(sourcePoint.X, sourcePoint.Y, destPoint.X, destPoint.Y);
-                    Console.WriteLine($"Drag #{i} completed... ({i}/{ItemCount})");
+                    Debugger($"Drag #{i} completed... ({i}/{ItemCount})");
 
                     if (DelayBetweenDrags > 0 && i < ItemCount)
                     {
@@ -418,12 +418,12 @@ class Program
                     }
                 }
 
-                Console.WriteLine($"All {ItemCount} item drags completed ({directionName}).");
+                Debugger($"All {ItemCount} item drags completed ({directionName}).");
                 return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error during drag action: {ex.Message}");
+                Debugger($"Error during drag action: {ex.Message}");
                 return false;
             }
         }
@@ -449,7 +449,7 @@ class Program
         public override bool Execute()
         {
             string keyName = GetKeyName(KeyCode);
-            Console.WriteLine($"Pressing {keyName}");
+            Debugger($"Pressing {keyName}");
 
             SendKeyPress(KeyCode);
             return true;
@@ -504,35 +504,130 @@ class Program
 
         public ArrowDirection Direction { get; set; }
         public int DelayMs { get; set; }
+        public bool ExpectZChange { get; set; } = false; // New property to indicate if this arrow action should change Z
 
-        public ArrowAction(ArrowDirection direction, int delayMs = 100)
+        public ArrowAction(ArrowDirection direction, int delayMs = 100, bool expectZChange = false)
         {
             Direction = direction;
             DelayMs = delayMs;
+            ExpectZChange = expectZChange;
+            MaxRetries = 10; // Set higher retry count for Z-level changes
         }
 
         public override bool Execute()
         {
-            int keyCode = GetArrowKeyCode(Direction);
-            string directionName = Direction.ToString();
-            Console.WriteLine($"Pressing Arrow {directionName}");
+            if (!ExpectZChange)
+            {
+                // Normal arrow key press without Z-level verification
+                int keyCode = GetArrowKeyCode(Direction);
+                string directionName = Direction.ToString();
+                Debugger($"Pressing Arrow {directionName}");
 
-            SendKeyPress(keyCode);
-            return true;
+                SendKeyPress(keyCode);
+                return true;
+            }
+
+            // Z-level change verification logic
+            Debugger($"Arrow {Direction} with Z-level change verification");
+
+            // Store original position
+            ReadMemoryValues();
+            int originalX = currentX;
+            int originalY = currentY;
+            int originalZ = currentZ;
+
+            Debugger($"Original position: ({originalX}, {originalY}, {originalZ})");
+
+            int maxAttempts = MaxRetries;
+            int attempt = 1;
+
+            while (attempt <= maxAttempts)
+            {
+                Debugger($"Attempt {attempt}/{maxAttempts} - Z-level change");
+
+                // Execute the arrow key press
+                int keyCode = GetArrowKeyCode(Direction);
+                SendKeyPress(keyCode);
+
+                // Wait for the action to complete
+                Thread.Sleep(Math.Max(DelayMs, 500)); // Minimum 500ms for Z-level changes
+
+                // Check if Z-level changed
+                ReadMemoryValues();
+                bool zChanged = currentZ != originalZ;
+
+                Debugger($"After arrow press: ({currentX}, {currentY}, {currentZ}) - Z changed: {zChanged}");
+
+                if (zChanged)
+                {
+                    Debugger($"Success! Z-level changed from {originalZ} to {currentZ}");
+                    return true;
+                }
+
+                // Z didn't change - return to original position if we moved
+                if (currentX != originalX || currentY != originalY)
+                {
+                    Debugger($"Z didn't change but position moved. Returning to original position...");
+
+                    // Create and execute a MoveAction to return to original position
+                    var returnAction = new MoveAction(originalX, originalY, originalZ, 2000);
+
+                    // Execute the return move
+                    if (!returnAction.Execute())
+                    {
+                        Debugger($"Failed to execute return movement on attempt {attempt}");
+                    }
+
+                    // Verify the return move
+                    if (!returnAction.VerifySuccess())
+                    {
+                        Debugger($"Failed to verify return movement on attempt {attempt}");
+                        // Continue to next attempt even if return failed
+                    }
+                    else
+                    {
+                        Debugger($"Successfully returned to original position");
+                    }
+                }
+
+                attempt++;
+
+                // Wait before next attempt
+                if (attempt <= maxAttempts)
+                {
+                    Thread.Sleep(500);
+                }
+            }
+
+            Debugger($"Failed to change Z-level after {maxAttempts} attempts");
+            return false;
         }
 
         public override bool VerifySuccess()
         {
-            if (DelayMs > 0)
+            if (!ExpectZChange)
             {
-                Thread.Sleep(DelayMs);
+                // For normal arrow actions, just wait the delay
+                if (DelayMs > 0)
+                {
+                    Thread.Sleep(DelayMs);
+                }
+                return true;
             }
+
+            // For Z-level changes, the verification is already done in Execute()
+            // so we just return true here
             return true;
         }
 
         public override string GetDescription()
         {
-            return $"Press Arrow {Direction}";
+            string baseDescription = $"Press Arrow {Direction}";
+            if (ExpectZChange)
+            {
+                baseDescription += " (with Z-level verification)";
+            }
+            return baseDescription;
         }
 
         private int GetArrowKeyCode(ArrowDirection direction)
@@ -559,7 +654,7 @@ class Program
         //// Base coordinates
         int baseX = 32597, baseY = 32747, baseZ = 7;
 
-  
+
         actionSequence.Add(new FightTarantulasAction());
 
 
@@ -651,10 +746,10 @@ class Program
         actionSequence.Add(new MoveAction(baseX + 2, baseY - 4, baseZ + 0));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
 
-        Console.WriteLine($"Initialized action sequence with {actionSequence.Count} actions:");
+        Debugger($"Initialized action sequence with {actionSequence.Count} actions:");
         for (int i = 0; i < actionSequence.Count; i++)
         {
-            Console.WriteLine($"  {i + 1}: {actionSequence[i].GetDescription()}");
+            Debugger($"  {i + 1}: {actionSequence[i].GetDescription()}");
         }
     }
 
@@ -898,10 +993,10 @@ class Program
         actionSequence.Add(new MoveAction(baseX + 2, baseY - 4, baseZ + 0));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
 
-        Console.WriteLine($"Initialized action sequence with {actionSequence.Count} actions:");
+        Debugger($"Initialized action sequence with {actionSequence.Count} actions:");
         for (int i = 0; i < actionSequence.Count; i++)
         {
-            Console.WriteLine($"  {i + 1}: {actionSequence[i].GetDescription()}");
+            Debugger($"  {i + 1}: {actionSequence[i].GetDescription()}");
         }
     }
 
@@ -1010,13 +1105,13 @@ class Program
         actionSequence.Add(new MoveAction(baseX + 2, baseY - 4, baseZ + 0));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
 
-        Console.WriteLine($"Initialized action sequence with {actionSequence.Count} actions:");
+        Debugger($"Initialized action sequence with {actionSequence.Count} actions:");
         for (int i = 0; i < actionSequence.Count; i++)
         {
-            Console.WriteLine($"  {i + 1}: {actionSequence[i].GetDescription()}");
+            Debugger($"  {i + 1}: {actionSequence[i].GetDescription()}");
         }
 
-  
+
     }
 
     // Updated ExecuteActionSequence with retry logic
@@ -1027,18 +1122,18 @@ class Program
             actionSequenceRunning = true;
             currentActionIndex = 0;
 
-            Console.WriteLine("Action sequence started...");
+            Debugger("Action sequence started...");
 
             for (currentActionIndex = 0; currentActionIndex < actionSequence.Count; currentActionIndex++)
             {
                 if (cancellationTokenSource.Token.IsCancellationRequested || !programRunning)
                 {
-                    Console.WriteLine("Action sequence cancelled.");
+                    Debugger("Action sequence cancelled.");
                     break;
                 }
 
                 var action = actionSequence[currentActionIndex];
-                Console.WriteLine($"\nExecuting action {currentActionIndex + 1}/{actionSequence.Count}: {action.GetDescription()}");
+                Debugger($"Executing action {currentActionIndex + 1}/{actionSequence.Count}: {action.GetDescription()}");
 
                 bool success = false;
                 int retryCount = 0;
@@ -1048,7 +1143,7 @@ class Program
                 {
                     if (retryCount > 0)
                     {
-                        Console.WriteLine($"Retry attempt {retryCount}/{action.MaxRetries} for action: {action.GetDescription()}");
+                        Debugger($"Retry attempt {retryCount}/{action.MaxRetries} for action: {action.GetDescription()}");
                     }
 
                     double hpPercent = (curHP / maxHP) * 100;
@@ -1062,7 +1157,7 @@ class Program
                         {
                             SendKeyPress(VK_F1);
                             lastHpAction = DateTime.Now;
-                            Console.WriteLine($"HP low ({hpPercent:F1}%) - pressed F1");
+                            Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
                         }
                     }
 
@@ -1073,7 +1168,7 @@ class Program
                         {
                             SendKeyPress(VK_F3);
                             lastManaAction = DateTime.Now;
-                            Console.WriteLine($"Mana low ({mana:F1}) - pressed F3");
+                            Debugger($"Mana low ({mana:F1}) - pressed F3");
                         }
                     }
 
@@ -1086,12 +1181,12 @@ class Program
 
                         if (!success)
                         {
-                            Console.WriteLine($"Action executed but verification failed.");
+                            Debugger($"Action executed but verification failed.");
                         }
                     }
                     else
                     {
-                        Console.WriteLine($"Action execution failed.");
+                        Debugger($"Action execution failed.");
                     }
 
                     if (!success)
@@ -1107,14 +1202,14 @@ class Program
 
                 if (!success)
                 {
-                    Console.WriteLine($"Action {currentActionIndex + 1} failed after {action.MaxRetries} attempts. Exiting program.");
+                    Debugger($"Action {currentActionIndex + 1} failed after {action.MaxRetries} attempts. Exiting program.");
                     programRunning = false;
                     break;
                 }
 
                 // Read and display current coordinates after each successful action
                 ReadMemoryValues();
-                Console.WriteLine($"Current coordinates: ({currentX}, {currentY}, {currentZ})");
+                //Debugger($"Current coordinates: ({currentX}, {currentY}, {currentZ})");
 
                 // Small delay between actions
                 Thread.Sleep(200);
@@ -1122,12 +1217,12 @@ class Program
 
             if (currentActionIndex >= actionSequence.Count && programRunning)
             {
-                Console.WriteLine("\nAction sequence completed successfully!");
+                Debugger("\nAction sequence completed successfully!");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error during action sequence: {ex.Message}");
+            Debugger($"Error during action sequence: {ex.Message}");
         }
         finally
         {
@@ -1177,7 +1272,7 @@ class Program
         ReadMemoryValues();
         if (motionDetectionThread != null && motionDetectionThread.IsAlive)
         {
-            Console.WriteLine("[MOTION] Motion detection thread already running");
+            Debugger("[MOTION] Motion detection thread already running");
             return;
         }
 
@@ -1189,7 +1284,7 @@ class Program
             Name = "MotionDetectionThread"
         };
         motionDetectionThread.Start();
-        Console.WriteLine("[MOTION] Motion detection thread started");
+        Debugger("[MOTION] Motion detection thread started");
     }
 
     // Add this method to stop the motion detection thread
@@ -1199,7 +1294,7 @@ class Program
         if (motionDetectionThread != null && motionDetectionThread.IsAlive)
         {
             motionDetectionThread.Join(2000);
-            Console.WriteLine("[MOTION] Motion detection thread stopped");
+            Debugger("[MOTION] Motion detection thread stopped");
         }
     }
 
@@ -1218,11 +1313,11 @@ class Program
             DateTime lastAnySpell = GetLatestSpellTime();
             if ((now - lastAnySpell).TotalSeconds < MIN_SPELL_INTERVAL_SECONDS)
             {
-                Console.WriteLine($"[MOTION] Delaying {spellName} cast - too close to previous spell");
+                Debugger($"[MOTION] Delaying {spellName} cast - too close to previous spell");
                 return false;
             }
 
-            Console.WriteLine($"[MOTION] Casting {spellName}");
+            Debugger($"[MOTION] Casting {spellName}");
             SendKeyPress(keyCode);
             lastCastTime = now;
             return true;
@@ -1241,7 +1336,7 @@ class Program
     {
         ReadMemoryValues();
         bool success = speed >= MIN_SPEED_FOR_UTANI_GRAN_HUR;
-        Console.WriteLine($"[MOTION] Utani Gran Hur validation - Speed: {speed:F1}, Success: {success}");
+        Debugger($"[MOTION] Utani Gran Hur validation - Speed: {speed:F1}, Success: {success}");
         return success;
     }
 
@@ -1260,7 +1355,7 @@ class Program
 
     static void MotionDetectionWorker()
     {
-        Console.WriteLine("[MOTION] Motion detection worker started");
+        Debugger("[MOTION] Motion detection worker started");
 
         try
         {
@@ -1286,7 +1381,7 @@ class Program
                                 Y = currentPosition.Y,
                                 Z = currentPosition.Z
                             };
-                            Console.WriteLine($"[MOTION] Initial position set: ({currentPosition.X}, {currentPosition.Y}, {currentPosition.Z})");
+                            Debugger($"[MOTION] Initial position set: ({currentPosition.X}, {currentPosition.Y}, {currentPosition.Z})");
                         }
                         else
                         {
@@ -1302,14 +1397,14 @@ class Program
                                 if (!movementDetectedSinceStart)
                                 {
                                     movementDetectedSinceStart = true;
-                                    Console.WriteLine("[MOTION] First movement detected since start - utana vid now eligible");
+                                    //Debugger("[MOTION] First movement detected since start - utana vid now eligible");
                                 }
 
                                 int distanceX = Math.Abs(currentPosition.X - lastKnownPosition.X);
                                 int distanceY = Math.Abs(currentPosition.Y - lastKnownPosition.Y);
                                 if (distanceX > 1 || distanceY > 1 || currentPosition.Z != lastKnownPosition.Z)
                                 {
-                                    Console.WriteLine($"[MOTION] Significant movement detected: ({lastKnownPosition.X}, {lastKnownPosition.Y}, {lastKnownPosition.Z}) -> ({currentPosition.X}, {currentPosition.Y}, {currentPosition.Z})");
+                                    //Debugger($"[MOTION] Significant movement detected: ({lastKnownPosition.X}, {lastKnownPosition.Y}, {lastKnownPosition.Z}) -> ({currentPosition.X}, {currentPosition.Y}, {currentPosition.Z})");
                                 }
 
                                 lastKnownPosition.X = currentPosition.X;
@@ -1321,7 +1416,7 @@ class Program
                                 if (characterIsMoving && (DateTime.Now - lastMotionTime).TotalSeconds > 3)
                                 {
                                     characterIsMoving = false;
-                                    Console.WriteLine("[MOTION] Character stopped moving");
+                                    Debugger("[MOTION] Character stopped moving");
                                 }
                             }
                         }
@@ -1330,6 +1425,7 @@ class Program
                     DateTime now = DateTime.Now;
                     bool needsUtanaVid = invisibilityCode == 1;
 
+                    ReadMemoryValues();
                     // Check if we need to cast utana vid (F11)
                     if (movementDetectedSinceStart && needsUtanaVid)
                     {
@@ -1343,10 +1439,10 @@ class Program
                                  lastUtanaVidAttemptTime > lastUtanaVidTime)
                         {
                             shouldCastUtanaVid = true;
-                            Console.WriteLine("[MOTION] Retrying utana vid (previous attempt failed)");
+                            Debugger("[MOTION] Retrying utana vid (previous attempt failed)");
                         }
 
-                        if (shouldCastUtanaVid && curMana > 440)
+                        if (shouldCastUtanaVid && curMana > 440 && (currentX >= 32706))
                         {
                             lastUtanaVidAttemptTime = now;
 
@@ -1356,18 +1452,18 @@ class Program
 
                                 if (CheckUtanaVidSuccess())
                                 {
-                                    Console.WriteLine("[MOTION] Utana vid successful - invisibility removed");
+                                    Debugger("[MOTION] Utana vid successful - invisibility removed");
                                 }
                                 else
                                 {
-                                    Console.WriteLine("[MOTION] Utana vid failed - still invisible, will retry");
+                                    Debugger("[MOTION] Utana vid failed - still invisible, will retry");
                                     lastUtanaVidTime = lastUtanaVidAttemptTime - TimeSpan.FromSeconds(UTANA_VID_INTERVAL_SECONDS);
                                 }
                             }
                         }
                     }
                     // Check if we need to cast utani gran hur (backslash)
-                    else if (characterIsMoving)
+                    if (characterIsMoving)
                     {
                         bool shouldCastUtaniGranHur = false;
 
@@ -1379,7 +1475,7 @@ class Program
                                  lastUtaniGranHurAttemptTime > lastUtaniGranHurTime)
                         {
                             shouldCastUtaniGranHur = true;
-                            Console.WriteLine("[MOTION] Retrying utani gran hur (previous attempt failed)");
+                            Debugger("[MOTION] Retrying utani gran hur (previous attempt failed)");
                         }
 
                         if (currentZ != 8 && shouldCastUtaniGranHur && curMana > 100)
@@ -1392,11 +1488,11 @@ class Program
 
                                 if (CheckUtaniGranHurSuccess())
                                 {
-                                    Console.WriteLine("[MOTION] Utani gran hur successful - speed increased");
+                                    Debugger("[MOTION] Utani gran hur successful - speed increased");
                                 }
                                 else
                                 {
-                                    Console.WriteLine("[MOTION] Utani gran hur failed - speed too low, will retry");
+                                    Debugger("[MOTION] Utani gran hur failed - speed too low, will retry");
                                     lastUtaniGranHurTime = lastUtaniGranHurAttemptTime - TimeSpan.FromSeconds(UTANI_GRAN_HUR_INTERVAL_SECONDS);
                                 }
                             }
@@ -1407,18 +1503,18 @@ class Program
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[MOTION] Error in motion detection loop: {ex.Message}");
+                    Debugger($"[MOTION] Error in motion detection loop: {ex.Message}");
                     Thread.Sleep(1000);
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[MOTION] Fatal error in motion detection thread: {ex.Message}");
+            Debugger($"[MOTION] Fatal error in motion detection thread: {ex.Message}");
         }
         finally
         {
-            Console.WriteLine("[MOTION] Motion detection worker stopped");
+            Debugger("[MOTION] Motion detection worker stopped");
         }
     }
 
@@ -1431,7 +1527,7 @@ class Program
             characterIsMoving = false;
             lastMotionTime = DateTime.MinValue;
             movementDetectedSinceStart = false;
-            Console.WriteLine("[MOTION] Motion detection reset - movement eligibility reset");
+            Debugger("[MOTION] Motion detection reset - movement eligibility reset");
         }
     }
 
@@ -1444,7 +1540,7 @@ class Program
             lastUtaniGranHurAttemptTime = DateTime.MinValue;
             lastUtanaVidTime = DateTime.MinValue;
             lastUtanaVidAttemptTime = DateTime.MinValue;
-            Console.WriteLine("[MOTION] Spell timers reset");
+            Debugger("[MOTION] Spell timers reset");
         }
     }
 
@@ -1469,16 +1565,16 @@ class Program
             double utanaVidRetryCooldown = UTANA_VID_RETRY_INTERVAL_SECONDS - (now - lastUtanaVidAttemptTime).TotalSeconds;
             double utaniGranHurRetryCooldown = UTANI_GRAN_HUR_RETRY_INTERVAL_SECONDS - (now - lastUtaniGranHurAttemptTime).TotalSeconds;
 
-            Console.WriteLine("[MOTION] Spell Status:");
+            Debugger("[MOTION] Spell Status:");
 
             // Utani Gran Hur status
             if (lastUtaniGranHurAttemptTime > lastUtaniGranHurTime && speed < MIN_SPEED_FOR_UTANI_GRAN_HUR)
             {
-                Console.WriteLine($"  Utani Gran Hur: {(utaniGranHurRetryCooldown > 0 ? $"{utaniGranHurRetryCooldown:F1}s retry cooldown" : "Ready to retry")} (last attempt failed)");
+                Debugger($"  Utani Gran Hur: {(utaniGranHurRetryCooldown > 0 ? $"{utaniGranHurRetryCooldown:F1}s retry cooldown" : "Ready to retry")} (last attempt failed)");
             }
             else
             {
-                Console.WriteLine($"  Utani Gran Hur: {(utaniGranHurCooldown > 0 ? $"{utaniGranHurCooldown:F1}s cooldown" : "Ready")}");
+                Debugger($"  Utani Gran Hur: {(utaniGranHurCooldown > 0 ? $"{utaniGranHurCooldown:F1}s cooldown" : "Ready")}");
             }
 
             // Utana Vid status
@@ -1486,22 +1582,22 @@ class Program
             {
                 if (lastUtanaVidAttemptTime > lastUtanaVidTime && invisibilityCode == 1)
                 {
-                    Console.WriteLine($"  Utana Vid: {(utanaVidRetryCooldown > 0 ? $"{utanaVidRetryCooldown:F1}s retry cooldown" : "Ready to retry")} (last attempt failed)");
+                    Debugger($"  Utana Vid: {(utanaVidRetryCooldown > 0 ? $"{utanaVidRetryCooldown:F1}s retry cooldown" : "Ready to retry")} (last attempt failed)");
                 }
                 else
                 {
-                    Console.WriteLine($"  Utana Vid: {(utanaVidCooldown > 0 ? $"{utanaVidCooldown:F1}s cooldown" : "Ready")}");
+                    Debugger($"  Utana Vid: {(utanaVidCooldown > 0 ? $"{utanaVidCooldown:F1}s cooldown" : "Ready")}");
                 }
             }
             else
             {
-                Console.WriteLine("  Utana Vid: Waiting for movement before becoming eligible");
+                Debugger("  Utana Vid: Waiting for movement before becoming eligible");
             }
 
-            Console.WriteLine($"  Character moving: {IsCharacterMoving()}");
-            Console.WriteLine($"  Movement detected since start: {movementDetectedSinceStart}");
-            Console.WriteLine($"  Current speed: {speed:F1}");
-            Console.WriteLine($"  Invisibility code: {invisibilityCode}");
+            Debugger($"  Character moving: {IsCharacterMoving()}");
+            Debugger($"  Movement detected since start: {movementDetectedSinceStart}");
+            Debugger($"  Current speed: {speed:F1}");
+            Debugger($"  Invisibility code: {invisibilityCode}");
         }
     }
 
@@ -1512,10 +1608,84 @@ class Program
     // Also modify the quit section in your Main method:
     // Before Environment.Exit(0), add:
     // StopMotionDetectionThread();
+    static Thread qKeyListenerThread;
+    static bool qKeyListenerRunning = false;
+
+    // Add this method to start the Q key listener thread
+    static void StartQKeyListenerThread()
+    {
+        if (qKeyListenerThread != null && qKeyListenerThread.IsAlive)
+        {
+            Debugger("[Q-KEY] Q key listener thread already running");
+            return;
+        }
+
+        qKeyListenerRunning = true;
+        qKeyListenerThread = new Thread(QKeyListenerWorker)
+        {
+            IsBackground = true,
+            Name = "QKeyListenerThread"
+        };
+        qKeyListenerThread.Start();
+        Debugger("[Q-KEY] Q key listener thread started - press Q at any time to quit");
+    }
+
+    static void QKeyListenerWorker()
+    {
+        Debugger("[Q-KEY] Q key listener worker started");
+
+        try
+        {
+            while (qKeyListenerRunning && programRunning)
+            {
+                try
+                {
+                    if (Console.KeyAvailable)
+                    {
+                        var key = Console.ReadKey(true).Key;
+
+                        if (key == ConsoleKey.Q)
+                        {
+                            Debugger("\n[Q-KEY] Q key pressed - shutting down program...");
+
+                            // Set flags to stop everything
+                            programRunning = false;
+                            qKeyListenerRunning = false;
+                            actionSequenceRunning = false;
+                            cancellationTokenSource.Cancel();
+
+                            // Stop all other threads
+                            StopMotionDetectionThread();
+                            StopSoulPositionMonitorThread();
+
+                            Debugger("[Q-KEY] Cleanup completed - exiting...");
+                            Environment.Exit(0);
+                        }
+                    }
+
+                    // Check every 100ms for better responsiveness
+                    Thread.Sleep(100);
+                }
+                catch (Exception ex)
+                {
+                    Debugger($"[Q-KEY] Error in Q key listener: {ex.Message}");
+                    Thread.Sleep(1000);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debugger($"[Q-KEY] Fatal error in Q key listener thread: {ex.Message}");
+        }
+        finally
+        {
+            Debugger("[Q-KEY] Q key listener worker stopped");
+        }
+    }
 
     static void Main()
     {
-        Console.WriteLine("Starting RealeraDX Auto-Potions...");
+        Debugger("Starting RealeraDX Auto-Potions...");
         ShowAllProcessesWithWindows();
 
         // Initialize action sequence
@@ -1525,7 +1695,7 @@ class Program
         Process process = FindRealeraProcess();
         if (process == null)
         {
-            Console.WriteLine("RealeraDX process not found!");
+            Debugger("RealeraDX process not found!");
             return;
         }
 
@@ -1537,31 +1707,32 @@ class Program
         FindRealeraWindow(process);
 
         ReadMemoryValues();
-        Console.WriteLine($"Found RealeraDX process (ID: {process.Id})");
-        Console.WriteLine($"Window handle: {targetWindow}");
-        Console.WriteLine("\nThresholds:");
-        Console.WriteLine($"HP: {HP_THRESHOLD}%");
-        Console.WriteLine($"Mana: {MANA_THRESHOLD}");
-        Console.WriteLine($"Soul: {SOUL_THRESHOLD} (absolute value)");
-        Console.WriteLine($"X: {currentX} (absolute value)");
-        Console.WriteLine($"Y: {currentY} (absolute value)");
-        Console.WriteLine($"Z: {currentZ} (absolute value)");
-        Console.WriteLine($"InvisibilityCode: {invisibilityCode}");
-        Console.WriteLine($"Speed: {speed}");
-        Console.WriteLine("\nControls:");
-        Console.WriteLine("Q - Quit");
-        Console.WriteLine("E - Drag items from backpack to ground (8x)");
-        Console.WriteLine("R - Drag items from ground to backpack (8x)");
-        Console.WriteLine("P - Execute action sequence");
-        Console.WriteLine("M - Reset motion detection");
-        Console.WriteLine("N - Check if character is moving");
-        Console.WriteLine("T - Reset spell timers");
-        Console.WriteLine("S - Show spell status");
-        Console.WriteLine("\nAuto-spells:");
-        Console.WriteLine("- Utani Gran Hur (\\): Every 20 seconds when moving");
-        Console.WriteLine("- Utana Vid (F11): Every 3 minutes when invisible");
-        Console.WriteLine("- Minimum 3 seconds between any spells");
+        Debugger($"Found RealeraDX process (ID: {process.Id})");
+        Debugger($"Window handle: {targetWindow}");
+        Debugger("\nThresholds:");
+        Debugger($"HP: {HP_THRESHOLD}%");
+        Debugger($"Mana: {MANA_THRESHOLD}");
+        Debugger($"Soul: {SOUL_THRESHOLD} (absolute value)");
+        Debugger($"X: {currentX} (absolute value)");
+        Debugger($"Y: {currentY} (absolute value)");
+        Debugger($"Z: {currentZ} (absolute value)");
+        Debugger($"InvisibilityCode: {invisibilityCode}");
+        Debugger($"Speed: {speed}");
+        Debugger("\nControls:");
+        Debugger("Q - Quit");
+        Debugger("E - Drag items from backpack to ground (8x)");
+        Debugger("R - Drag items from ground to backpack (8x)");
+        Debugger("P - Execute action sequence");
+        Debugger("M - Reset motion detection");
+        Debugger("N - Check if character is moving");
+        Debugger("T - Reset spell timers");
+        Debugger("S - Show spell status");
+        Debugger("\nAuto-spells:");
+        Debugger("- Utani Gran Hur (\\): Every 20 seconds when moving");
+        Debugger("- Utana Vid (F11): Every 3 minutes when invisible");
+        Debugger("- Minimum 3 seconds between any spells");
 
+        StartQKeyListenerThread();
         StartMotionDetectionThread();
         StartSoulPositionMonitorThread();
 
@@ -1577,7 +1748,7 @@ class Program
 
                     if (key == ConsoleKey.Q)
                     {
-                        Console.WriteLine("\nQuitting...");
+                        Debugger("\nQuitting...");
                         programRunning = false;
                         cancellationTokenSource.Cancel();
                         StopMotionDetectionThread(); // Add this line
@@ -1588,38 +1759,38 @@ class Program
                     {
                         if (!itemDragInProgress)
                         {
-                            Console.WriteLine("Starting to drag items from backpack to ground (8x)...");
+                            Debugger("Starting to drag items from backpack to ground (8x)...");
                             currentDragCount = 0;
                             Task.Run(() => StartItemDragging(false));
                         }
                         else
                         {
-                            Console.WriteLine("Item dragging already in progress...");
+                            Debugger("Item dragging already in progress...");
                         }
                     }
                     else if (key == ConsoleKey.R)
                     {
                         if (!itemDragInProgress)
                         {
-                            Console.WriteLine("Starting to drag items from ground to backpack (8x)...");
+                            Debugger("Starting to drag items from ground to backpack (8x)...");
                             currentDragCount = 0;
                             Task.Run(() => StartItemDragging(true));
                         }
                         else
                         {
-                            Console.WriteLine("Item dragging already in progress...");
+                            Debugger("Item dragging already in progress...");
                         }
                     }
                     else if (key == ConsoleKey.P)
                     {
                         if (!actionSequenceRunning)
                         {
-                            Console.WriteLine("Starting action sequence...");
+                            Debugger("Starting action sequence...");
                             Task.Run(() => ExecuteActionSequence());
                         }
                         else
                         {
-                            Console.WriteLine("Action sequence already in progress...");
+                            Debugger("Action sequence already in progress...");
                         }
                     }
                     else if (key == ConsoleKey.S)
@@ -1628,17 +1799,17 @@ class Program
                     }
                     else if (key == ConsoleKey.M)
                     {
-                        Console.WriteLine("Resetting motion detection...");
+                        Debugger("Resetting motion detection...");
                         ResetMotionDetection();
                     }
                     else if (key == ConsoleKey.N)
                     {
                         bool moving = IsCharacterMoving();
-                        Console.WriteLine($"Character is currently moving: {moving}");
+                        Debugger($"Character is currently moving: {moving}");
                     }
                     else if (key == ConsoleKey.T)
                     {
-                        Console.WriteLine("Resetting spell timers...");
+                        Debugger("Resetting spell timers...");
                         ResetSpellTimers();
                     }
                 }
@@ -1654,7 +1825,7 @@ class Program
                     {
                         SendKeyPress(VK_F1);
                         lastHpAction = DateTime.Now;
-                        Console.WriteLine($"HP low ({hpPercent:F1}%) - pressed F1");
+                        Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
                     }
                 }
 
@@ -1665,7 +1836,7 @@ class Program
                     {
                         SendKeyPress(VK_F3);
                         lastManaAction = DateTime.Now;
-                        Console.WriteLine($"Mana low ({mana:F1}) - pressed F3");
+                        Debugger($"Mana low ({mana:F1}) - pressed F3");
                     }
                 }
                 // Mana & Soul check
@@ -1675,10 +1846,10 @@ class Program
                     {
                         SendKeyPress(VK_F2);
                         lastManaAction = DateTime.Now;
-                        Console.WriteLine($"Mana>900 ({curMana:F0}), Soul: ({curSoul:F1}) - pressed F2");
+                        Debugger($"Mana>900 ({curMana:F0}), Soul: ({curSoul:F1}) - pressed F2");
                     }
                 }
-                if(currentZ == 8)
+                if (currentZ == 8)
                 {
                     tarantulaSeqeunce();
                     ExecuteActionSequence();
@@ -1689,10 +1860,10 @@ class Program
                     ExecuteActionSequence();
                     SendKeyPress(VK_F2);
                     lastManaAction = DateTime.Now;
-                    Console.WriteLine($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
+                    Debugger($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
                     SendKeyPress(VK_F2);
                     lastManaAction = DateTime.Now;
-                    Console.WriteLine($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
+                    Debugger($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
                 }
                 else if (curMana >= MANA_THRESHOLD && curSoul >= 0 && curSoul <= 4)
                 {
@@ -1704,7 +1875,7 @@ class Program
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error: {ex.Message}");
+                Debugger($"Error: {ex.Message}");
                 Thread.Sleep(1000);
             }
         }
@@ -1744,7 +1915,7 @@ class Program
         SendMessage(targetWindow, WM_RBUTTONDOWN, 1, lParam);
         SendMessage(targetWindow, WM_RBUTTONUP, IntPtr.Zero, lParam);
 
-        Console.WriteLine($"Right-clicked on character at screen coordinates ({groundX}, {groundY})");
+        Debugger($"Right-clicked on character at screen coordinates ({groundX}, {groundY})");
     }
 
     static void StartItemDragging(bool reverseDirection)
@@ -1753,7 +1924,7 @@ class Program
         {
             itemDragInProgress = true;
             string direction = reverseDirection ? "ground to backpack" : "backpack to ground";
-            Console.WriteLine($"Item dragging task started ({direction})...");
+            Debugger($"Item dragging task started ({direction})...");
 
             RECT clientRect;
             GetClientRect(targetWindow, out clientRect);
@@ -1788,13 +1959,13 @@ class Program
             {
                 if (cancellationTokenSource.Token.IsCancellationRequested || !programRunning)
                 {
-                    Console.WriteLine($"Item dragging interrupted during drag #{currentDragCount}");
+                    Debugger($"Item dragging interrupted during drag #{currentDragCount}");
                     cancellationTokenSource = new CancellationTokenSource();
                     break;
                 }
 
                 DragItem(sourcePoint.X, sourcePoint.Y, destPoint.X, destPoint.Y);
-                Console.WriteLine($"Drag #{currentDragCount} completed... ({currentDragCount}/{MAX_DRAGS})");
+                Debugger($"Drag #{currentDragCount} completed... ({currentDragCount}/{MAX_DRAGS})");
 
                 try
                 {
@@ -1802,7 +1973,7 @@ class Program
                 }
                 catch (OperationCanceledException)
                 {
-                    Console.WriteLine("Item dragging cancelled");
+                    Debugger("Item dragging cancelled");
                     cancellationTokenSource = new CancellationTokenSource();
                     break;
                 }
@@ -1810,12 +1981,12 @@ class Program
 
             if (currentDragCount > MAX_DRAGS)
             {
-                Console.WriteLine($"All {MAX_DRAGS} item drags completed ({direction}).");
+                Debugger($"All {MAX_DRAGS} item drags completed ({direction}).");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error during item dragging: {ex.Message}");
+            Debugger($"Error during item dragging: {ex.Message}");
         }
         finally
         {
@@ -1836,12 +2007,12 @@ class Program
         ClientToScreen(targetWindow, ref destScreenPoint);
 
         // DEBUG: Show source position
-        Console.WriteLine($"[DEBUG] Moving cursor to source: Game({fromX}, {fromY}) -> Screen({sourceScreenPoint.X}, {sourceScreenPoint.Y})");
+        Debugger($"[DEBUG] Moving cursor to source: Game({fromX}, {fromY}) -> Screen({sourceScreenPoint.X}, {sourceScreenPoint.Y})");
         //SetCursorPos(fromX, fromY);
         //Thread.Sleep(4000);
 
         // DEBUG: Show destination position
-        Console.WriteLine($"[DEBUG] Moving cursor to destination: Game({toX}, {toY}) -> Screen({destScreenPoint.X}, {destScreenPoint.Y})");
+        Debugger($"[DEBUG] Moving cursor to destination: Game({toX}, {toY}) -> Screen({destScreenPoint.X}, {destScreenPoint.Y})");
         //SetCursorPos(destScreenPoint.X, destScreenPoint.Y);
         //Thread.Sleep(4000);
 
@@ -1864,7 +2035,7 @@ class Program
         PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, lParamTo);
         Thread.Sleep(1);
 
-        Console.WriteLine($"Dragged item from ({fromX}, {fromY}) to ({toX}, {toY})");
+        Debugger($"Dragged item from ({fromX}, {fromY}) to ({toX}, {toY})");
     }
 
     static Process FindRealeraProcess()
@@ -1876,7 +2047,7 @@ class Program
 
         if (processes.Length == 0)
         {
-            Console.WriteLine($"Process '{processName}' not found.");
+            Debugger($"Process '{processName}' not found.");
             return null;
         }
 
@@ -1886,26 +2057,26 @@ class Program
 
         if (targetProcess != null)
         {
-            Console.WriteLine($"Found target process: {targetProcess.ProcessName} (ID: {targetProcess.Id})");
-            Console.WriteLine($"Window Title: {targetProcess.MainWindowTitle}");
+            Debugger($"Found target process: {targetProcess.ProcessName} (ID: {targetProcess.Id})");
+            Debugger($"Window Title: {targetProcess.MainWindowTitle}");
             return targetProcess;
         }
         else if (processes.Length == 1)
         {
             var process = processes[0];
-            Console.WriteLine($"One process found: {process.ProcessName} (ID: {process.Id})");
-            Console.WriteLine($"Window Title: {process.MainWindowTitle}");
-            Console.WriteLine("WARNING: Process doesn't contain 'Knajtka Martynka' in title!");
+            Debugger($"One process found: {process.ProcessName} (ID: {process.Id})");
+            Debugger($"Window Title: {process.MainWindowTitle}");
+            Debugger("WARNING: Process doesn't contain 'Knajtka Martynka' in title!");
             return process;
         }
         else
         {
-            Console.WriteLine($"Multiple processes found with name '{processName}':");
+            Debugger($"Multiple processes found with name '{processName}':");
             for (int i = 0; i < processes.Length; i++)
             {
-                Console.WriteLine($"{i + 1}: ID={processes[i].Id}, Name={processes[i].ProcessName}, Window Title={processes[i].MainWindowTitle}, StartTime={(processes[i].StartTime)}");
+                Debugger($"{i + 1}: ID={processes[i].Id}, Name={processes[i].ProcessName}, Window Title={processes[i].MainWindowTitle}, StartTime={(processes[i].StartTime)}");
             }
-            Console.WriteLine("Enter the number of the process you want to select (1-9):");
+            Debugger("Enter the number of the process you want to select (1-9):");
             string input = Console.ReadLine();
             if (
                 int.TryParse(input, out int choice)
@@ -1914,13 +2085,13 @@ class Program
             )
             {
                 var selectedProc = processes[choice - 1];
-                Console.WriteLine($"Selected process: {selectedProc.ProcessName} (ID: {selectedProc.Id})");
-                Console.WriteLine($"Window Title: {selectedProc.MainWindowTitle}");
+                Debugger($"Selected process: {selectedProc.ProcessName} (ID: {selectedProc.Id})");
+                Debugger($"Window Title: {selectedProc.MainWindowTitle}");
                 return selectedProc;
             }
             else
             {
-                Console.WriteLine("Invalid selection. Please try again.");
+                Debugger("Invalid selection. Please try again.");
                 return null;
             }
         }
@@ -2023,7 +2194,7 @@ class Program
 
     static void ShowAllProcessesWithWindows()
     {
-        Console.WriteLine("\n=== REALERA PROCESSES WITH WINDOWS ===");
+        Debugger("\n=== REALERA PROCESSES WITH WINDOWS ===");
         var processes = Process.GetProcesses()
             .Where(p => p.ProcessName.Contains("Realera", StringComparison.OrdinalIgnoreCase))
             .Where(p => !string.IsNullOrEmpty(p.MainWindowTitle))
@@ -2033,18 +2204,17 @@ class Program
         {
             try
             {
-                Console.WriteLine($"Process: {process.ProcessName}");
-                Console.WriteLine($"  ID: {process.Id}");
-                Console.WriteLine($"  Main Window Title: '{process.MainWindowTitle}'");
-                Console.WriteLine($"  Window Handle: {process.MainWindowHandle}");
-                Console.WriteLine();
+                Debugger($"Process: {process.ProcessName}");
+                Debugger($"  ID: {process.Id}");
+                Debugger($"  Main Window Title: '{process.MainWindowTitle}'");
+                Debugger($"  Window Handle: {process.MainWindowHandle}");
             }
             catch
             {
                 // Some processes might not be accessible
             }
         }
-        Console.WriteLine("=======================================\n");
+        Debugger("=======================================\n");
     }
 
     static int firstSlotBpX = 840;
@@ -2086,9 +2256,9 @@ class Program
                     ClientToScreen(targetWindow, ref sourcePoint);
                     ClientToScreen(targetWindow, ref destPoint);
 
-                    Console.WriteLine($"[DROPS] Converting scan coords ({backpackPosition.Value.X}, {backpackPosition.Value.Y}) to game coords ({itemX}, {itemY})");
-                    Console.WriteLine($"[DROPS] Converting game coords to screen coords: ({itemX}, {itemY}) -> ({sourcePoint.X}, {sourcePoint.Y})");
-                    Console.WriteLine($"[DROPS] Destination screen coords: ({leftBackpackX}, {leftBackpackY}) -> ({destPoint.X}, {destPoint.Y})");
+                    Debugger($"[DROPS] Converting scan coords ({backpackPosition.Value.X}, {backpackPosition.Value.Y}) to game coords ({itemX}, {itemY})");
+                    Debugger($"[DROPS] Converting game coords to screen coords: ({itemX}, {itemY}) -> ({sourcePoint.X}, {sourcePoint.Y})");
+                    Debugger($"[DROPS] Destination screen coords: ({leftBackpackX}, {leftBackpackY}) -> ({destPoint.X}, {destPoint.Y})");
 
                     // Pass screen coordinates to DragItem
                     DragItem(sourcePoint.X, sourcePoint.Y, destPoint.X, destPoint.Y);
@@ -2097,12 +2267,13 @@ class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[DROPS] Error scanning backpack: {ex.Message}");
+            Debugger($"[DROPS] Error scanning backpack: {ex.Message}");
         }
     }
 
     static void SaveDebugScreenshot(Mat backpackArea, int scanLeft, int scanTop, int scanWidth, int scanHeight)
     {
+        return;
         try
         {
             string debugDir = "debug_screenshots";
@@ -2116,14 +2287,14 @@ class Program
 
             CvInvoke.Imwrite(filename, backpackArea);
 
-            Console.WriteLine($"[DEBUG] Screenshot saved: {filename}");
-            Console.WriteLine($"[DEBUG] Scan area: Left={scanLeft}, Top={scanTop}, Width={scanWidth}, Height={scanHeight}");
+            Debugger($"[DEBUG] Screenshot saved: {filename}");
+            Debugger($"[DEBUG] Scan area: Left={scanLeft}, Top={scanTop}, Width={scanWidth}, Height={scanHeight}");
 
             debugScreenshotCounter++;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[DEBUG] Error saving screenshot: {ex.Message}");
+            Debugger($"[DEBUG] Error saving screenshot: {ex.Message}");
         }
     }
 
@@ -2184,7 +2355,7 @@ class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[CAPTURE] Screenshot error: {ex.Message}");
+            Debugger($"[CAPTURE] Screenshot error: {ex.Message}");
             result?.Dispose();
             return null;
         }
@@ -2205,7 +2376,7 @@ class Program
 
             if (!File.Exists(purpleBackpackPath))
             {
-                Console.WriteLine("[DROPS] purplebackpack.png not found in recognizedItems folder");
+                Debugger("[DROPS] purplebackpack.png not found in recognizedItems folder");
                 return null;
             }
 
@@ -2241,7 +2412,7 @@ class Program
                             maxLoc.Y + purpleBackpackTemplate.Height / 2
                         );
 
-                        Console.WriteLine($"[DROPS] Found purple backpack at scan area position ({backpackCenter.X}, {backpackCenter.Y}) with confidence {maxVal:F2}");
+                        Debugger($"[DROPS] Found purple backpack at scan area position ({backpackCenter.X}, {backpackCenter.Y}) with confidence {maxVal:F2}");
                         return backpackCenter;
                     }
                 }
@@ -2251,7 +2422,7 @@ class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[DROPS] Error finding purple backpack: {ex.Message}");
+            Debugger($"[DROPS] Error finding purple backpack: {ex.Message}");
             return null;
         }
     }
@@ -2271,11 +2442,11 @@ class Program
 
             CvInvoke.Imwrite(filename, debugImage);
 
-            Console.WriteLine($"[DEBUG] Found item screenshot saved: {filename}");
+            Debugger($"[DEBUG] Found item screenshot saved: {filename}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[DEBUG] Error saving found item screenshot: {ex.Message}");
+            Debugger($"[DEBUG] Error saving found item screenshot: {ex.Message}");
         }
     }
 
@@ -2337,7 +2508,7 @@ class Program
             {
                 // 1. Recognize where we are by reading current memory values
                 ReadMemoryValues();
-                Console.WriteLine($"[RETURN] Current position: ({currentX}, {currentY}, {currentZ})");
+                Debugger($"[RETURN] Current position: ({currentX}, {currentY}, {currentZ})");
 
                 // Make sure coords are loaded
                 if (loadedCoords == null)
@@ -2347,7 +2518,7 @@ class Program
 
                     if (loadedCoords == null || loadedCoords.cords.Count == 0)
                     {
-                        Console.WriteLine("[RETURN] ERROR: No waypoints loaded");
+                        Debugger("[RETURN] ERROR: No waypoints loaded");
                         return;
                     }
                 }
@@ -2357,17 +2528,17 @@ class Program
                 // 3. Get coordinates of [0] waypoint (first waypoint)
                 if (waypoints == null || waypoints.Count == 0)
                 {
-                    Console.WriteLine("[RETURN] ERROR: No waypoints available");
+                    Debugger("[RETURN] ERROR: No waypoints available");
                     return;
                 }
 
                 Coordinate firstWaypoint = waypoints[0];
-                Console.WriteLine($"[RETURN] Target waypoint [0]: ({firstWaypoint.X}, {firstWaypoint.Y}, {firstWaypoint.Z})");
+                Debugger($"[RETURN] Target waypoint [0]: ({firstWaypoint.X}, {firstWaypoint.Y}, {firstWaypoint.Z})");
 
                 // Check if we're already at the first waypoint
                 if (IsAtPosition(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z))
                 {
-                    Console.WriteLine("[RETURN] Already at first waypoint [0]");
+                    Debugger("[RETURN] Already at first waypoint [0]");
                     currentCoordIndex = 0;
                     globalLastIndex = 0;
                     return;
@@ -2375,15 +2546,15 @@ class Program
 
                 // 2. Find closest waypoint to current position
                 currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                Console.WriteLine($"[RETURN] Closest waypoint to current position: [{currentCoordIndex}]");
+                Debugger($"[RETURN] Closest waypoint to current position: [{currentCoordIndex}]");
 
                 // Analyze both paths and choose the optimal one
                 PathAnalysisResult pathAnalysis = AnalyzePaths(waypoints, currentCoordIndex);
                 List<int> optimalPath = pathAnalysis.UseReversePath ? pathAnalysis.ReversePath : pathAnalysis.ForwardPath;
                 string direction = pathAnalysis.UseReversePath ? "REVERSE" : "FORWARD";
 
-                Console.WriteLine($"[RETURN] Using {direction} path ({optimalPath.Count} waypoints)");
-                Console.WriteLine($"[RETURN] Forward path: {pathAnalysis.ForwardPath.Count} waypoints, Reverse path: {pathAnalysis.ReversePath.Count} waypoints");
+                Debugger($"[RETURN] Using {direction} path ({optimalPath.Count} waypoints)");
+                Debugger($"[RETURN] Forward path: {pathAnalysis.ForwardPath.Count} waypoints, Reverse path: {pathAnalysis.ReversePath.Count} waypoints");
 
                 // 4. Execute path using furthest reachable waypoint logic
                 DateTime returnStartTime = DateTime.Now;
@@ -2395,7 +2566,7 @@ class Program
                     // Safety timeout check
                     if ((DateTime.Now - returnStartTime).TotalMinutes > RETURN_TIMEOUT_MINUTES)
                     {
-                        Console.WriteLine($"[RETURN] TIMEOUT: Failed to reach first waypoint within {RETURN_TIMEOUT_MINUTES} minutes");
+                        Debugger($"[RETURN] TIMEOUT: Failed to reach first waypoint within {RETURN_TIMEOUT_MINUTES} minutes");
                         return;
                     }
 
@@ -2419,7 +2590,7 @@ class Program
                         {
                             SendKeyPress(VK_F1);
                             lastHpAction = DateTime.Now;
-                            Console.WriteLine($"HP low ({hpPercent:F1}%) - pressed F1");
+                            Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
                         }
                     }
 
@@ -2430,7 +2601,7 @@ class Program
                         {
                             SendKeyPress(VK_F3);
                             lastManaAction = DateTime.Now;
-                            Console.WriteLine($"Mana low ({mana:F1}) - pressed F3");
+                            Debugger($"Mana low ({mana:F1}) - pressed F3");
                         }
                     }
 
@@ -2439,31 +2610,31 @@ class Program
 
                     if (nextTarget == null)
                     {
-                        Console.WriteLine("[RETURN] ERROR: Could not find next target in path");
+                        Debugger("[RETURN] ERROR: Could not find next target in path");
                         break;
                     }
 
                     // Skip if we're already at the target
                     if (IsAtPosition(nextTarget.X, nextTarget.Y, nextTarget.Z))
                     {
-                        Console.WriteLine("[RETURN] Already at target position");
+                        Debugger("[RETURN] Already at target position");
                         pathProgress++;
                         continue;
                     }
 
-                    Console.WriteLine($"[RETURN] Moving to: ({nextTarget.X}, {nextTarget.Y}, {nextTarget.Z})");
+                    Debugger($"[RETURN] Moving to: ({nextTarget.X}, {nextTarget.Y}, {nextTarget.Z})");
 
                     // Check if we need to handle Z-level change
                     if (nextTarget.Z != currentZ)
                     {
                         if (nextTarget.Z > currentZ)
                         {
-                            Console.WriteLine("[RETURN] Need to go UP");
+                            Debugger("[RETURN] Need to go UP");
                             RightClickOnCharacter();
                         }
                         else
                         {
-                            Console.WriteLine("[RETURN] Need to go DOWN");
+                            Debugger("[RETURN] Need to go DOWN");
                             SendKeyPress(VK_DOWN);
                         }
                     }
@@ -2477,14 +2648,14 @@ class Program
                     pathProgress = UpdatePathProgress(waypoints, optimalPath, pathProgress);
                 }
 
-                Console.WriteLine("[RETURN] Successfully reached first waypoint [0]");
+                Debugger("[RETURN] Successfully reached first waypoint [0]");
                 currentCoordIndex = 0;
                 globalLastIndex = 0;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[RETURN] ERROR: {ex.Message}");
-                Console.WriteLine($"[RETURN] Stack trace: {ex.StackTrace}");
+                Debugger($"[RETURN] ERROR: {ex.Message}");
+                Debugger($"[RETURN] Stack trace: {ex.StackTrace}");
             }
         }
 
@@ -2527,8 +2698,8 @@ class Program
             bool useReverse = reverseSet.Count < forwardSet.Count &&
                               Math.Abs(reverseSet.Count - forwardSet.Count) >= 2;
 
-            Console.WriteLine($"[PATH] Forward path: {forwardSet.Count} unique waypoints");
-            Console.WriteLine($"[PATH] Reverse path: {reverseSet.Count} unique waypoints");
+            Debugger($"[PATH] Forward path: {forwardSet.Count} unique waypoints");
+            Debugger($"[PATH] Reverse path: {reverseSet.Count} unique waypoints");
 
             return new PathAnalysisResult
             {
@@ -2547,7 +2718,7 @@ class Program
             int distanceToFinal = Math.Abs(finalTarget.X - currentX) + Math.Abs(finalTarget.Y - currentY);
             if (distanceToFinal <= MAX_DISTANCE && finalTarget.Z == currentZ)
             {
-                Console.WriteLine($"[RETURN] Can reach final target directly (distance: {distanceToFinal})");
+                Debugger($"[RETURN] Can reach final target directly (distance: {distanceToFinal})");
                 return finalTarget;
             }
 
@@ -2587,11 +2758,11 @@ class Program
             // If no waypoint in path is reachable, use directional movement
             if (furthestReachable == null)
             {
-                Console.WriteLine("[RETURN] No waypoint in path reachable, using directional movement");
+                Debugger("[RETURN] No waypoint in path reachable, using directional movement");
                 return CalculateDirectionalMove(currentX, currentY, currentZ, finalTarget);
             }
 
-            Console.WriteLine($"[RETURN] Found furthest reachable waypoint at distance {furthestDistance}");
+            Debugger($"[RETURN] Found furthest reachable waypoint at distance {furthestDistance}");
             return furthestReachable;
         }
 
@@ -2611,7 +2782,7 @@ class Program
                 int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
                 if (distance <= 2 && waypoint.Z == currentZ)
                 {
-                    Console.WriteLine($"[RETURN] Reached waypoint [{waypointIndex}] in path (progress: {i})");
+                    Debugger($"[RETURN] Reached waypoint [{waypointIndex}] in path (progress: {i})");
                     return i + 1; // Move to next waypoint in path
                 }
             }
@@ -2669,7 +2840,7 @@ class Program
 
                 if (loadedCoords == null || loadedCoords.cords.Count == 0)
                 {
-                    Console.WriteLine("[FIGHT] No waypoints loaded");
+                    Debugger("[FIGHT] No waypoints loaded");
                     return;
                 }
 
@@ -2685,7 +2856,7 @@ class Program
                     ConsoleKeyInfo keyInfo = Console.ReadKey(true);
                     if (keyInfo.Key == ConsoleKey.X)
                     {
-                        Console.WriteLine("\n[STOP] 'X' key pressed. Stopping iteration...");
+                        Debugger("\n[STOP] 'X' key pressed. Stopping iteration...");
                         return;
                     }
                 }
@@ -2708,7 +2879,7 @@ class Program
                     {
                         SendKeyPress(VK_F1);
                         lastHpAction = DateTime.Now;
-                        Console.WriteLine($"HP low ({hpPercent:F1}%) - pressed F1");
+                        Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
                     }
                 }
 
@@ -2719,7 +2890,7 @@ class Program
                     {
                         SendKeyPress(VK_F3);
                         lastManaAction = DateTime.Now;
-                        Console.WriteLine($"Mana low ({mana:F1}) - pressed F3");
+                        Debugger($"Mana low ({mana:F1}) - pressed F3");
                     }
                 }
 
@@ -2742,7 +2913,7 @@ class Program
                 if (globalLastIndex < 0 || Math.Abs(globalLastIndex - currentCoordIndex) > maxBacktrackDistance)
                 {
                     globalLastIndex = currentCoordIndex;
-                    Console.WriteLine($"[DEBUG] Initialized global state. Starting at waypoint index: {currentCoordIndex}");
+                    Debugger($"[DEBUG] Initialized global state. Starting at waypoint index: {currentCoordIndex}");
                 }
 
                 ReadMemoryValues();
@@ -2764,7 +2935,7 @@ class Program
                             ConsoleKeyInfo keyInfo = Console.ReadKey(true);
                             if (keyInfo.Key == ConsoleKey.X)
                             {
-                                Console.WriteLine("\n[STOP] 'X' key pressed during combat. Stopping iteration...");
+                                Debugger("\n[STOP] 'X' key pressed during combat. Stopping iteration...");
                                 return;
                             }
                         }
@@ -2785,7 +2956,7 @@ class Program
                             {
                                 SendKeyPress(VK_F1);
                                 lastHpAction = DateTime.Now;
-                                Console.WriteLine($"HP low ({hpPercent:F1}%) - pressed F1");
+                                Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
                             }
                         }
 
@@ -2796,20 +2967,20 @@ class Program
                             {
                                 SendKeyPress(VK_F3);
                                 lastManaAction = DateTime.Now;
-                                Console.WriteLine($"Mana low ({mana:F1}) - pressed F3");
+                                Debugger($"Mana low ({mana:F1}) - pressed F3");
                             }
                         }
 
                         if (targetId != 0)
                         {
-                            Console.WriteLine($"[COMBAT] Fighting target {targetId}...");
+                            Debugger($"[COMBAT] Fighting target {targetId}...");
                             Thread.Sleep(1000);
                             ReadMemoryValues();
 
                             ReadMemoryValues();
                             if (targetId == 0)
                             {
-                                Console.WriteLine("[COMBAT] Target killed!");
+                                Debugger("[COMBAT] Target killed!");
                                 break;
                             }
                         }
@@ -2829,7 +3000,7 @@ class Program
                         break;
 
                     case ActionType.KeyboardStep:  // NEW CASE
-                        Console.WriteLine($"[PLAY] Executing keyboard step: {action.Direction}");
+                        Debugger($"[PLAY] Executing keyboard step: {action.Direction}");
 
                         // Send the appropriate arrow key
                         switch (action.Direction)
@@ -2857,7 +3028,7 @@ class Program
 
                         if (newDistance == 0)
                         {
-                            Console.WriteLine("[PLAY] Reached keyboard target!");
+                            Debugger("[PLAY] Reached keyboard target!");
                             currentCoordIndex = action.WaypointIndex;
                             globalLastIndex = currentCoordIndex;
                         }
@@ -2868,7 +3039,7 @@ class Program
                             recoveryAttempts++;
                             if (recoveryAttempts > 20)
                             {
-                                Console.WriteLine("[PLAY] Too many recovery attempts - forcing exit of recovery mode");
+                                Debugger("[PLAY] Too many recovery attempts - forcing exit of recovery mode");
                                 isInRecoveryMode = false;
                                 recoveryAttempts = 0;
                             }
@@ -2917,18 +3088,18 @@ class Program
                         if (currentX == lastPosX && currentY == lastPosY)
                         {
                             noMovementCount++;
-                            Console.WriteLine($"[MOVE] No movement detected. Count: {noMovementCount}/{MAX_NO_MOVEMENT_COUNT}");
+                            Debugger($"[MOVE] No movement detected. Count: {noMovementCount}/{MAX_NO_MOVEMENT_COUNT}");
 
                             if (noMovementCount >= MAX_NO_MOVEMENT_COUNT)
                             {
-                                Console.WriteLine($"[MOVE] Character hasn't moved for {noMovementCount} checks. Returning early.");
+                                Debugger($"[MOVE] Character hasn't moved for {noMovementCount} checks. Returning early.");
                                 return;
                             }
                         }
                         else
                         {
                             noMovementCount = 0; // Reset counter if character moved
-                            Console.WriteLine($"[MOVE] Character moved from ({lastPosX},{lastPosY}) to ({currentX},{currentY})");
+                            Debugger($"[MOVE] Character moved from ({lastPosX},{lastPosY}) to ({currentX},{currentY})");
                         }
                     }
 
@@ -2941,7 +3112,7 @@ class Program
                     int distanceY = Math.Abs(targetY - currentY);
                     if (distanceX <= 1 && distanceY <= 1)
                     {
-                        Console.WriteLine($"[MOVE] Reached target position ({targetX},{targetY})");
+                        Debugger($"[MOVE] Reached target position ({targetX},{targetY})");
                         Thread.Sleep(400);
                         return;
                     }
@@ -2949,7 +3120,7 @@ class Program
             }
 
 
-            Console.WriteLine($"[MOVE] Timeout reached after {TIMEOUT_MS}ms");
+            Debugger($"[MOVE] Timeout reached after {TIMEOUT_MS}ms");
         }
 
         public class NavigationAction
@@ -2989,8 +3160,8 @@ class Program
             int deltaX = target.X - currentX;
             int deltaY = target.Y - currentY;
 
-            Console.WriteLine($"[RECOVERY] Creating step from ({currentX},{currentY}) toward ({target.X},{target.Y})");
-            Console.WriteLine($"[RECOVERY] Delta: X={deltaX}, Y={deltaY}");
+            Debugger($"[RECOVERY] Creating step from ({currentX},{currentY}) toward ({target.X},{target.Y})");
+            Debugger($"[RECOVERY] Delta: X={deltaX}, Y={deltaY}");
 
             // Always move only 1 square at a time for keyboard navigation
             int stepX = 0;
@@ -3028,7 +3199,7 @@ class Program
             else
             {
                 // Already at target (shouldn't happen)
-                Console.WriteLine("[RECOVERY] Already at target!");
+                Debugger("[RECOVERY] Already at target!");
                 return new Coordinate { X = currentX, Y = currentY, Z = currentZ };
             }
 
@@ -3039,8 +3210,8 @@ class Program
                 Z = currentZ
             };
 
-            Console.WriteLine($"[RECOVERY] Created step: ({recoveryStep.X},{recoveryStep.Y},{recoveryStep.Z})");
-            Console.WriteLine($"[RECOVERY] Step size: X={stepX}, Y={stepY}");
+            Debugger($"[RECOVERY] Created step: ({recoveryStep.X},{recoveryStep.Y},{recoveryStep.Z})");
+            Debugger($"[RECOVERY] Step size: X={stepX}, Y={stepY}");
 
             return recoveryStep;
         }
@@ -3061,16 +3232,16 @@ class Program
         static Coordinate FindFurthestReachableWaypoint(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
         {
             const int MAX_DISTANCE = 5;
-            Console.WriteLine($"[NAV] Looking for furthest reachable waypoint from ({currentX},{currentY},{currentZ})");
-            Console.WriteLine($"[NAV] Current waypoint index: {currentCoordIndex}");
-            Console.WriteLine($"[NAV] Global last index: {globalLastIndex}");
+            Debugger($"[NAV] Looking for furthest reachable waypoint from ({currentX},{currentY},{currentZ})");
+            Debugger($"[NAV] Current waypoint index: {currentCoordIndex}");
+            Debugger($"[NAV] Global last index: {globalLastIndex}");
 
             // Sync currentCoordIndex with globalLastIndex if they're out of sync
             if (globalLastIndex >= 0 && Math.Abs(globalLastIndex - currentCoordIndex) <= maxBacktrackDistance)
             {
                 if (globalLastIndex != currentCoordIndex)
                 {
-                    Console.WriteLine($"[NAV] Syncing currentCoordIndex ({currentCoordIndex}) with globalLastIndex ({globalLastIndex})");
+                    Debugger($"[NAV] Syncing currentCoordIndex ({currentCoordIndex}) with globalLastIndex ({globalLastIndex})");
                     currentCoordIndex = globalLastIndex;
                 }
             }
@@ -3081,7 +3252,7 @@ class Program
                 int distanceToTarget = Math.Abs(lastTargetedWaypoint.X - currentX) + Math.Abs(lastTargetedWaypoint.Y - currentY);
                 if (distanceToTarget <= 2) // Close enough to consider "reached"
                 {
-                    Console.WriteLine($"[NAV] Reached targeted waypoint {lastTargetedIndex}. Advancing current index from {currentCoordIndex} to {lastTargetedIndex}");
+                    Debugger($"[NAV] Reached targeted waypoint {lastTargetedIndex}. Advancing current index from {currentCoordIndex} to {lastTargetedIndex}");
                     currentCoordIndex = lastTargetedIndex;
                     globalLastIndex = lastTargetedIndex; // Update global state too
                     lastTargetedIndex = -1; // Reset since we've reached it
@@ -3098,7 +3269,7 @@ class Program
                 // Calculate next index, wrapping around if needed
                 int checkIndex = (currentCoordIndex + i) % waypoints.Count;
                 Coordinate check = waypoints[checkIndex];
-                Console.WriteLine($"[NAV] Checking waypoint {checkIndex}: ({check.X},{check.Y},{check.Z})");
+                Debugger($"[NAV] Checking waypoint {checkIndex}: ({check.X},{check.Y},{check.Z})");
 
                 // Handle Z-level changes for the very next waypoint (i == 1)
                 if (check.Z != currentZ)
@@ -3106,7 +3277,7 @@ class Program
                     if (i == 1)
                     {
                         // This is the next waypoint and it has a different Z level
-                        Console.WriteLine($"[NAV] Next waypoint {checkIndex} requires floor change (Z={check.Z} vs current Z={currentZ})");
+                        Debugger($"[NAV] Next waypoint {checkIndex} requires floor change (Z={check.Z} vs current Z={currentZ})");
 
                         // Handle the floor change for the next waypoint
                         Coordinate transitionWaypoint = null;
@@ -3116,7 +3287,7 @@ class Program
                         if (check.Z > currentZ)
                         {
                             // Need to go UP - find closest waypoint with higher Z
-                            Console.WriteLine($"[NAV] Need to go UP to Z={check.Z}");
+                            Debugger($"[NAV] Need to go UP to Z={check.Z}");
                             for (int j = 0; j < waypoints.Count; j++)
                             {
                                 var candidate = waypoints[j];
@@ -3135,7 +3306,7 @@ class Program
                         else
                         {
                             // Need to go DOWN - find closest waypoint with lower Z
-                            Console.WriteLine($"[NAV] Need to go DOWN to Z={check.Z}");
+                            Debugger($"[NAV] Need to go DOWN to Z={check.Z}");
                             for (int j = 0; j < waypoints.Count; j++)
                             {
                                 var candidate = waypoints[j];
@@ -3154,14 +3325,14 @@ class Program
 
                         if (transitionWaypoint != null)
                         {
-                            Console.WriteLine($"[NAV] Found transition waypoint: index {transitionIndex} at ({transitionWaypoint.X},{transitionWaypoint.Y},{transitionWaypoint.Z})");
+                            Debugger($"[NAV] Found transition waypoint: index {transitionIndex} at ({transitionWaypoint.X},{transitionWaypoint.Y},{transitionWaypoint.Z})");
                             lastTargetedIndex = checkIndex;
                             lastTargetedWaypoint = check;
                             return transitionWaypoint;
                         }
                         else
                         {
-                            Console.WriteLine($"[NAV] No transition waypoint found - returning the next waypoint directly");
+                            Debugger($"[NAV] No transition waypoint found - returning the next waypoint directly");
                             lastTargetedIndex = checkIndex;
                             lastTargetedWaypoint = check;
                             return check;
@@ -3170,7 +3341,7 @@ class Program
                     else
                     {
                         // This is not the next waypoint and has different Z - skip it entirely
-                        Console.WriteLine($"[NAV] Skipping waypoint {checkIndex} - different Z level (Z={check.Z}) and not next waypoint");
+                        Debugger($"[NAV] Skipping waypoint {checkIndex} - different Z level (Z={check.Z}) and not next waypoint");
                         continue;
                     }
                 }
@@ -3179,14 +3350,14 @@ class Program
                 int distanceX = Math.Abs(check.X - currentX);
                 int distanceY = Math.Abs(check.Y - currentY);
                 int totalDistance = distanceX + distanceY;
-                Console.WriteLine($"[NAV] Distance to waypoint {checkIndex}: dx={distanceX}, dy={distanceY}, total={totalDistance}");
+                Debugger($"[NAV] Distance to waypoint {checkIndex}: dx={distanceX}, dy={distanceY}, total={totalDistance}");
 
                 // Check if this waypoint is reachable
                 if (distanceX <= MAX_DISTANCE && distanceY <= MAX_DISTANCE)
                 {
                     // This waypoint is reachable, add it to our list
                     reachableWaypoints.Add((check, checkIndex, totalDistance));
-                    Console.WriteLine($"[NAV] Reachable waypoint added: {checkIndex} at distance {totalDistance}");
+                    Debugger($"[NAV] Reachable waypoint added: {checkIndex} at distance {totalDistance}");
                 }
             }
 
@@ -3219,7 +3390,7 @@ class Program
                     }
                 }
 
-                Console.WriteLine($"[NAV] Z-level checks: All top waypoints same Z={allTopSameZ}, Next 10 same Z={next10SameZ}");
+                Debugger($"[NAV] Z-level checks: All top waypoints same Z={allTopSameZ}, Next 10 same Z={next10SameZ}");
 
                 if (allTopSameZ && next10SameZ)
                 {
@@ -3232,12 +3403,12 @@ class Program
                     selectedIndex = selected.index;
                     selectedDistance = selected.distance;
 
-                    Console.WriteLine($"[NAV] Random selection enabled - Selected waypoint {selectedIndex} from top {topCount} reachable waypoints (distance={selectedDistance})");
-                    Console.WriteLine($"[NAV] Available top waypoints were:");
+                    Debugger($"[NAV] Random selection enabled - Selected waypoint {selectedIndex} from top {topCount} reachable waypoints (distance={selectedDistance})");
+                    Debugger($"[NAV] Available top waypoints were:");
                     for (int i = 0; i < topWaypoints.Count; i++)
                     {
                         var wp = topWaypoints[i];
-                        Console.WriteLine($"[NAV]   {i}: Index {wp.index}, distance {wp.distance}");
+                        Debugger($"[NAV]   {i}: Index {wp.index}, distance {wp.distance}");
                     }
                 }
                 else
@@ -3248,18 +3419,18 @@ class Program
                     selectedIndex = selected.index;
                     selectedDistance = selected.distance;
 
-                    Console.WriteLine($"[NAV] Z-level criteria not met - Selected furthest waypoint {selectedIndex} (distance={selectedDistance})");
+                    Debugger($"[NAV] Z-level criteria not met - Selected furthest waypoint {selectedIndex} (distance={selectedDistance})");
                     if (!allTopSameZ)
-                        Console.WriteLine($"[NAV] Reason: Not all top waypoints have same Z-level");
+                        Debugger($"[NAV] Reason: Not all top waypoints have same Z-level");
                     if (!next10SameZ)
-                        Console.WriteLine($"[NAV] Reason: Next 10 waypoints don't all have same Z-level");
+                        Debugger($"[NAV] Reason: Next 10 waypoints don't all have same Z-level");
                 }
             }
 
             // If still no waypoint found, create a directional step
             if (selectedWaypoint == null)
             {
-                Console.WriteLine($"[NAV] No reachable waypoint found, calculating direction to next waypoint");
+                Debugger($"[NAV] No reachable waypoint found, calculating direction to next waypoint");
 
                 // Get the next waypoint in sequence
                 int nextIndex = (currentCoordIndex + 1) % waypoints.Count;
@@ -3309,7 +3480,7 @@ class Program
                 selectedIndex = -1;
                 selectedDistance = 1;
 
-                Console.WriteLine($"[NAV] Returning directional step: ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) toward waypoint {nextIndex}");
+                Debugger($"[NAV] Returning directional step: ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) toward waypoint {nextIndex}");
             }
 
             // Remember what we're targeting
@@ -3317,17 +3488,17 @@ class Program
             {
                 lastTargetedIndex = selectedIndex;
                 lastTargetedWaypoint = selectedWaypoint;
-                Console.WriteLine($"[NAV] Targeting waypoint {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z})");
+                Debugger($"[NAV] Targeting waypoint {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z})");
             }
 
-            Console.WriteLine($"[NAV] Selected reachable waypoint: {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) distance={selectedDistance}");
+            Debugger($"[NAV] Selected reachable waypoint: {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) distance={selectedDistance}");
             return selectedWaypoint;
         }
 
         static NavigationAction DetermineNextAction(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
         {
-            Console.WriteLine($"[NAV] DetermineNextAction - Current position: ({currentX}, {currentY}, {currentZ})");
-            Console.WriteLine($"[NAV] Current waypoint index: {currentCoordIndex}, Global last index: {globalLastIndex}");
+            Debugger($"[NAV] DetermineNextAction - Current position: ({currentX}, {currentY}, {currentZ})");
+            Debugger($"[NAV] Current waypoint index: {currentCoordIndex}, Global last index: {globalLastIndex}");
 
             // Check if we're far from any waypoint on the same Z-level (lost condition)
             int minDistanceToAnyWaypoint = int.MaxValue;
@@ -3353,13 +3524,13 @@ class Program
             const int LOST_THRESHOLD = 15; // If we're more than 15 squares from any waypoint
             bool wasLost = minDistanceToAnyWaypoint > LOST_THRESHOLD;
 
-            Console.WriteLine($"[NAV] Min distance to any waypoint: {minDistanceToAnyWaypoint}");
-            Console.WriteLine($"[NAV] Was lost: {wasLost}, Is in recovery mode: {isInRecoveryMode}");
+            Debugger($"[NAV] Min distance to any waypoint: {minDistanceToAnyWaypoint}");
+            Debugger($"[NAV] Was lost: {wasLost}, Is in recovery mode: {isInRecoveryMode}");
 
             // Handle recovery mode transitions
             if (wasLost && !isInRecoveryMode)
             {
-                Console.WriteLine($"[NAV] CHARACTER IS LOST - entering recovery mode. Distance to nearest: {minDistanceToAnyWaypoint}");
+                Debugger($"[NAV] CHARACTER IS LOST - entering recovery mode. Distance to nearest: {minDistanceToAnyWaypoint}");
                 isInRecoveryMode = true;
                 recoveryTarget = closestWaypoint;
                 recoveryAttempts = 0;
@@ -3367,7 +3538,7 @@ class Program
             }
             else if (!wasLost && isInRecoveryMode)
             {
-                Console.WriteLine("[NAV] Character recovered - exiting recovery mode");
+                Debugger("[NAV] Character recovered - exiting recovery mode");
                 isInRecoveryMode = false;
                 recoveryTarget = null;
                 recoveryAttempts = 0;
@@ -3381,12 +3552,12 @@ class Program
             int distanceY = Math.Abs(target.Y - currentY);
             int totalDistance = distanceX + distanceY;
 
-            Console.WriteLine($"[NAV] Target: ({target.X}, {target.Y}, {target.Z})");
-            Console.WriteLine($"[NAV] Distance to target: X={distanceX}, Y={distanceY}, Total={totalDistance}");
+            Debugger($"[NAV] Target: ({target.X}, {target.Y}, {target.Z})");
+            Debugger($"[NAV] Distance to target: X={distanceX}, Y={distanceY}, Total={totalDistance}");
 
             if (distanceX == 0 && distanceY == 0)
             {
-                Console.WriteLine($"[NAV] Already at target position");
+                Debugger($"[NAV] Already at target position");
                 return new NavigationAction
                 {
                     Type = ActionType.WaitAtPosition,
@@ -3399,7 +3570,7 @@ class Program
             // Special handling for recovery mode
             if (isInRecoveryMode)
             {
-                Console.WriteLine("[NAV] In recovery mode - analyzing movement options");
+                Debugger("[NAV] In recovery mode - analyzing movement options");
 
                 // Check if we can reach any waypoint now
                 bool canReachWaypoint = false;
@@ -3414,7 +3585,7 @@ class Program
                     if (dx <= 5 && dy <= 5) // Within click range
                     {
                         canReachWaypoint = true;
-                        Console.WriteLine($"[NAV] Can now reach waypoint {i} - exiting recovery mode early");
+                        Debugger($"[NAV] Can now reach waypoint {i} - exiting recovery mode early");
                         isInRecoveryMode = false;
                         recoveryTarget = null;
                         recoveryAttempts = 0;
@@ -3431,7 +3602,7 @@ class Program
                     int stepDistanceX = Math.Abs(stepTarget.X - currentX);
                     int stepDistanceY = Math.Abs(stepTarget.Y - currentY);
 
-                    Console.WriteLine($"[NAV] Recovery step to: ({stepTarget.X}, {stepTarget.Y}, {stepTarget.Z})");
+                    Debugger($"[NAV] Recovery step to: ({stepTarget.X}, {stepTarget.Y}, {stepTarget.Z})");
 
                     // Determine keyboard direction for the step
                     ArrowAction.ArrowDirection direction;
@@ -3445,7 +3616,7 @@ class Program
                     else
                         direction = ArrowAction.ArrowDirection.Up;
 
-                    Console.WriteLine($"[NAV] Using keyboard direction: {direction}");
+                    Debugger($"[NAV] Using keyboard direction: {direction}");
 
                     recoveryAttempts++;
 
@@ -3464,11 +3635,11 @@ class Program
             // Check if we need to handle Z-level changes
             if (target.Z != currentZ)
             {
-                Console.WriteLine($"[NAV] Z-level change needed: {currentZ} -> {target.Z}");
+                Debugger($"[NAV] Z-level change needed: {currentZ} -> {target.Z}");
 
                 if (target.Z > currentZ)
                 {
-                    Console.WriteLine("[NAV] Need to go UP - using right-click");
+                    Debugger("[NAV] Need to go UP - using right-click");
                     return new NavigationAction
                     {
                         Type = ActionType.UseF4,
@@ -3481,7 +3652,7 @@ class Program
                 }
                 else
                 {
-                    Console.WriteLine("[NAV] Need to go DOWN - using arrow key");
+                    Debugger("[NAV] Need to go DOWN - using arrow key");
                     return new NavigationAction
                     {
                         Type = ActionType.KeyboardStep,
@@ -3497,7 +3668,7 @@ class Program
             // Use keyboard for very close targets or when specifically needed
             if (totalDistance == 1)
             {
-                Console.WriteLine($"[NAV] Very close target - using keyboard (distance={totalDistance})");
+                Debugger($"[NAV] Very close target - using keyboard (distance={totalDistance})");
 
                 // Determine keyboard direction
                 ArrowAction.ArrowDirection direction;
@@ -3511,7 +3682,7 @@ class Program
                 else
                     direction = ArrowAction.ArrowDirection.Up;
 
-                Console.WriteLine($"[NAV] Using keyboard direction: {direction}");
+                Debugger($"[NAV] Using keyboard direction: {direction}");
 
                 return new NavigationAction
                 {
@@ -3524,7 +3695,7 @@ class Program
             }
             else if (totalDistance <= 3)
             {
-                Console.WriteLine($"[NAV] Close target - using keyboard (distance={totalDistance})");
+                Debugger($"[NAV] Close target - using keyboard (distance={totalDistance})");
 
                 // For targets within 3 squares, use keyboard navigation
                 ArrowAction.ArrowDirection direction;
@@ -3539,7 +3710,7 @@ class Program
                     direction = distanceY > 0 ? ArrowAction.ArrowDirection.Down : ArrowAction.ArrowDirection.Up;
                 }
 
-                Console.WriteLine($"[NAV] Using keyboard direction: {direction}");
+                Debugger($"[NAV] Using keyboard direction: {direction}");
 
                 return new NavigationAction
                 {
@@ -3552,7 +3723,7 @@ class Program
             }
             else
             {
-                Console.WriteLine($"[NAV] Far target - using click (distance={totalDistance})");
+                Debugger($"[NAV] Far target - using click (distance={totalDistance})");
 
                 // For distant targets, use click navigation
                 return new NavigationAction
@@ -3600,7 +3771,7 @@ class Program
                 // If we're still close to our last waypoint and on the same Z level, don't backtrack
                 if (distanceToLast <= 3 && lastWaypoint.Z == currentZ)
                 {
-                    Console.WriteLine($"[WAYPOINT] Still close to last waypoint {globalLastIndex}, maintaining progression");
+                    Debugger($"[WAYPOINT] Still close to last waypoint {globalLastIndex}, maintaining progression");
                     return globalLastIndex;
                 }
             }
@@ -3620,7 +3791,7 @@ class Program
                 searchEnd = waypoints.Count - 1;
             }
 
-            Console.WriteLine($"[WAYPOINT] Searching waypoints from {searchStart} to {searchEnd} (current global: {globalLastIndex})");
+            Debugger($"[WAYPOINT] Searching waypoints from {searchStart} to {searchEnd} (current global: {globalLastIndex})");
 
             // First pass: Look for waypoints on the same Z-level within the search range
             for (int i = searchStart; i <= searchEnd; i++)
@@ -3639,7 +3810,7 @@ class Program
                 {
                     minDistance = distance;
                     closestIndex = i;
-                    Console.WriteLine($"[WAYPOINT] Preferring forward waypoint {i} (distance {distance})");
+                    Debugger($"[WAYPOINT] Preferring forward waypoint {i} (distance {distance})");
                 }
                 else if (distance < minDistance)
                 {
@@ -3651,7 +3822,7 @@ class Program
             // Second pass: If no suitable waypoint found on same Z-level, expand search
             if (closestIndex == -1)
             {
-                Console.WriteLine($"[WAYPOINT] No waypoint found on Z-level {currentZ}, expanding search");
+                Debugger($"[WAYPOINT] No waypoint found on Z-level {currentZ}, expanding search");
 
                 for (int i = searchStart; i <= searchEnd; i++)
                 {
@@ -3669,7 +3840,7 @@ class Program
             // Third pass: If still nothing found, fall back to full search
             if (closestIndex == -1)
             {
-                Console.WriteLine($"[WARNING] No waypoint found in range, doing full search");
+                Debugger($"[WARNING] No waypoint found in range, doing full search");
 
                 for (int i = 0; i < waypoints.Count; i++)
                 {
@@ -3692,7 +3863,7 @@ class Program
             // Final fallback
             if (closestIndex == -1)
             {
-                Console.WriteLine("[WARNING] No waypoints found at all, returning index 0");
+                Debugger("[WARNING] No waypoints found at all, returning index 0");
                 closestIndex = 0;
             }
 
@@ -3704,19 +3875,19 @@ class Program
                     closestIndex > globalLastIndex ||
                     Math.Abs(closestIndex - globalLastIndex) <= maxBacktrackDistance)
                 {
-                    Console.WriteLine($"[WAYPOINT] Updating global last index from {globalLastIndex} to {closestIndex}");
+                    Debugger($"[WAYPOINT] Updating global last index from {globalLastIndex} to {closestIndex}");
                     globalLastIndex = closestIndex;
                 }
                 else
                 {
-                    Console.WriteLine($"[WAYPOINT] Not updating global index - would backtrack too far ({Math.Abs(closestIndex - globalLastIndex)} > {maxBacktrackDistance})");
+                    Debugger($"[WAYPOINT] Not updating global index - would backtrack too far ({Math.Abs(closestIndex - globalLastIndex)} > {maxBacktrackDistance})");
                 }
             }
 
-            Console.WriteLine($"[WAYPOINT] Selected index {closestIndex} at ({waypoints[closestIndex].X}, {waypoints[closestIndex].Y}, {waypoints[closestIndex].Z}) distance {minDistance}");
+            Debugger($"[WAYPOINT] Selected index {closestIndex} at ({waypoints[closestIndex].X}, {waypoints[closestIndex].Y}, {waypoints[closestIndex].Z}) distance {minDistance}");
             return closestIndex;
         }
-        }
+    }
 
 
     // Add these variables at the top of the Program class
@@ -3737,7 +3908,7 @@ class Program
         ReadMemoryValues();
         if (soulPositionMonitorThread != null && soulPositionMonitorThread.IsAlive)
         {
-            Console.WriteLine("[MONITOR] Soul and position monitor thread already running");
+            Debugger("[MONITOR] Soul and position monitor thread already running");
             return;
         }
 
@@ -3758,7 +3929,7 @@ class Program
             Name = "SoulPositionMonitorThread"
         };
         soulPositionMonitorThread.Start();
-        Console.WriteLine("[MONITOR] Soul and position monitor thread started");
+        Debugger("[MONITOR] Soul and position monitor thread started");
     }
 
     // Add this method to stop the monitoring thread
@@ -3768,14 +3939,14 @@ class Program
         if (soulPositionMonitorThread != null && soulPositionMonitorThread.IsAlive)
         {
             soulPositionMonitorThread.Join(2000);
-            Console.WriteLine("[MONITOR] Soul and position monitor thread stopped");
+            Debugger("[MONITOR] Soul and position monitor thread stopped");
         }
     }
 
     // Add this method as the main monitoring worker
     static void SoulPositionMonitorWorker()
     {
-        Console.WriteLine("[MONITOR] Soul and position monitor worker started");
+        Debugger("[MONITOR] Soul and position monitor worker started");
 
         try
         {
@@ -3795,7 +3966,7 @@ class Program
                         {
                             lastSoulCount = curSoul;
                             lastSoulChangeTime = now;
-                            Console.WriteLine($"[MONITOR] Soul changed to {curSoul:F1}");
+                            //Debugger($"[MONITOR] Soul changed to {curSoul:F1}");
                         }
 
                         // Check if position has changed
@@ -3808,7 +3979,7 @@ class Program
                         {
                             if (lastMonitoredPosition != null)
                             {
-                                Console.WriteLine($"[MONITOR] Position changed from ({lastMonitoredPosition.X}, {lastMonitoredPosition.Y}, {lastMonitoredPosition.Z}) to ({currentX}, {currentY}, {currentZ})");
+                                //Debugger($"[MONITOR] Position changed from ({lastMonitoredPosition.X}, {lastMonitoredPosition.Y}, {lastMonitoredPosition.Z}) to ({currentX}, {currentY}, {currentZ})");
                             }
 
                             lastMonitoredPosition = new Coordinate
@@ -3835,15 +4006,15 @@ class Program
                         // Log status every 2 seconds
                         if ((DateTime.Now.Second % 2) == 0)
                         {
-                            Console.WriteLine($"[MONITOR] Status - Soul: {curSoul:F1} (unchanged for {timeSinceLastSoulChange:F1} sec), " +
-                                            $"Position: ({currentX}, {currentY}, {currentZ}) (unchanged for {timeSinceLastPositionChange:F1} sec)");
+                            //Debugger($"[MONITOR] Status - Soul: {curSoul:F1} (unchanged for {timeSinceLastSoulChange:F1} sec), " +
+                                            //$"Position: ({currentX}, {currentY}, {currentZ}) (unchanged for {timeSinceLastPositionChange:F1} sec)");
                         }
                     }
 
                     if (shouldShutdown)
                     {
-                        Console.WriteLine($"\n[MONITOR] SHUTTING DOWN PROGRAM - {shutdownReason}");
-                        Console.WriteLine("[MONITOR] This usually indicates the program is stuck or not functioning properly");
+                        Debugger($"\n[MONITOR] SHUTTING DOWN PROGRAM - {shutdownReason}");
+                        Debugger("[MONITOR] This usually indicates the program is stuck or not functioning properly");
 
                         // Set the global flag to stop the program
                         programRunning = false;
@@ -3858,55 +4029,24 @@ class Program
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[MONITOR] Error in monitoring loop: {ex.Message}");
+                    Debugger($"[MONITOR] Error in monitoring loop: {ex.Message}");
                     Thread.Sleep(1000);
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[MONITOR] Fatal error in monitor thread: {ex.Message}");
+            Debugger($"[MONITOR] Fatal error in monitor thread: {ex.Message}");
         }
         finally
         {
-            Console.WriteLine("[MONITOR] Soul and position monitor worker stopped");
+            Debugger("[MONITOR] Soul and position monitor worker stopped");
         }
     }
 
-    // Add this method to manually reset the monitor timers (useful after teleporting/traveling)
-    static void ResetSoulPositionMonitor()
+
+    static void Debugger(string text)
     {
-        lock (monitorLock)
-        {
-            lastSoulChangeTime = DateTime.Now;
-            lastPositionChangeTime = DateTime.Now;
-            ReadMemoryValues();
-            lastSoulCount = curSoul;
-            lastMonitoredPosition = new Coordinate
-            {
-                X = currentX,
-                Y = currentY,
-                Z = currentZ
-            };
-            Console.WriteLine("[MONITOR] Soul and position monitor timers reset");
-        }
+        Console.WriteLine($"[{DateTime.Now}] {text}");
     }
-
-    // Add this method to check the current monitor status
-    static void PrintMonitorStatus()
-    {
-        lock (monitorLock)
-        {
-            DateTime now = DateTime.Now;
-            double timeSinceLastSoulChange = (now - lastSoulChangeTime).TotalSeconds;
-            double timeSinceLastPositionChange = (now - lastPositionChangeTime).TotalSeconds;
-
-            Console.WriteLine("[MONITOR] Current Status:");
-            Console.WriteLine($"  Soul: {curSoul:F1} (last changed {timeSinceLastSoulChange:F1} seconds ago)");
-            Console.WriteLine($"  Position: ({currentX}, {currentY}, {currentZ}) (last changed {timeSinceLastPositionChange:F1} seconds ago)");
-            Console.WriteLine($"  Monitor running: {soulPositionMonitorRunning}");
-            Console.WriteLine($"  Time until shutdown: {Math.Max(0, MAX_UNCHANGED_SECONDS - timeSinceLastSoulChange):F1} sec (soul), {Math.Max(0, MAX_UNCHANGED_SECONDS - timeSinceLastPositionChange):F1} sec (position)");
-        }
-    }
-
 }
