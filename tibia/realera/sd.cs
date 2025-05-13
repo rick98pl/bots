@@ -2589,7 +2589,7 @@ class Program
     }
     public class FightTarantulasAction : Action
     {
-        private CoordinateData loadedCoords;
+        private static CoordinateData loadedCoords;
         private static int currentCoordIndex = 0;
         private static bool returningToStart = false;
         private static string cordsFilePath = "cords.json";
@@ -2937,21 +2937,15 @@ class Program
             };
         }
 
+        // Add these variables at the class level
+        static DateTime lastMovementTime = DateTime.MinValue;
+        static Coordinate lastRecordedPosition = null;
+        static bool stuckDetectionActive = false;
+        const int STUCK_TIMEOUT_SECONDS = 2;
 
-
-
-
-
-
-
-
-
-
-
-        static DateTime returnStartTime = DateTime.MinValue;
+        // Modified PlayCoordinatesIteration method with stuck detection
         private void PlayCoordinatesIteration()
         {
-
             if (loadedCoords == null)
             {
                 string json = File.ReadAllText(cordsFilePath);
@@ -2968,6 +2962,12 @@ class Program
 
             List<Coordinate> waypoints = loadedCoords.cords;
 
+            // Initialize stuck detection
+            stuckDetectionActive = true;
+            lastMovementTime = DateTime.Now;
+            ReadMemoryValues();
+            lastRecordedPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
+
             while (true)
             {
                 if (Console.KeyAvailable)
@@ -2981,12 +2981,31 @@ class Program
                 }
 
                 ReadMemoryValues();
-                //if(invisibilityCode == 1)
-                //{
-                //    SendKeyPress(VK_F11);
-                //    Thread.Sleep(1000);
-                //}
 
+                // Check if character is stuck
+                if (CheckIfCharacterStuck())
+                {
+                    Debugger("[STUCK] Character detected as stuck! Initiating recovery...");
+
+                    // Use ReturnToFirstWaypoint to recover
+                    ReturnToFirstWaypoint();
+
+                    // Reset walking state after recovery
+                    ResetWalkingState();
+
+                    // Update position tracking after recovery
+                    ReadMemoryValues();
+                    lastRecordedPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
+                    lastMovementTime = DateTime.Now;
+
+                    Debugger("[STUCK] Recovery completed, resuming normal walking");
+                    continue; // Continue with normal execution
+                }
+
+                // Update movement tracking
+                UpdateMovementTracking();
+
+                // Rest of your existing code...
                 double hpPercent = (curHP / maxHP) * 100;
                 double manaPercent = (curMana / maxMana) * 100;
                 double mana = curMana;
@@ -3017,6 +3036,7 @@ class Program
                 {
                     return;
                 }
+
                 // Use the improved FindClosestWaypointIndex
                 if (boolInit)
                 {
@@ -3060,33 +3080,33 @@ class Program
                         }
 
                         ReadMemoryValues();
-                        //if (invisibilityCode == 1){
-                        //    SendKeyPress(VK_F11);
-                        //}
 
-                        hpPercent = (curHP / maxHP) * 100;
-                        manaPercent = (curMana / maxMana) * 100;
-                        mana = curMana;
+                        // Update movement tracking even during combat
+                        UpdateMovementTracking();
+
+                        double hpPercentCombat = (curHP / maxHP) * 100;
+                        double manaPercentCombat = (curMana / maxMana) * 100;
+                        double manaCombat = curMana;
 
                         // HP check
-                        if (hpPercent <= HP_THRESHOLD)
+                        if (hpPercentCombat <= HP_THRESHOLD)
                         {
                             if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
                             {
                                 SendKeyPress(VK_F1);
                                 lastHpAction = DateTime.Now;
-                                Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
+                                Debugger($"HP low ({hpPercentCombat:F1}%) - pressed F1");
                             }
                         }
 
                         // Mana check
-                        if (mana <= MANA_THRESHOLD)
+                        if (manaCombat <= MANA_THRESHOLD)
                         {
                             if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
                             {
                                 SendKeyPress(VK_F3);
                                 lastManaAction = DateTime.Now;
-                                Debugger($"Mana low ({mana:F1}) - pressed F3");
+                                Debugger($"Mana low ({manaCombat:F1}) - pressed F3");
                             }
                         }
 
@@ -3100,11 +3120,14 @@ class Program
                             if (targetId == 0)
                             {
                                 Debugger("[COMBAT] Target killed!");
+                                // Reset movement tracking after combat
+                                lastMovementTime = DateTime.Now;
                                 break;
                             }
                         }
                     }
                 }
+
                 NavigationAction action = DetermineNextAction(waypoints, currentX, currentY, currentZ);
 
                 switch (action.Type)
@@ -3118,7 +3141,7 @@ class Program
                         globalLastIndex = currentCoordIndex;
                         break;
 
-                    case ActionType.KeyboardStep:  // NEW CASE
+                    case ActionType.KeyboardStep:
                         Debugger($"[PLAY] Executing keyboard step: {action.Direction}");
 
                         // Send the appropriate arrow key
@@ -3173,9 +3196,108 @@ class Program
 
                 Thread.Sleep(100);
             }
-
-
         }
+
+        // Method to check if character is stuck
+        static bool CheckIfCharacterStuck()
+        {
+            if (!stuckDetectionActive || lastRecordedPosition == null)
+                return false;
+
+            ReadMemoryValues();
+
+            // Check if position has changed
+            bool positionChanged = lastRecordedPosition.X != currentX ||
+                                  lastRecordedPosition.Y != currentY ||
+                                  lastRecordedPosition.Z != currentZ;
+
+            if (positionChanged)
+            {
+                // Character moved, reset stuck detection
+                return false;
+            }
+
+            // Character hasn't moved, check timeout
+            double timeSinceLastMovement = (DateTime.Now - lastMovementTime).TotalSeconds;
+
+            if (timeSinceLastMovement >= STUCK_TIMEOUT_SECONDS)
+            {
+                Debugger($"[STUCK] Character hasn't moved for {timeSinceLastMovement:F1} seconds at position ({currentX}, {currentY}, {currentZ})");
+                return true;
+            }
+
+            return false;
+        }
+
+        // Method to update movement tracking
+        static void UpdateMovementTracking()
+        {
+            if (lastRecordedPosition == null)
+            {
+                ReadMemoryValues();
+                lastRecordedPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
+                lastMovementTime = DateTime.Now;
+                return;
+            }
+
+            // Check if character has moved
+            if (lastRecordedPosition.X != currentX ||
+                lastRecordedPosition.Y != currentY ||
+                lastRecordedPosition.Z != currentZ)
+            {
+                // Character moved, update tracking
+                lastRecordedPosition.X = currentX;
+                lastRecordedPosition.Y = currentY;
+                lastRecordedPosition.Z = currentZ;
+                lastMovementTime = DateTime.Now;
+            }
+        }
+
+        // Method to reset walking state after recovery
+        static void ResetWalkingState()
+        {
+            Debugger("[RESET] Resetting walking state after stuck recovery");
+
+            // Reset waypoint tracking
+            boolInit = true;
+            globalLastIndex = -1;
+
+            // Reset recovery mode variables
+            isInRecoveryMode = false;
+            recoveryTarget = null;
+            recoveryAttempts = 0;
+
+            // Reset targeted waypoint tracking
+            lastTargetedIndex = -1;
+            lastTargetedWaypoint = null;
+
+            // Find closest waypoint to current position
+
+
+            if (loadedCoords != null && loadedCoords.cords.Count > 0)
+            {
+                ReadMemoryValues();
+                currentCoordIndex = FindClosestWaypointIndex(loadedCoords.cords, currentX, currentY, currentZ);
+                globalLastIndex = currentCoordIndex;
+                Debugger($"[RESET] Reset to waypoint index {currentCoordIndex} at ({currentX}, {currentY}, {currentZ})");
+            }
+
+            // Reset movement tracking
+            lastMovementTime = DateTime.Now;
+            UpdateMovementTracking();
+        }
+
+
+
+
+
+
+
+
+
+
+        static DateTime returnStartTime = DateTime.MinValue;
+ 
 
         static void WaitForMovementCompletion(int targetX, int targetY)
         {
