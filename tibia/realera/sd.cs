@@ -1917,6 +1917,7 @@ class Program
                     {
                         PressF2WithValidation();
                         Debugger($"Mana>900 ({curMana:F0}), Soul: ({curSoul:F1}) - attempted F2");
+                        Debugger($"f2ClickCount {f2ClickCount}");
                     }
                 }
 
@@ -1926,7 +1927,7 @@ class Program
                     ExecuteActionSequence();
                 }
 
-                if (f2ClickCount >= MAX_F2_CLICKS || curSoul <= 4) {
+                if (f2ClickCount >= MAX_F2_CLICKS || curSoul <= 4 || (attempts >= 3 && curMana >= 880)) {
                     if (curSoul >= 100)
                     {
                         InitializeMiddleSequence();
@@ -1936,7 +1937,6 @@ class Program
                         Debugger($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
                         SendKeyPress(VK_F2);
                         lastManaAction = DateTime.Now;
-                        Debugger($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
                         f2ClickCount = 0;
                     }
                     else
@@ -1956,8 +1956,10 @@ class Program
         }
     }
 
+    static int attempts = 0;
     static void PressF2WithValidation()
     {
+        attempts++;
         if (f2ClickCount >= MAX_F2_CLICKS)
         {
             Debugger($"[F2] F2 limit reached ({f2ClickCount}/{MAX_F2_CLICKS}). Skipping F2 press.");
@@ -1975,7 +1977,7 @@ class Program
         Debugger($"[F2] Pressed F2. Mana before: {manaBeforeF2:F0}");
 
         // Wait for the effect to apply
-        Thread.Sleep(1000); // Give it a bit more time to register
+        Thread.Sleep(3000); // Give it a bit more time to register
 
         // Read mana after F2
         ReadMemoryValues();
@@ -1983,10 +1985,11 @@ class Program
         double manaDrop = manaBeforeF2 - manaAfterF2;
 
         // Validate the click
-        if (manaDrop >= 800)
+        if (manaDrop >= 500)
         {
             f2ClickCount++;
             Debugger($"[F2] F2 validated successfully! Mana dropped by {manaDrop:F0}. Total F2 clicks: {f2ClickCount}/{MAX_F2_CLICKS}");
+            attempts = 0;
         }
         else
         {
