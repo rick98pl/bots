@@ -1926,7 +1926,7 @@ class Program
                     ExecuteActionSequence();
                 }
 
-                if (f2ClickCount >= MAX_F2_CLICKS) {
+                if (f2ClickCount >= MAX_F2_CLICKS || curSoul <= 4) {
                     if (curSoul >= 100)
                     {
                         InitializeMiddleSequence();
