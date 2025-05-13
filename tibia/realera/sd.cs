@@ -296,27 +296,99 @@ class Program
     public class RightClickAction : Action
     {
         public int DelayAfterMs { get; set; }
+        public int MaxRetries { get; set; }
+        public bool ExpectSpecificOutcome { get; set; }
 
-        public RightClickAction(int delayAfterMs = 100)
+        public RightClickAction(int delayAfterMs = 100, int maxRetries = 10, bool expectSpecificOutcome = true)
         {
             DelayAfterMs = delayAfterMs;
+            MaxRetries = maxRetries;
+            ExpectSpecificOutcome = expectSpecificOutcome;
         }
 
         public override bool Execute()
         {
-            Debugger("Right-clicking on character position");
-            RightClickOnCharacter();
-            return true;
+            if (!ExpectSpecificOutcome)
+            {
+                // Simple right-click without verification
+                Debugger("Right-clicking on character position");
+                RightClickOnCharacter();
+                return true;
+            }
+
+            // Right-click with retry logic
+            Debugger($"Right-click with outcome verification (max {MaxRetries} attempts)");
+
+            // Store original state before right-clicking
+            ReadMemoryValues();
+            int originalX = currentX;
+            int originalY = currentY;
+            int originalZ = currentZ;
+
+            int attempt = 1;
+            while (attempt <= MaxRetries)
+            {
+                Debugger($"Attempt {attempt}/{MaxRetries} - Right-click execution");
+
+                // Execute the right-click
+                RightClickOnCharacter();
+
+                // Wait for the action to complete
+                Thread.Sleep(Math.Max(DelayAfterMs, 200)); // Minimum 200ms for right-click processing
+
+                // Verify if the expected outcome occurred
+                if (VerifyExpectedOutcome())
+                {
+                    Debugger($"Success! Right-click outcome achieved on attempt {attempt}");
+                    return true;
+                }
+
+                Debugger($"Right-click outcome not achieved on attempt {attempt}");
+
+                // Optional: Reset to original state if needed
+                // This is commented out as right-clicks typically don't move the character
+                // if (currentX != originalX || currentY != originalY || currentZ != originalZ)
+                // {
+                //     var returnAction = new MoveAction(originalX, originalY, originalZ, 2000);
+                //     returnAction.Execute();
+                // }
+
+                attempt++;
+
+                // Wait before next attempt
+                if (attempt <= MaxRetries)
+                {
+                    Thread.Sleep(300);
+                }
+            }
+
+            Debugger($"Failed to achieve right-click outcome after {MaxRetries} attempts");
+            return false;
+        }
+
+        private bool VerifyExpectedOutcome()
+        {
+            // This method should be implemented based on what specific outcome you expect
+            // Examples could include:
+            // - A menu appearing
+            // - A dialog box opening
+            // - Character state change
+            // - UI element becoming visible/clickable
+
+            // For now, returning true as placeholder
+            // You should implement the specific verification logic here
+            Debugger("Verifying right-click outcome...");
+            return true; // Replace with actual verification logic
         }
 
         public override bool VerifySuccess()
         {
-            // For right-click, just wait the specified delay
+            // For standard verification, just wait the specified delay
             if (DelayAfterMs > 0)
             {
                 Thread.Sleep(DelayAfterMs);
             }
-            return true; // Right-click doesn't need complex verification
+            return true;
         }
 
         public override string GetDescription()
@@ -504,9 +576,9 @@ class Program
 
         public ArrowDirection Direction { get; set; }
         public int DelayMs { get; set; }
-        public bool ExpectZChange { get; set; } = false; // New property to indicate if this arrow action should change Z
+        public bool ExpectZChange { get; set; } = true; // New property to indicate if this arrow action should change Z
 
-        public ArrowAction(ArrowDirection direction, int delayMs = 100, bool expectZChange = false)
+        public ArrowAction(ArrowDirection direction, int delayMs = 100, bool expectZChange = true)
         {
             Direction = direction;
             DelayMs = delayMs;
@@ -522,62 +594,60 @@ class Program
                 int keyCode = GetArrowKeyCode(Direction);
                 string directionName = Direction.ToString();
                 Debugger($"Pressing Arrow {directionName}");
-
                 SendKeyPress(keyCode);
                 return true;
             }
-
             // Z-level change verification logic
             Debugger($"Arrow {Direction} with Z-level change verification");
-
             // Store original position
             ReadMemoryValues();
             int originalX = currentX;
             int originalY = currentY;
             int originalZ = currentZ;
-
             Debugger($"Original position: ({originalX}, {originalY}, {originalZ})");
-
             int maxAttempts = MaxRetries;
             int attempt = 1;
-
             while (attempt <= maxAttempts)
             {
                 Debugger($"Attempt {attempt}/{maxAttempts} - Z-level change");
-
                 // Execute the arrow key press
                 int keyCode = GetArrowKeyCode(Direction);
                 SendKeyPress(keyCode);
-
                 // Wait for the action to complete
                 Thread.Sleep(Math.Max(DelayMs, 500)); // Minimum 500ms for Z-level changes
-
-                // Check if Z-level changed
+                                                      // Check if Z-level changed
                 ReadMemoryValues();
                 bool zChanged = currentZ != originalZ;
 
-                Debugger($"After arrow press: ({currentX}, {currentY}, {currentZ}) - Z changed: {zChanged}");
+                // Check if both X and Y changed by more than 100
+                int xChange = Math.Abs(currentX - originalX);
+                int yChange = Math.Abs(currentY - originalY);
+                bool significantMovement = xChange > 100 && yChange > 100;
 
+                if (significantMovement)
+                {
+                    Debugger($"Both X and Y changed by more than 100 - bypassing Z-level check");
+                    Debugger($"X change: {xChange}, Y change: {yChange}");
+                    return true;
+                }
+
+                Debugger($"After arrow press: ({currentX}, {currentY}, {currentZ}) - Z changed: {zChanged}");
                 if (zChanged)
                 {
                     Debugger($"Success! Z-level changed from {originalZ} to {currentZ}");
                     return true;
                 }
-
                 // Z didn't change - return to original position if we moved
                 if (currentX != originalX || currentY != originalY)
                 {
                     Debugger($"Z didn't change but position moved. Returning to original position...");
-
                     // Create and execute a MoveAction to return to original position
                     var returnAction = new MoveAction(originalX, originalY, originalZ, 2000);
-
                     // Execute the return move
                     if (!returnAction.Execute())
                     {
                         Debugger($"Failed to execute return movement on attempt {attempt}");
                     }
-
                     // Verify the return move
                     if (!returnAction.VerifySuccess())
                     {
@@ -589,16 +659,13 @@ class Program
                         Debugger($"Successfully returned to original position");
                     }
                 }
-
                 attempt++;
-
                 // Wait before next attempt
                 if (attempt <= maxAttempts)
                 {
                     Thread.Sleep(500);
                 }
             }
-
             Debugger($"Failed to change Z-level after {maxAttempts} attempts");
             return false;
         }
@@ -668,11 +735,8 @@ class Program
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
-        //actionSequence.Add(new HotkeyAction(VK_F11, 800)); //utana vid
 
         actionSequence.Add(new MoveAction(32817, 32809, 7));
-
-        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
         actionSequence.Add(new MoveAction(32814, 32809, 7));
         actionSequence.Add(new MoveAction(32807, 32810, 7));
