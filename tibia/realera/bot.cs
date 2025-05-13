@@ -530,18 +530,18 @@ class Program
                             RecordCoordinate(posX, posY, posZ);
                         }
                     }
-                    lock (memoryLock)
-                    {
-                        chaseTracker.Update(posX, posY, posZ, targetId);
-                        if (debug && targetId != 0)
-                        {
-                            DateTime debugNow = DateTime.Now;
-                            if ((debugNow - lastDebugOutputTime).TotalSeconds >= DEBUG_COOLDOWN_SECONDS)
-                            {
-                                lastDebugOutputTime = debugNow;
-                            }
-                        }
-                    }
+                    //lock (memoryLock)
+                    //{
+                    //    chaseTracker.Update(posX, posY, posZ, targetId);
+                    //    if (debug && targetId != 0)
+                    //    {
+                    //        DateTime debugNow = DateTime.Now;
+                    //        if ((debugNow - lastDebugOutputTime).TotalSeconds >= DEBUG_COOLDOWN_SECONDS)
+                    //        {
+                    //            lastDebugOutputTime = debugNow;
+                    //        }
+                    //    }
+                    //}
 
                     if (loadedCoords != null && loadedCoords.cords.Count > 0 && threadFlags["playing"])
                     {
@@ -1045,7 +1045,6 @@ class Program
     }
     static bool shouldClickAround = true;
     private static int previousTargetId = 0;
-    static ChasePathTracker chaseTracker = new ChasePathTracker();
     static Coordinate? previousChasePosition = null;
     static bool isReturningFromChase = false;
     static private HashSet<int> clickedAroundTargets = new HashSet<int>();
@@ -1674,21 +1673,55 @@ class Program
             int topCount = Math.Min(3, reachableWaypoints.Count);
             var topWaypoints = reachableWaypoints.Take(topCount).ToList();
 
-            // Randomly select from the top waypoints
-            Random rand = new Random();
-            int selectedIdx = rand.Next(topCount);
-            var selected = topWaypoints[selectedIdx];
+            // Check if ALL top waypoints have the same Z as current position
+            bool allTopSameZ = topWaypoints.All(wp => wp.waypoint.Z == currentZ);
 
-            selectedWaypoint = selected.waypoint;
-            selectedIndex = selected.index;
-            selectedDistance = selected.distance;
-
-            Console.WriteLine($"[NAV] Selected waypoint {selectedIndex} from top {topCount} reachable waypoints (distance={selectedDistance})");
-            Console.WriteLine($"[NAV] Available top waypoints were:");
-            for (int i = 0; i < topWaypoints.Count; i++)
+            // Check if the next 10 waypoints also have the same Z
+            bool next10SameZ = true;
+            for (int i = 1; i <= 10 && i < waypoints.Count; i++)
             {
-                var wp = topWaypoints[i];
-                Console.WriteLine($"[NAV]   {i}: Index {wp.index}, distance {wp.distance}");
+                int checkIndex = (currentCoordIndex + i) % waypoints.Count;
+                if (waypoints[checkIndex].Z != currentZ)
+                {
+                    next10SameZ = false;
+                    break;
+                }
+            }
+
+            Console.WriteLine($"[NAV] Z-level checks: All top waypoints same Z={allTopSameZ}, Next 10 same Z={next10SameZ}");
+
+            if (allTopSameZ && next10SameZ)
+            {
+                // Randomly select from the top waypoints
+                Random rand = new Random();
+                int selectedIdx = rand.Next(topCount);
+                var selected = topWaypoints[selectedIdx];
+
+                selectedWaypoint = selected.waypoint;
+                selectedIndex = selected.index;
+                selectedDistance = selected.distance;
+
+                Console.WriteLine($"[NAV] Random selection enabled - Selected waypoint {selectedIndex} from top {topCount} reachable waypoints (distance={selectedDistance})");
+                Console.WriteLine($"[NAV] Available top waypoints were:");
+                for (int i = 0; i < topWaypoints.Count; i++)
+                {
+                    var wp = topWaypoints[i];
+                    Console.WriteLine($"[NAV]   {i}: Index {wp.index}, distance {wp.distance}");
+                }
+            }
+            else
+            {
+                // Take the furthest waypoint (first in sorted list)
+                var selected = topWaypoints[0];
+                selectedWaypoint = selected.waypoint;
+                selectedIndex = selected.index;
+                selectedDistance = selected.distance;
+
+                Console.WriteLine($"[NAV] Z-level criteria not met - Selected furthest waypoint {selectedIndex} (distance={selectedDistance})");
+                if (!allTopSameZ)
+                    Console.WriteLine($"[NAV] Reason: Not all top waypoints have same Z-level");
+                if (!next10SameZ)
+                    Console.WriteLine($"[NAV] Reason: Next 10 waypoints don't all have same Z-level");
             }
         }
 
@@ -1760,6 +1793,7 @@ class Program
         return selectedWaypoint;
     }
     // Handle floor changes
+    int retries = 0;
     static NavigationAction HandleZLevelChange(Coordinate target, List<Coordinate> waypoints)
     {
         int currentX, currentY, currentZ;
@@ -1770,8 +1804,7 @@ class Program
             currentZ = posZ;
         }
         bool isGoingUp = target.Z < currentZ;
-
-        if(currentX == target.X)
+        if (currentX == target.X)
         {
             target.Y = target.Y - 1;
         }
@@ -1816,7 +1849,6 @@ class Program
         }
         else
         {
-            // Going DOWN - walk into the hole
             Console.WriteLine($"[FLOOR] Going DOWN - will click hole at ({target.X},{target.Y})");
             return new NavigationAction
             {
@@ -3110,367 +3142,7 @@ class Program
         {
         }
     }
-    class ChasePathTracker
-    {
-        private bool isChasing = false;
-        private Coordinate? chaseStartPosition = null;
-        private List<Coordinate> chasePath = new List<Coordinate>();
-        private int lastTargetId = 0;
-        private bool needToReturnToStart = false;
-        private object chaseLock = new object();
-        private static List<Coordinate>? waypoints = null;
-        private Dictionary<string, DateTime> messageTypeTimes = new Dictionary<string, DateTime>();
-        private const double DISPLAY_COOLDOWN_SECONDS = 1.5;
-        private const string MSG_CHASE_START = "CHASE_START";
-        private const string MSG_TARGET_CHANGE = "TARGET_CHANGE";
-        private const string MSG_DISTANCE_EXCEED = "DISTANCE_EXCEED";
-        private const string MSG_DISTANCE_OK = "DISTANCE_OK";
-        private const string MSG_WAYPOINT_INFO = "WAYPOINT_INFO";
-        private const string MSG_NO_WAYPOINTS = "NO_WAYPOINTS";
-
-        // Store the approximate index at chase start
-        private int chaseStartWaypointIndex = -1;
-
-        public void Update(int currentX, int currentY, int currentZ, int targetId)
-        {
-            lock (chaseLock)
-            {
-                if (!isChasing && targetId != 0)
-                {
-                    StartChase(currentX, currentY, currentZ, targetId);
-                }
-                else if (isChasing && targetId != 0)
-                {
-                    RecordPosition(currentX, currentY, currentZ);
-                    if (targetId != lastTargetId)
-                    {
-                        string message = $"[DEBUG] Target changed during chase from {lastTargetId} to {targetId}";
-                        DisplayWithCooldown(MSG_TARGET_CHANGE, message);
-                        lastTargetId = targetId;
-                    }
-                }
-                else if (isChasing && targetId == 0 && lastTargetId != 0)
-                {
-                    if (Program.loadedCoords != null && Program.loadedCoords.cords.Count > 0)
-                    {
-                        waypoints = Program.loadedCoords.cords;
-                        EndChase(currentX, currentY, currentZ, waypoints);
-                    }
-                    else
-                    {
-                        EndChaseSimple(currentX, currentY, currentZ);
-                    }
-                }
-            }
-        }
-
-        private void StartChase(int x, int y, int z, int targetId)
-        {
-            string message = $"[DEBUG] Starting chase of monster ID: {targetId}";
-            DisplayWithCooldown(MSG_CHASE_START, message);
-            isChasing = true;
-            lastTargetId = targetId;
-            chaseStartPosition = new Coordinate { X = x, Y = y, Z = z };
-            chasePath.Clear();
-            chasePath.Add(new Coordinate { X = x, Y = y, Z = z });
-
-            // Store the approximate waypoint index when chase starts
-            if (waypoints != null && waypoints.Count > 0)
-            {
-                chaseStartWaypointIndex = FindClosestWaypointIndex(waypoints, x, y, z);
-            }
-        }
-
-        private void RecordPosition(int x, int y, int z)
-        {
-            if (chasePath.Count == 0 ||
-                chasePath[chasePath.Count - 1].X != x ||
-                chasePath[chasePath.Count - 1].Y != y ||
-                chasePath[chasePath.Count - 1].Z != z)
-            {
-                chasePath.Add(new Coordinate { X = x, Y = y, Z = z });
-                const int MAX_PATH_LENGTH = 1000;
-                if (chasePath.Count > MAX_PATH_LENGTH)
-                {
-                    chasePath.RemoveAt(0);
-                }
-            }
-        }
-
-        private void EndChaseSimple(int currentX, int currentY, int currentZ)
-        {
-            int distanceX = Math.Abs(currentX - chaseStartPosition.X);
-            int distanceY = Math.Abs(currentY - chaseStartPosition.Y);
-            if (distanceX > 5 || distanceY > 5)
-            {
-                string message = $"[DEBUG] Distance threshold exceeded (X:{distanceX}, Y:{distanceY}), need to return to start position";
-                DisplayWithCooldown(MSG_DISTANCE_EXCEED, message);
-                needToReturnToStart = true;
-            }
-            else
-            {
-                string message = $"[DEBUG] Distance within threshold (X:{distanceX}, Y:{distanceY}), no need to return";
-                DisplayWithCooldown(MSG_DISTANCE_OK, message);
-                ResetChaseState();
-            }
-        }
-
-        private void EndChase(int currentX, int currentY, int currentZ, List<Coordinate> waypoints)
-        {
-            // First check if we're already close to ANY waypoint ahead of our starting position
-            var nearbyWaypoint = FindNearestWaypointInDirection(waypoints, currentX, currentY, currentZ);
-
-            if (nearbyWaypoint.found)
-            {
-                string message = $"[DEBUG] Found nearby waypoint ahead at index {nearbyWaypoint.index} (distance: {nearbyWaypoint.distance}), continuing path without returning to start";
-                DisplayWithCooldown(MSG_WAYPOINT_INFO, message);
-
-                // Update the current waypoint index to the found waypoint
-                Program.currentCoordIndex = nearbyWaypoint.index;
-                ResetChaseState();
-                return;
-            }
-
-            // If no waypoint ahead is close enough, check if we're close to any waypoint at all
-            int closestIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-            int distanceX = Math.Abs(currentX - waypoints[closestIndex].X);
-            int distanceY = Math.Abs(currentY - waypoints[closestIndex].Y);
-
-            if (distanceX < 5 && distanceY < 5)
-            {
-                string message = $"[DEBUG] Already close to waypoint at index {closestIndex} (dx={distanceX}, dy={distanceY}), no need to return";
-                DisplayWithCooldown(MSG_DISTANCE_OK, message);
-                Program.currentCoordIndex = closestIndex;
-                ResetChaseState();
-                return;
-            }
-
-            // Only return to start if we're far from all waypoints
-            string message2 = $"[DEBUG] Far from all waypoints (closest distance: {distanceX + distanceY}), need to return to start position";
-            DisplayWithCooldown(MSG_DISTANCE_EXCEED, message2);
-            needToReturnToStart = true;
-        }
-
-        // Find nearby waypoint that's ahead in the path
-        private (bool found, int index, int distance) FindNearestWaypointInDirection(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
-        {
-            if (waypoints == null || waypoints.Count == 0 || chaseStartWaypointIndex == -1)
-                return (false, -1, int.MaxValue);
-
-            int bestIndex = -1;
-            int bestDistance = int.MaxValue;
-            const int MAX_DISTANCE = 8; // Slightly larger radius for checking
-
-            // Check waypoints ahead of our starting position (prefer forward movement)
-            for (int i = chaseStartWaypointIndex; i < waypoints.Count; i++)
-            {
-                if (waypoints[i].Z != currentZ)
-                    continue;
-
-                int distanceX = Math.Abs(waypoints[i].X - currentX);
-                int distanceY = Math.Abs(waypoints[i].Y - currentY);
-                int totalDistance = distanceX + distanceY;
-
-                if (totalDistance <= MAX_DISTANCE && totalDistance < bestDistance)
-                {
-                    bestIndex = i;
-                    bestDistance = totalDistance;
-                }
-            }
-
-            if (bestIndex != -1)
-            {
-                return (true, bestIndex, bestDistance);
-            }
-
-            // If no forward waypoint found, check a few waypoints behind as well (but with higher preference for forward)
-            int backwardStartIndex = Math.Max(0, chaseStartWaypointIndex - 2);
-            for (int i = backwardStartIndex; i < chaseStartWaypointIndex; i++)
-            {
-                if (waypoints[i].Z != currentZ)
-                    continue;
-
-                int distanceX = Math.Abs(waypoints[i].X - currentX);
-                int distanceY = Math.Abs(waypoints[i].Y - currentY);
-                int totalDistance = distanceX + distanceY;
-
-                if (totalDistance <= MAX_DISTANCE && totalDistance < bestDistance)
-                {
-                    bestIndex = i;
-                    bestDistance = totalDistance;
-                }
-            }
-
-            return bestIndex != -1 ? (true, bestIndex, bestDistance) : (false, -1, int.MaxValue);
-        }
-
-        public bool ShouldReturnToStart()
-        {
-            lock (chaseLock)
-            {
-                return needToReturnToStart;
-            }
-        }
-
-        public Coordinate GetReturnPosition()
-        {
-            lock (chaseLock)
-            {
-                return chaseStartPosition;
-            }
-        }
-
-        public void CompleteReturn()
-        {
-            lock (chaseLock)
-            {
-                ResetChaseState();
-            }
-        }
-
-        private void ResetChaseState()
-        {
-            isChasing = false;
-            needToReturnToStart = false;
-            lastTargetId = 0;
-            chaseStartWaypointIndex = -1;
-        }
-
-        public List<Coordinate> GetChasePath()
-        {
-            lock (chaseLock)
-            {
-                return new List<Coordinate>(chasePath);
-            }
-        }
-
-        private int FindClosestWaypointIndex(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
-        {
-            int closestIndex = 0;
-            int minDistance = int.MaxValue;
-            for (int i = 0; i < waypoints.Count; i++)
-            {
-                var waypoint = waypoints[i];
-                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-                if (distance < minDistance)
-                {
-                    minDistance = distance;
-                    closestIndex = i;
-                }
-            }
-            return closestIndex;
-        }
-
-        private void DisplayWithCooldown(string messageType, string message)
-        {
-            DateTime now = DateTime.Now;
-            if (!messageTypeTimes.ContainsKey(messageType) ||
-                (now - messageTypeTimes[messageType]).TotalSeconds >= DISPLAY_COOLDOWN_SECONDS)
-            {
-                messageTypeTimes[messageType] = now;
-                Console.WriteLine(message);
-            }
-        }
-
-        public void DisplayMessage(string messageType, string message)
-        {
-            lock (chaseLock)
-            {
-                DisplayWithCooldown(messageType, message);
-            }
-        }
-    }
-    static Dictionary<int, DateTime> blacklistedTargetTimers = new Dictionary<int, DateTime>();
-    static DateTime lastPositionTime = DateTime.MinValue;
-    static int lastPositionX = 0;
-    static int lastPositionY = 0;
-    static bool isPlayerStuck = false;
-    static readonly TimeSpan TARGET_BLACKLIST_DURATION = TimeSpan.FromSeconds(30);
-    static readonly int STUCK_DETECTION_TIME_MS = 2300;
-    static bool IsTargetBlacklisted(int targetId)
-    {
-        if (!blacklistedTargetTimers.ContainsKey(targetId))
-            return false;
-        if (DateTime.Now > blacklistedTargetTimers[targetId])
-        {
-            blacklistedTargetTimers.Remove(targetId);
-            return false;
-        }
-        return true;
-    }
-    static void CleanBlacklistedTargets()
-    {
-        var now = DateTime.Now;
-        var expiredTargets = blacklistedTargetTimers
-            .Where(kvp => now > kvp.Value)
-            .Select(kvp => kvp.Key)
-            .ToList();
-        foreach (var targetId in expiredTargets)
-        {
-            blacklistedTargetTimers.Remove(targetId);
-        }
-        if (expiredTargets.Count > 0)
-        {
-        }
-    }
-    static void UpdatePlayerMovementStatus(int currentX, int currentY)
-    {
-        if (lastPositionTime == DateTime.MinValue ||
-            lastPositionX != currentX ||
-            lastPositionY != currentY)
-        {
-            lastPositionTime = DateTime.Now;
-            lastPositionX = currentX;
-            lastPositionY = currentY;
-            isPlayerStuck = false;
-        }
-        else
-        {
-            TimeSpan stuckTime = DateTime.Now - lastPositionTime;
-            isPlayerStuck = stuckTime.TotalMilliseconds >= STUCK_DETECTION_TIME_MS;
-        }
-    }
-    static bool CheckMonsterDistanceAndBlacklist()
-    {
-        int currentX, currentY, currentZ, currentTargetId;
-        bool hasBlacklisted = false;
-        lock (memoryLock)
-        {
-            currentX = posX;
-            currentY = posY;
-            currentZ = posZ;
-            currentTargetId = targetId;
-        }
-        UpdatePlayerMovementStatus(currentX, currentY);
-        if (currentTargetId != 0 && isPlayerStuck)
-        {
-            var (monsterX, monsterY, monsterZ) = GetTargetMonsterCoordinates();
-            int distanceX = Math.Abs(monsterX - currentX);
-            int distanceY = Math.Abs(monsterY - currentY);
-            int totalDistance = distanceX + distanceY;
-            if (totalDistance > MAX_MONSTER_DISTANCE)
-            {
-                blacklistedTargetTimers[currentTargetId] = DateTime.Now.Add(TARGET_BLACKLIST_DURATION);
-                InstantSendKeyPress(VK_F6);
-                lastPositionTime = DateTime.MinValue;
-                hasBlacklisted = true;
-            }
-        }
-        return hasBlacklisted;
-    }
-    static void DisplayBlacklistedTargets()
-    {
-        if (blacklistedTargetTimers.Count == 0)
-            return;
-        var now = DateTime.Now;
-        foreach (var kvp in blacklistedTargetTimers)
-        {
-            TimeSpan remainingTime = kvp.Value - now;
-            if (remainingTime.TotalSeconds > 0)
-            {
-            }
-        }
-    }
+    
     static class SPAWNWATCHER
     {
         private static string imageFolderPath = "images";
