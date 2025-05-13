@@ -2681,9 +2681,9 @@ class Program
                 if (Console.KeyAvailable)
                 {
                     ConsoleKeyInfo keyInfo = Console.ReadKey(true);
-                    if (keyInfo.Key == ConsoleKey.S)
+                    if (keyInfo.Key == ConsoleKey.X)
                     {
-                        Console.WriteLine("\n[STOP] 'S' key pressed. Stopping iteration...");
+                        Console.WriteLine("\n[STOP] 'X' key pressed. Stopping iteration...");
                         return;
                     }
                 }
@@ -2760,9 +2760,9 @@ class Program
                         if (Console.KeyAvailable)
                         {
                             ConsoleKeyInfo keyInfo = Console.ReadKey(true);
-                            if (keyInfo.Key == ConsoleKey.S)
+                            if (keyInfo.Key == ConsoleKey.X)
                             {
-                                Console.WriteLine("\n[STOP] 'S' key pressed during combat. Stopping iteration...");
+                                Console.WriteLine("\n[STOP] 'X' key pressed during combat. Stopping iteration...");
                                 return;
                             }
                         }
