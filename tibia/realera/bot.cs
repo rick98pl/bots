@@ -1,21 +1,28 @@
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Emgu.CV;
 using Emgu.CV.CvEnum;
 using Emgu.CV.Structure;
 using Emgu.CV.Util;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
+using Emgu.CV.Reg;
+using System.Text.Json;
+using Emgu.CV.Dnn;
+
 class Program
 {
+    // [Keep all existing DLL imports unchanged]
     [DllImport("kernel32.dll")]
     static extern IntPtr OpenProcess(int dwDesiredAccess, bool bInheritHandle, int processId);
-    [DllImport("user32.dll", SetLastError = true)]
-    static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool ReadProcessMemory(
         IntPtr hProcess,
@@ -24,949 +31,2425 @@ class Program
         int size,
         out int lpNumberOfBytesRead
     );
+
     [DllImport("user32.dll")]
     static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
     [DllImport("user32.dll")]
     static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
     [DllImport("user32.dll")]
     static extern bool SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    static extern bool SetCursorPos(int X, int Y);
+
+
+
+    // Add these P/Invoke declarations
+    [DllImport("user32.dll")]
+    static extern IntPtr GetDC(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
+
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteObject(IntPtr hObject);
+
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteDC(IntPtr hdc);
+
+    [DllImport("gdi32.dll")]
+    static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight,
+        IntPtr hdcSrc, int nXSrc, int nYSrc, uint dwRop);
+
+    const uint SRCCOPY = 0x00CC0020;
+
+
+
+
+
+    // [Keep all existing structs and constants unchanged]
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
     delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    const int PROCESS_VM_READ = 0x0010;
-    const int PROCESS_VM_WRITE = 0x0020;
-    const int PROCESS_VM_OPERATION = 0x0008;
+
+    // [Keep all constants unchanged]
+    const int PROCESS_ALL_ACCESS = 0x001F0FFF;
     const uint WM_KEYDOWN = 0x0100;
     const uint WM_KEYUP = 0x0101;
+    const uint WM_LBUTTONDOWN = 0x0201;
+    const uint WM_LBUTTONUP = 0x0202;
+    const uint WM_LBUTTONDBLCLK = 0x0203;
+    const uint WM_RBUTTONDOWN = 0x0204;
+    const uint WM_RBUTTONUP = 0x0205;
+    const uint WM_RBUTTONDBLCLK = 0x0206;
+    const uint WM_MBUTTONDOWN = 0x0207;
+    const uint WM_MBUTTONUP = 0x0208;
+    const uint WM_MBUTTONDBLCLK = 0x0209;
+    const uint WM_MOUSEMOVE = 0x0200;
+    const uint WM_MOUSEWHEEL = 0x020A;
+    const uint WM_MOUSEHWHEEL = 0x020E;
+    const int VK_F1 = 0x70;
+    const int VK_F2 = 0x71;
+    const int VK_F3 = 0x72;
+    const int VK_F4 = 0x73;
+    const int VK_F5 = 0x74;
+    const int VK_F6 = 0x75;
+    const int VK_F7 = 0x76;
+    const int VK_F8 = 0x77;
+    const int VK_F9 = 0x78;
+    const int VK_F10 = 0x79;
+    const int VK_F11 = 0x7A;
+    const int VK_F12 = 0x7B;
+    const int VK_F13 = 0x7C;
+    const int VK_F14 = 0x7D;
+    const int LEFT_BRACKET = 0xDB;   // [ { key
+    const int RIGHT_BRACKET = 0xDD;   // ] } key
+    const int BACKSLASH = 0xDC;   // \ | key
     const int VK_LEFT = 0x25;
     const int VK_UP = 0x26;
     const int VK_RIGHT = 0x27;
     const int VK_DOWN = 0x28;
-    const int wp_MAX_WAIT_TIME_MS = 2500;
-    public static readonly int VK_F4 = 0x73;
-    static extern bool SetForegroundWindow(IntPtr hWnd);
-    static class Keys
-    {
-        public static readonly Dictionary<string, int> KeyMap = new Dictionary<string, int>
-        {
-            { "F1", 0x70 },
-            { "F2", 0x71 },
-            { "F3", 0x72 },
-            { "F4", 0x73 },
-            { "F5", 0x74 },
-            { "F6", 0x75 },
-            { "F7", 0x76 },
-            { "F8", 0x77 },
-            { "F9", 0x78 },
-            { "F10", 0x79 },
-            { "F11", 0x7A },
-            { "F12", 0x7B }
-        };
-        public static int GetKeyCode(string keyName) =>
-            KeyMap.ContainsKey(keyName) ? KeyMap[keyName] : -1;
-    }
-    const int DEFAULT_HP_THRESHOLD = 40;
-    const int DEFAULT_BEEP_HP_THRESHOLD = 30;
-    const int DEFAULT_MANA_THRESHOLD = -1;
-    const string DEFAULT_HP_KEY_NAME = "F1";
-    const string DEFAULT_MANA_KEY_NAME = "F2";
-    static int DEFAULT_HP_KEY => Keys.GetKeyCode(DEFAULT_HP_KEY_NAME);
-    static int DEFAULT_MANA_KEY => Keys.GetKeyCode(DEFAULT_MANA_KEY_NAME);
+    const byte VK_ESCAPE = 0x1B;
+    const int MK_LBUTTON = 0x0001;
+
+    // [Keep all existing variables unchanged]
     static IntPtr targetWindow = IntPtr.Zero;
-    static DateTime lastHpActionTime = DateTime.MinValue;
-    static DateTime lastManaActionTime = DateTime.MinValue;
-    static Random random = new Random();
-    static IntPtr xAddressOffset = 0x009435FC;
-    static IntPtr yAddressOffset = 0x00943600;
-    static IntPtr zAddressOffset = 0x00943604;
-    static IntPtr targetIdOffset = 0x009432D4;
-    static IntPtr followOffset = 0x00943380;
-    static double curHP = 0,
-        maxHP = 1,
-        curMana = 0,
-        maxMana = 1;
-    static int posX = 0,
-        posY = 0,
-        posZ = 0,
-        targetId = 0,
-        follow = 0,
-        currentOutfit = 0,
-        invisibilityCode = 0;
-    static bool memoryReadActive = false;
-    static bool programRunning = true;
-    static bool shouldRestartMemoryThread = false;
-    private static int lastKnownMonsterX = 0;
-    private static int lastKnownMonsterY = 0;
-    private static int lastKnownMonsterZ = 0;
-    static ConcurrentDictionary<string, bool> threadFlags = new ConcurrentDictionary<
-        string,
-        bool
-    >();
-    static object memoryLock = new object();
-    static List<Coordinate> recordedCoords = new List<Coordinate>();
-    static string cordsFilePath = "cords.json";
-    static CoordinateData? loadedCoords = null;
-    static Process? selectedProcess = null;
     static IntPtr processHandle = IntPtr.Zero;
     static IntPtr moduleBase = IntPtr.Zero;
-    struct Variable
-    {
-        public string Name;
-        public IntPtr BaseAddress;
-        public List<int> Offsets;
-        public string Type;
-    }
-    class Coordinate
-    {
-        public int X { get; set; }
-        public int Y { get; set; }
-        public int Z { get; set; }
+    static int HP_THRESHOLD = 70;
+    static int MANA_THRESHOLD = 880;
+    static double SOUL_THRESHOLD = 5;
+    static IntPtr BASE_ADDRESS = 0x009432D0;
+    static int HP_OFFSET = 1184;
+    static int MAX_HP_OFFSET = 1192;
+    static int MANA_OFFSET = 1240;
+    static int MAX_MANA_OFFSET = 1248;
+    static int SOUL_OFFSET = 1280;
+    static int INVIS_OFFSET = 84;
+    static int SPEED_OFFSET = 176;
 
-    }
-    class CoordinateData
+    static IntPtr POSITION_X_OFFSET = 0x009435FC;
+    static IntPtr POSITION_Y_OFFSET = 0x00943600;
+    static IntPtr POSITION_Z_OFFSET = 0x00943604;
+    static IntPtr TARGET_ID_OFFSET = 0x009432D4;
+    static double curHP = 0, maxHP = 1;
+    static double curMana = 0, maxMana = 1;
+    static double curSoul = 0;
+    static int currentX = 0, currentY = 0, currentZ = 0, targetId = 0, invisibilityCode = 0, speed = 0;
+    static string processName = "RealeraDX";
+    static DateTime lastHpAction = DateTime.MinValue;
+    static DateTime lastManaAction = DateTime.MinValue;
+    static bool programRunning = true;
+    static bool itemDragInProgress = false;
+    static int currentDragCount = 0;
+    static bool actionSequenceRunning = false;
+    static int currentActionIndex = 0;
+    static int backpackX = 615;
+    static int backpackY = 75;
+    static int groundX = 300;
+    static int groundY = 280;
+    const int WAYPOINT_SIZE = 39;
+    const int TOLERANCE = 0;
+    static CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
+
+    // Updated Action abstract class with retry support
+    public abstract class Action
     {
-        public List<Coordinate> cords { get; set; } = new List<Coordinate>();
+        public int MaxRetries { get; set; } = 10;
+        public abstract bool Execute();
+        public abstract string GetDescription();
+
+        // Method to check if the action was successful (override for specific actions)
+        public virtual bool VerifySuccess()
+        {
+            return true; // Default implementation - consider action successful
+        }
     }
-    static int currentCoordIndex = -1;
-    static int totalCoords = 0;
-    static Coordinate? currentTarget = null;
-    static bool debug = true;
-    static int debugTime = 2;
-    static void Main()
+
+    public class ScanBackpackAction : Action
     {
-        threadFlags["recording"] = false;
-        threadFlags["playing"] = false;
-        threadFlags["autopot"] = true;
-        threadFlags["spawnwatch"] = true;
-        threadFlags["lootrecognizer"] = true;
-        threadFlags.TryAdd("overlay", true);
-        if (!threadFlags.ContainsKey("overlay"))
+        public ScanBackpackAction()
         {
-            threadFlags.TryAdd("overlay", false);
+            MaxRetries = 3; // Optional: set retry attempts for this action
         }
-        if (!threadFlags.ContainsKey("clickoverlay"))
+
+        public override bool Execute()
         {
-            threadFlags.TryAdd("clickoverlay", false);
+            //Debugger("Scanning backpack for recognized items");
+            ScanBackpackForRecognizedItems();
+            return true;
         }
-        InitializeSounds();
-        if (!File.Exists(cordsFilePath))
+
+        public override bool VerifySuccess()
         {
-            SaveCoordinates();
+            // Since this is just a scan operation, we could add verification logic here
+            // For example, check if a drag operation actually happened
+            return true; // For now, assume success
         }
-        string processName = "RealeraDX";
-        while (programRunning)
+
+        public override string GetDescription()
         {
+            return "Scan backpack for items";
+        }
+    }
+
+    // Updated MoveAction with proper verification
+    public class MoveAction : Action
+    {
+        public int TargetX { get; set; }
+        public int TargetY { get; set; }
+        public int TargetZ { get; set; }
+        public int TimeoutMs { get; set; } = 3000;
+
+        public MoveAction(int x, int y, int z, int timeoutMs = 3000)
+        {
+            TargetX = x;
+            TargetY = y;
+            TargetZ = z;
+            TimeoutMs = timeoutMs;
+        }
+
+        public override bool Execute()
+        {
+            Debugger($"Moving to position ({TargetX}, {TargetY}, {TargetZ})");
+
+            // Click on the waypoint
+            ClickWaypoint(TargetX, TargetY);
+
+            // Wait a moment for the click to register
+            //Thread.Sleep(500);
+
+            return true; // We'll verify success separately
+        }
+
+        public override bool VerifySuccess()
+        {
+            DateTime startTime = DateTime.Now;
+
+            // Wait for the character to reach the waypoint
+            while ((DateTime.Now - startTime).TotalMilliseconds < TimeoutMs)
             {
-                while (selectedProcess == null)
+                ReadMemoryValues();
+                if (IsAtPosition(TargetX, TargetY, TargetZ))
                 {
-                    var processes = Process
-                        .GetProcesses()
-                        .Where(p => p.ProcessName == processName)
-                        .ToArray();
-                    if (processes.Length == 0)
+                    Debugger($"Successfully reached position ({TargetX}, {TargetY}, {TargetZ})");
+                    //Thread.Sleep(600);
+                    return true;
+                }
+
+            }
+
+            Debugger($"Failed to reach position ({TargetX}, {TargetY}, {TargetZ}) within {TimeoutMs}ms");
+            return false;
+        }
+
+        public override string GetDescription()
+        {
+            return $"Move to ({TargetX}, {TargetY}, {TargetZ})";
+        }
+    }
+
+    // Right-click action with verification
+    // Improved Right-click action with verification similar to ArrowAction
+    // Improved Right-click action with verification similar to ArrowAction
+    public class RightClickAction : Action
+    {
+        public int DelayAfterMs { get; set; }
+        public bool ExpectSpecificOutcome { get; set; }
+        public bool ExpectZChange { get; set; } = true; // New property similar to ArrowAction
+        public bool ExpectUpMovement { get; set; } = true; // Expect to go up (like stairs/ladders) = LOWER Z value
+
+        public RightClickAction(int delayAfterMs = 100, bool expectSpecificOutcome = true, bool expectZChange = true, bool expectUpMovement = true)
+        {
+            DelayAfterMs = delayAfterMs;
+            ExpectSpecificOutcome = expectSpecificOutcome;
+            ExpectZChange = expectZChange;
+            ExpectUpMovement = expectUpMovement;
+            MaxRetries = 10; // Set higher retry count for Z-level changes
+        }
+
+        public override bool Execute()
+        {
+            if (!ExpectSpecificOutcome)
+            {
+                // Simple right-click without verification
+                Debugger("Right-clicking on character position");
+                RightClickOnCharacter();
+                return true;
+            }
+
+            // Right-click with retry logic similar to ArrowAction
+            if (!ExpectZChange)
+            {
+                // Normal right-click without Z-level verification
+                Debugger("Right-click without Z-level change verification");
+                RightClickOnCharacter();
+                return true;
+            }
+
+            // Z-level change verification logic (similar to ArrowAction)
+            Debugger("Right-click with Z-level change verification");
+
+            // Store original position
+            ReadMemoryValues();
+            int originalX = currentX;
+            int originalY = currentY;
+            int originalZ = currentZ;
+            Debugger($"Original position: ({originalX}, {originalY}, {originalZ})");
+
+            int maxAttempts = MaxRetries;
+            int attempt = 1;
+
+            while (attempt <= maxAttempts)
+            {
+                Debugger($"Attempt {attempt}/{maxAttempts} - Right-click with Z-level change");
+
+                // Execute the right-click
+                RightClickOnCharacter();
+
+                // Wait for the action to complete
+                Thread.Sleep(Math.Max(DelayAfterMs, 500)); // Minimum 500ms for Z-level changes
+
+                // Check if Z-level changed
+                ReadMemoryValues();
+                bool zChanged = currentZ != originalZ;
+                bool correctDirection = ExpectUpMovement ? currentZ < originalZ : currentZ > originalZ; // UP = LOWER Z
+
+                // Check if both X and Y changed by more than 100 (teleportation-like movement)
+                int xChange = Math.Abs(currentX - originalX);
+                int yChange = Math.Abs(currentY - originalY);
+                bool significantMovement = xChange > 100 && yChange > 100;
+
+                if (significantMovement)
+                {
+                    Debugger($"Both X and Y changed by more than 100 - bypassing Z-level check");
+                    Debugger($"X change: {xChange}, Y change: {yChange}");
+                    return true;
+                }
+
+                Debugger($"After right-click: ({currentX}, {currentY}, {currentZ}) - Z changed: {zChanged}, Correct direction: {correctDirection}");
+                Debugger($"Expected direction: {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")}, Actual Z change: {originalZ} -> {currentZ}");
+
+                if (zChanged && correctDirection)
+                {
+                    Debugger($"Success! Z-level changed from {originalZ} to {currentZ} in the expected direction");
+                    return true;
+                }
+                else if (zChanged && !correctDirection)
+                {
+                    Debugger($"Z-level changed but in wrong direction. Expected {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")} but went {(currentZ < originalZ ? "UP (lower Z)" : "DOWN (higher Z)")}");
+                    // You might want to return to original position here, but for right-clicks this is usually not needed
+                }
+
+                // Z didn't change or changed in wrong direction - return to original position if we moved
+                if (currentX != originalX || currentY != originalY)
+                {
+                    Debugger($"Z didn't change correctly but position moved. Returning to original position...");
+                    // Create and execute a MoveAction to return to original position
+                    var returnAction = new MoveAction(originalX, originalY, originalZ, 2000);
+
+                    // Execute the return move
+                    if (!returnAction.Execute())
                     {
-                        Console.WriteLine($"Process '{processName}' not found.");
-                        Sleep(2000);
-                        continue;
+                        Debugger($"Failed to execute return movement on attempt {attempt}");
                     }
-                    else if (processes.Length == 1)
+
+                    // Verify the return move
+                    if (!returnAction.VerifySuccess())
                     {
-                        selectedProcess = processes[0];
-                        Console.WriteLine($"One process found: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
-                        Console.WriteLine($"Window Title: {selectedProcess.MainWindowTitle}");
+                        Debugger($"Failed to verify return movement on attempt {attempt}");
+                        // Continue to next attempt even if return failed
                     }
                     else
                     {
-                        Console.WriteLine($"Multiple processes found with name '{processName}':");
-                        for (int i = 0; i < processes.Length; i++)
-                        {
-                            Console.WriteLine($"{i + 1}: ID={processes[i].Id}, Name={processes[i].ProcessName}, Window Title={processes[i].MainWindowTitle}, StartTime={(processes[i].StartTime)}");
-                        }
-                        Console.WriteLine("Enter the number of the process you want to select (1-9):");
-                        string input = Console.ReadLine();
-                        if (
-                            int.TryParse(input, out int choice)
-                            && choice >= 1
-                            && choice <= processes.Length
-                        )
-                        {
-                            selectedProcess = processes[choice - 1];
-                            Console.WriteLine($"Selected process: {selectedProcess.ProcessName} (ID: {selectedProcess.Id})");
-                            Console.WriteLine($"Window Title: {selectedProcess.MainWindowTitle}");
-                        }
-                        else
-                        {
-                            Console.WriteLine("Invalid selection. Please try again.");
-                        }
+                        Debugger($"Successfully returned to original position");
                     }
+                }
+
+                attempt++;
+
+                // Wait before next attempt
+                if (attempt <= maxAttempts)
+                {
+                    Thread.Sleep(500);
                 }
             }
-            FindRealeraWindow(selectedProcess);
-            const int PROCESS_ALL_ACCESS = 0x001F0FFF;
-            processHandle = OpenProcess(PROCESS_ALL_ACCESS, false, selectedProcess.Id);
-            moduleBase = selectedProcess.MainModule.BaseAddress;
-            GetClientRect(targetWindow, out RECT windowRect);
-            int windowHeight = windowRect.Bottom - windowRect.Top;
-            smallWindow = windowHeight < 1200;
-            StartWorkerThreads();
-            DisplayStats();
-            DateTime lastOverlayCheck = DateTime.MinValue;
-            DateTime lastInputCheck = DateTime.MinValue;
-            const int INPUT_CHECK_INTERVAL = 50;
-            const int OVERLAY_CHECK_INTERVAL = 2000;
-            while (memoryReadActive && !shouldRestartMemoryThread)
+
+            Debugger($"Failed to achieve Z-level change after {maxAttempts} attempts");
+            return false;
+        }
+
+        public override bool VerifySuccess()
+        {
+            if (!ExpectZChange)
             {
-                DateTime now = DateTime.Now;
-                if ((now - lastInputCheck).TotalMilliseconds >= INPUT_CHECK_INTERVAL)
+                // For normal right-click actions, just wait the delay
+                if (DelayAfterMs > 0)
                 {
-                    lastInputCheck = now;
-                    if (Console.KeyAvailable)
-                    {
-                        var key = Console.ReadKey(true).Key;
-                        HandleUserInput(key);
-                    }
+                    Thread.Sleep(DelayAfterMs);
                 }
-                if ((now - lastOverlayCheck).TotalMilliseconds >= OVERLAY_CHECK_INTERVAL)
-                {
-                    lastOverlayCheck = now;
-                    if (threadFlags["overlay"] && (overlayForm == null || overlayForm.IsDisposed))
-                    {
-                        StartOverlay();
-                    }
-                    else if (!threadFlags["overlay"] && overlayForm != null && !overlayForm.IsDisposed)
-                    {
-                        StopOverlay();
-                    }
-                }
-                Sleep(50);
+                return true;
             }
-            if (shouldRestartMemoryThread)
+
+            // For Z-level changes, the verification is already done in Execute()
+            // so we just return true here
+            return true;
+        }
+
+        public override string GetDescription()
+        {
+            string baseDescription = "Right-click on character";
+            if (ExpectZChange)
             {
-                shouldRestartMemoryThread = false;
-                StopWorkerThreads();
-                StopOverlay();
-                selectedProcess = null;
+                baseDescription += $" (with Z-level verification - expect {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")})";
+            }
+            return baseDescription;
+        }
+    }
+
+    // [Keep other action classes unchanged - DragAction, HotkeyAction, ArrowAction]
+    public class DragAction : Action
+    {
+        public enum DragDirection
+        {
+            BackpackToGround,
+            GroundToBackpack
+        }
+
+        public enum DragBackpack
+        {
+            MANAS,
+            SD
+        }
+
+        public DragDirection Direction { get; set; }
+        public DragBackpack Backpack { get; set; }
+        public int ItemCount { get; set; }
+        public int DelayBetweenDrags { get; set; }
+
+        public DragAction(DragDirection direction, DragBackpack backpack, int itemCount = 8, int delayBetweenDrags = 100)
+        {
+            Direction = direction;
+            Backpack = backpack;
+            ItemCount = itemCount;
+            DelayBetweenDrags = delayBetweenDrags;
+        }
+
+        public override bool Execute()
+        {
+            bool reverseDirection = Direction == DragDirection.GroundToBackpack;
+            string directionName = reverseDirection ? "ground to backpack" : "backpack to ground";
+
+            Debugger($"Dragging {ItemCount} items from {directionName}");
+
+            try
+            {
+
+
+                int groundYLocal = groundY;
+                if (directionName == "backpack to ground" && Backpack == DragBackpack.MANAS)
+                {
+                    groundYLocal = groundY + 4*WAYPOINT_SIZE;
+                }
+
+                int localX = backpackX;
+                int localY = backpackY;
+                if (Backpack == DragBackpack.SD)
+                {
+                    localX = 800;
+                    localY = 245;
+                }
+                RECT clientRect;
+                GetClientRect(targetWindow, out clientRect);
+
+                if (reverseDirection)
+                {
+                    localX += 125;
+                    localY += 125;
+                }
+
+                POINT groundPoint = new POINT { X = groundX, Y = groundYLocal };
+                POINT backpackPoint = new POINT { X = localX, Y = localY };
+
+                ClientToScreen(targetWindow, ref groundPoint);
+                ClientToScreen(targetWindow, ref backpackPoint);
+
+                //SetCursorPos(backpackPoint.X, backpackPoint.Y);
+                //Thread.Sleep(4000);
+
+                POINT sourcePoint, destPoint;
+                if (reverseDirection)
+                {
+                    sourcePoint = groundPoint;
+                    destPoint = backpackPoint;
+                }
+                else
+                {
+                    sourcePoint = backpackPoint;
+                    destPoint = groundPoint;
+                }
+
+                for (int i = 1; i <= ItemCount; i++)
+                {
+                    DragItem(sourcePoint.X, sourcePoint.Y, destPoint.X, destPoint.Y);
+                    Debugger($"Drag #{i} completed... ({i}/{ItemCount})");
+
+                    if (DelayBetweenDrags > 0 && i < ItemCount)
+                    {
+                        Thread.Sleep(DelayBetweenDrags);
+                    }
+                }
+
+                Debugger($"All {ItemCount} item drags completed ({directionName}).");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debugger($"Error during drag action: {ex.Message}");
+                return false;
+            }
+        }
+
+        public override string GetDescription()
+        {
+            string directionName = Direction == DragDirection.GroundToBackpack ? "ground to backpack" : "backpack to ground";
+            return $"Drag {ItemCount} items from {directionName}";
+        }
+    }
+
+    public class HotkeyAction : Action
+    {
+        public int KeyCode { get; set; }
+        public int DelayMs { get; set; }
+        public bool ExpectZChange { get; set; } = false; // For F12 Z-level verification
+        public bool ExpectUpMovement { get; set; } = false; // Expect to go up (like stairs/ladders) = LOWER Z value
+        public bool ExpectXChange { get; set; } = false; // For F7/F8 X coordinate verification
+        public int MinXChange { get; set; } = 20; // Minimum X coordinate change expected
+
+        public HotkeyAction(int keyCode, int delayMs = 100, bool expectZChange = false, bool expectUpMovement = false, bool expectXChange = false, int minXChange = 20)
+        {
+            KeyCode = keyCode;
+            DelayMs = delayMs;
+            ExpectZChange = expectZChange;
+            ExpectUpMovement = expectUpMovement;
+            ExpectXChange = expectXChange;
+            MinXChange = minXChange;
+
+            // Automatically set validation for specific keys
+            if (keyCode == VK_F12)
+            {
+                ExpectZChange = true;
+                ExpectUpMovement = true; // F12 (exani tera) typically moves up
+                MaxRetries = 10; // Set higher retry count for Z-level changes
+            }
+            else if (keyCode == VK_F7 || keyCode == VK_F8)
+            {
+                ExpectXChange = true;
+                MinXChange = minXChange;
+                MaxRetries = 10; // Set higher retry count for teleportation spells
+            }
+        }
+
+        public override bool Execute()
+        {
+            string keyName = GetKeyName(KeyCode);
+
+            // Check if this key needs special validation
+            bool needsValidation = (KeyCode == VK_F12 && ExpectZChange) ||
+                                  ((KeyCode == VK_F7 || KeyCode == VK_F8) && ExpectXChange);
+
+            if (!needsValidation)
+            {
+                // Normal hotkey press without validation
+                Debugger($"Pressing {keyName}");
+                SendKeyPress(KeyCode);
+                return true;
+            }
+
+            // Special validation logic for F7, F8 (X-change) and F12 (Z-change)
+            if (KeyCode == VK_F12)
+            {
+                return ExecuteF12WithZValidation(keyName);
+            }
+            else if (KeyCode == VK_F7 || KeyCode == VK_F8)
+            {
+                return ExecuteF7F8WithXValidation(keyName);
+            }
+
+            return false;
+        }
+
+        private bool ExecuteF12WithZValidation(string keyName)
+        {
+            Debugger($"{keyName} (exani tera) with Z-level change verification");
+
+            // Store original position
+            ReadMemoryValues();
+            int originalX = currentX;
+            int originalY = currentY;
+            int originalZ = currentZ;
+            Debugger($"Original position: ({originalX}, {originalY}, {originalZ})");
+
+            int maxAttempts = MaxRetries;
+            int attempt = 1;
+
+            while (attempt <= maxAttempts)
+            {
+                Debugger($"Attempt {attempt}/{maxAttempts} - F12 with Z-level change");
+
+                // Execute the F12 key press
+                SendKeyPress(KeyCode);
+
+                // Wait for the action to complete
+                Thread.Sleep(Math.Max(DelayMs, 500)); // Minimum 500ms for Z-level changes
+
+                // Check if Z-level changed
+                ReadMemoryValues();
+                bool zChanged = currentZ != originalZ;
+                bool correctDirection = ExpectUpMovement ? currentZ < originalZ : currentZ > originalZ; // UP = LOWER Z
+
+                // Check if both X and Y changed by more than 100 (teleportation-like movement)
+                int xChange = Math.Abs(currentX - originalX);
+                int yChange = Math.Abs(currentY - originalY);
+                bool significantMovement = xChange > 100 && yChange > 100;
+
+                if (significantMovement)
+                {
+                    Debugger($"Both X and Y changed by more than 100 - bypassing Z-level check");
+                    Debugger($"X change: {xChange}, Y change: {yChange}");
+                    return true;
+                }
+
+                Debugger($"After F12: ({currentX}, {currentY}, {currentZ}) - Z changed: {zChanged}, Correct direction: {correctDirection}");
+                Debugger($"Expected direction: {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")}, Actual Z change: {originalZ} -> {currentZ}");
+
+                if (zChanged && correctDirection)
+                {
+                    Debugger($"Success! Z-level changed from {originalZ} to {currentZ} in the expected direction");
+                    return true;
+                }
+                else if (zChanged && !correctDirection)
+                {
+                    Debugger($"Z-level changed but in wrong direction. Expected {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")} but went {(currentZ < originalZ ? "UP (lower Z)" : "DOWN (higher Z)")}");
+                }
+
+                // Z didn't change or changed in wrong direction
+                if (!zChanged)
+                {
+                    Debugger($"Z-level didn't change. Expected to go {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")}");
+                }
+
+                attempt++;
+
+                // Wait before next attempt
+                if (attempt <= maxAttempts)
+                {
+                    Thread.Sleep(500);
+                }
+            }
+
+            Debugger($"Failed to achieve Z-level change after {maxAttempts} attempts");
+            return false;
+        }
+
+        private bool ExecuteF7F8WithXValidation(string keyName)
+        {
+            string spellName = KeyCode == VK_F7 ? "bring me to east" : "bring me to centre";
+            Debugger($"{keyName} ({spellName}) with X coordinate change verification (min {MinXChange} squares)");
+
+            // Store original position
+            ReadMemoryValues();
+            int originalX = currentX;
+            int originalY = currentY;
+            int originalZ = currentZ;
+            Debugger($"Original position: ({originalX}, {originalY}, {originalZ})");
+
+            int maxAttempts = MaxRetries;
+            int attempt = 1;
+
+            while (attempt <= maxAttempts)
+            {
+                Debugger($"Attempt {attempt}/{maxAttempts} - {keyName} with X coordinate change");
+
+                // Execute the key press
+                SendKeyPress(KeyCode);
+
+                // Wait for the teleportation to complete
+                Thread.Sleep(Math.Max(DelayMs, 1000)); // Minimum 1000ms for teleportation spells
+
+                // Check if position changed
+                ReadMemoryValues();
+                int xChange = Math.Abs(currentX - originalX);
+                int yChange = Math.Abs(currentY - originalY);
+                int zChange = Math.Abs(currentZ - originalZ);
+
+                Debugger($"After {keyName}: ({currentX}, {currentY}, {currentZ})");
+                Debugger($"Position changes: X={xChange}, Y={yChange}, Z={zChange}");
+
+                // Check if X coordinate changed by at least the minimum amount
+                if (xChange >= MinXChange)
+                {
+                    Debugger($"Success! X coordinate changed by {xChange} squares (minimum {MinXChange} required)");
+                    Debugger($"Teleported from ({originalX}, {originalY}, {originalZ}) to ({currentX}, {currentY}, {currentZ})");
+                    return true;
+                }
+
+                // Also check for significant Y or Z changes (alternative success condition)
+                bool significantMovement = yChange > 100 || zChange > 0;
+                if (significantMovement)
+                {
+                    Debugger($"Success! Significant movement detected (Y change: {yChange}, Z change: {zChange})");
+                    return true;
+                }
+
+                Debugger($"X coordinate only changed by {xChange} squares, but {MinXChange} was required");
+
+                attempt++;
+
+                // Wait before next attempt
+                if (attempt <= maxAttempts)
+                {
+                    Thread.Sleep(500);
+                }
+            }
+
+            Debugger($"Failed to achieve X coordinate change of at least {MinXChange} squares after {maxAttempts} attempts");
+            return false;
+        }
+
+        public override bool VerifySuccess()
+        {
+            bool needsValidation = (KeyCode == VK_F12 && ExpectZChange) ||
+                                  ((KeyCode == VK_F7 || KeyCode == VK_F8) && ExpectXChange);
+
+            if (!needsValidation)
+            {
+                // For normal hotkey actions, just wait the delay
+                if (DelayMs > 0)
+                {
+                    Thread.Sleep(DelayMs);
+                }
+                return true;
+            }
+
+            // For validated keys, the verification is already done in Execute()
+            // so we just return true here
+            return true;
+        }
+
+        public override string GetDescription()
+        {
+            string baseDescription = $"Press {GetKeyName(KeyCode)}";
+
+            if (ExpectZChange && KeyCode == VK_F12)
+            {
+                baseDescription += $" (with Z-level verification - expect {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")})";
+            }
+            else if (ExpectXChange && (KeyCode == VK_F7 || KeyCode == VK_F8))
+            {
+                string spellName = KeyCode == VK_F7 ? "bring me to east" : "bring me to centre";
+                baseDescription += $" ({spellName} with X coordinate verification - min {MinXChange} squares)";
+            }
+
+            return baseDescription;
+        }
+
+        private string GetKeyName(int keyCode)
+        {
+            switch (keyCode)
+            {
+                case VK_F1: return "F1";
+                case VK_F2: return "F2";
+                case VK_F3: return "F3";
+                case VK_F4: return "F4";
+                case VK_F5: return "F5";
+                case VK_F6: return "F6";
+                case VK_F7: return "F7";
+                case VK_F8: return "F8";
+                case VK_F9: return "F9";
+                case VK_F10: return "F10";
+                case VK_F11: return "F11";
+                case VK_F12: return "F12";
+                case VK_F13: return "F13";
+                case VK_F14: return "F14";
+                default: return $"Key {keyCode}";
             }
         }
     }
-    static bool maintainOutfitActive = true;
-    static int desiredOutfit = 75;
-    static Thread? outfitThread = null;
-    static readonly object outfitLock = new object();
-    static void MaintainOutfitThread()
+
+    public class ArrowAction : Action
     {
-        const int CHECK_INTERVAL_MS = 500;
-        DateTime lastCheckTime = DateTime.MinValue;
-        try
+        public enum ArrowDirection
         {
-            int currentOutfitValue;
-            lock (memoryLock)
+            Left,
+            Right,
+            Up,
+            Down
+        }
+
+        public ArrowDirection Direction { get; set; }
+        public int DelayMs { get; set; }
+        public bool ExpectZChange { get; set; } = true; // New property to indicate if this arrow action should change Z
+
+        public ArrowAction(ArrowDirection direction, int delayMs = 1000, bool expectZChange = true)
+        {
+            Direction = direction;
+            DelayMs = delayMs;
+            ExpectZChange = expectZChange;
+            MaxRetries = 10; // Set higher retry count for Z-level changes
+        }
+
+        public override bool Execute()
+        {
+            if (!ExpectZChange)
             {
-                currentOutfitValue = currentOutfit;
+                // Normal arrow key press without Z-level verification
+                int keyCode = GetArrowKeyCode(Direction);
+                string directionName = Direction.ToString();
+                Debugger($"Pressing Arrow {directionName}");
+                SendKeyPress(keyCode);
+                return true;
             }
-            if (currentOutfitValue != desiredOutfit)
+            // Z-level change verification logic
+            Debugger($"Arrow {Direction} with Z-level change verification");
+            // Store original position
+            ReadMemoryValues();
+            int originalX = currentX;
+            int originalY = currentY;
+            int originalZ = currentZ;
+            Debugger($"Original position: ({originalX}, {originalY}, {originalZ})");
+            int maxAttempts = MaxRetries;
+            int attempt = 1;
+            while (attempt <= maxAttempts)
             {
-                IntPtr outfitAddress = IntPtr.Zero;
-                foreach (var variable in variables)
+                Debugger($"Attempt {attempt}/{maxAttempts} - Z-level change");
+                // Execute the arrow key press
+                int keyCode = GetArrowKeyCode(Direction);
+                SendKeyPress(keyCode);
+                // Wait for the action to complete
+                Thread.Sleep(Math.Max(DelayMs, 500)); // Minimum 500ms for Z-level changes
+                                                      // Check if Z-level changed
+                ReadMemoryValues();
+                bool zChanged = currentZ != originalZ;
+
+                // Check if both X and Y changed by more than 100
+                int xChange = Math.Abs(currentX - originalX);
+                int yChange = Math.Abs(currentY - originalY);
+                bool significantMovement = xChange > 100 && yChange > 100;
+
+                if (significantMovement)
                 {
-                    if (variable.Name.Contains("currentOutfit"))
+                    Debugger($"Both X and Y changed by more than 100 - bypassing Z-level check");
+                    Debugger($"X change: {xChange}, Y change: {yChange}");
+                    return true;
+                }
+
+                Debugger($"After arrow press: ({currentX}, {currentY}, {currentZ}) - Z changed: {zChanged}");
+                if (zChanged)
+                {
+                    Debugger($"Success! Z-level changed from {originalZ} to {currentZ}");
+                    return true;
+                }
+                // Z didn't change - return to original position if we moved
+                if (currentX != originalX || currentY != originalY)
+                {
+                    Debugger($"Z didn't change but position moved. Returning to original position...");
+                    // Create and execute a MoveAction to return to original position
+                    var returnAction = new MoveAction(originalX, originalY, originalZ, 2000);
+                    // Execute the return move
+                    if (!returnAction.Execute())
                     {
-                        IntPtr baseAddress = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
-                        byte[] buffer = new byte[4];
-                        if (!ReadProcessMemory(processHandle, baseAddress, buffer, buffer.Length, out _))
-                        {
-                            return;
-                        }
-                        outfitAddress = BitConverter.ToInt32(buffer, 0);
-                        outfitAddress = IntPtr.Add(outfitAddress, variable.Offsets[0]);
-                        break;
+                        Debugger($"Failed to execute return movement on attempt {attempt}");
+                    }
+                    // Verify the return move
+                    if (!returnAction.VerifySuccess())
+                    {
+                        Debugger($"Failed to verify return movement on attempt {attempt}");
+                        // Continue to next attempt even if return failed
+                    }
+                    else
+                    {
+                        Debugger($"Successfully returned to original position");
                     }
                 }
-                if (outfitAddress == IntPtr.Zero)
+                attempt++;
+                // Wait before next attempt
+                if (attempt <= maxAttempts)
                 {
-                    return;
+                    Thread.Sleep(500);
                 }
-                byte[] exactOutfitBuffer = BitConverter.GetBytes(desiredOutfit);
-                int bytesWritten;
-                if (!WriteProcessMemory(processHandle, outfitAddress, exactOutfitBuffer, exactOutfitBuffer.Length, out bytesWritten))
+            }
+            Debugger($"Failed to change Z-level after {maxAttempts} attempts");
+            return false;
+        }
+
+        public override bool VerifySuccess()
+        {
+            if (!ExpectZChange)
+            {
+                // For normal arrow actions, just wait the delay
+                if (DelayMs > 0)
                 {
-                    int errorCode = Marshal.GetLastWin32Error();
-                    return;
+                    Thread.Sleep(DelayMs);
                 }
-                currentOutfit = desiredOutfit;
-                Sleep(250);
+                return true;
+            }
+
+            // For Z-level changes, the verification is already done in Execute()
+            // so we just return true here
+            return true;
+        }
+
+        public override string GetDescription()
+        {
+            string baseDescription = $"Press Arrow {Direction}";
+            if (ExpectZChange)
+            {
+                baseDescription += " (with Z-level verification)";
+            }
+            return baseDescription;
+        }
+
+        private int GetArrowKeyCode(ArrowDirection direction)
+        {
+            switch (direction)
+            {
+                case ArrowDirection.Left: return VK_LEFT;
+                case ArrowDirection.Right: return VK_RIGHT;
+                case ArrowDirection.Up: return VK_UP;
+                case ArrowDirection.Down: return VK_DOWN;
+                default: return VK_LEFT;
+            }
+        }
+    }
+
+    // Static array of actions
+    static List<Action> actionSequence = new List<Action>();
+
+    static void tarantulaSeqeunce()
+    {
+        // Clear any existing actions
+        actionSequence.Clear();
+
+        //// Base coordinates
+        int baseX = 32597, baseY = 32747, baseZ = 7;
+
+
+        actionSequence.Add(new FightTarantulasAction());
+
+
+        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
+
+
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200)); //down the hole
+
+        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
+
+
+        actionSequence.Add(new MoveAction(32817, 32809, 7));
+
+        actionSequence.Add(new MoveAction(32814, 32809, 7));
+        actionSequence.Add(new MoveAction(32807, 32810, 7));
+        actionSequence.Add(new MoveAction(32801, 32811, 7));
+        actionSequence.Add(new MoveAction(32795, 32809, 7));
+        actionSequence.Add(new MoveAction(32789, 32807, 7));
+        actionSequence.Add(new MoveAction(32782, 32803, 7));
+        actionSequence.Add(new MoveAction(32776, 32803, 7));
+        actionSequence.Add(new MoveAction(32769, 32805, 7));
+        actionSequence.Add(new MoveAction(32762, 32807, 7));
+        actionSequence.Add(new MoveAction(32755, 32807, 7));
+        actionSequence.Add(new MoveAction(32748, 32811, 7));
+        actionSequence.Add(new MoveAction(32741, 32807, 7));
+        actionSequence.Add(new MoveAction(32735, 32803, 7));
+        actionSequence.Add(new MoveAction(32728, 32799, 7));
+        actionSequence.Add(new MoveAction(32723, 32794, 7));
+        actionSequence.Add(new MoveAction(32716, 32791, 7));
+        actionSequence.Add(new MoveAction(32713, 32786, 7));
+        actionSequence.Add(new MoveAction(32710, 32788, 7));
+        actionSequence.Add(new MoveAction(32706, 32785, 7));
+        actionSequence.Add(new MoveAction(32699, 32784, 7));
+        actionSequence.Add(new MoveAction(32692, 32783, 7));
+        actionSequence.Add(new MoveAction(32685, 32781, 7));
+        actionSequence.Add(new MoveAction(32679, 32777, 7));
+
+
+        actionSequence.Add(new HotkeyAction(VK_F8, 800)); //bring me to centre
+
+        actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
+      DragAction.DragBackpack.MANAS, 8, 100)); //water
+
+        actionSequence.Add(new MoveAction(32622, 32769, 7));
+
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 19, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 21, baseY + 14, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 9, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 31, baseY + 2, baseZ + 0));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Right, 200));
+        actionSequence.Add(new MoveAction(baseX + 35, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 39, baseY - 6, baseZ - 1));
+
+        actionSequence.Add(new HotkeyAction(VK_F4, 800)); //money withdraw
+
+        actionSequence.Add(new MoveAction(baseX + 33, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 5, baseZ - 1));
+        actionSequence.Add(new RightClickAction(200));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY - 6, baseZ - 2));
+
+        actionSequence.Add(new HotkeyAction(VK_F5, 800)); //blanks
+
+        actionSequence.Add(new HotkeyAction(VK_F9, 800)); //fluids
+
+        for (int i = 0; i < 20; i++)
+        {
+            actionSequence.Add(new ScanBackpackAction());
+        }
+
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+        actionSequence.Add(new MoveAction(baseX + 33, baseY + 0, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 32, baseY + 1, baseZ - 1));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+        actionSequence.Add(new MoveAction(baseX + 25, baseY + 8, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 20, baseY + 13, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 13, baseY + 15, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 8, baseY + 10, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 1, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 0, baseY + 3, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX - 2, baseY - 2, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 2, baseY - 4, baseZ + 0));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+
+        Debugger($"Initialized action sequence with {actionSequence.Count} actions:");
+        for (int i = 0; i < actionSequence.Count; i++)
+        {
+            Debugger($"  {i + 1}: {actionSequence[i].GetDescription()}");
+        }
+    }
+
+    static void InitializeActionSequence()
+    {
+        actionSequence.Clear();
+
+        int baseX = 32597, baseY = 32747, baseZ = 7;
+
+        for (int i = 0; i < 20; i++)
+        {
+            actionSequence.Add(new ScanBackpackAction());
+        }
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+
+
+        actionSequence.Add(new MoveAction(baseX + 0, baseY + 0, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 0, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 7, baseY + 6, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 9, baseY + 11, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 15, baseY + 15, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 22, baseY + 15, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 20, baseZ + 0));
+
+
+        actionSequence.Add(new MoveAction(32624, 32769, 7));
+        actionSequence.Add(new MoveAction(32631, 32769, 7));
+        actionSequence.Add(new MoveAction(32638, 32769, 7));
+
+        actionSequence.Add(new RightClickAction(200));
+
+        actionSequence.Add(new MoveAction(32635, 32773, 6));
+        actionSequence.Add(new MoveAction(32630, 32773, 6));
+        actionSequence.Add(new MoveAction(32627, 32772, 6));
+
+
+
+        for (int i = 0; i < 20; i++)
+        {
+            actionSequence.Add(new ScanBackpackAction());
+        }
+
+        actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
+            DragAction.DragBackpack.MANAS, 8, 100)); //water
+
+        actionSequence.Add(new MoveAction(32625, 32769, 6));
+        actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
+            DragAction.DragBackpack.SD, 2, 100));
+
+        actionSequence.Add(new MoveAction(32627, 32772, 6));
+        actionSequence.Add(new MoveAction(32632, 32773, 6));
+        actionSequence.Add(new MoveAction(32638, 32773, 6));
+        actionSequence.Add(new MoveAction(32638, 32770, 6));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Up, 200)); //down the ladder
+
+
+        actionSequence.Add(new MoveAction(32631, 32768, 7));
+        actionSequence.Add(new MoveAction(32624, 32769, 7));
+
+
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 19, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 21, baseY + 14, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 9, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 31, baseY + 2, baseZ + 0));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Right, 200));
+        actionSequence.Add(new MoveAction(baseX + 35, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 39, baseY - 6, baseZ - 1));
+
+        actionSequence.Add(new HotkeyAction(LEFT_BRACKET, 800)); //money withdraw
+
+        actionSequence.Add(new MoveAction(baseX + 33, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 5, baseZ - 1));
+        actionSequence.Add(new RightClickAction(200));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY - 6, baseZ - 2));
+
+        actionSequence.Add(new HotkeyAction(RIGHT_BRACKET, 800)); //fluids
+
+        for (int i = 0; i < 20; i++)
+        {
+            actionSequence.Add(new ScanBackpackAction());
+        }
+
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+        actionSequence.Add(new MoveAction(baseX + 33, baseY + 0, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 32, baseY + 1, baseZ - 1));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+
+        actionSequence.Add(new MoveAction(32629, 32754, 7));
+        actionSequence.Add(new MoveAction(32629, 32758, 7));
+        actionSequence.Add(new MoveAction(32624, 32762, 7));
+        actionSequence.Add(new MoveAction(32621, 32766, 7));
+        actionSequence.Add(new MoveAction(32621, 32770, 7));
+        actionSequence.Add(new MoveAction(32627, 32769, 7));
+
+
+        actionSequence.Add(new HotkeyAction(VK_F7, 800)); //bring me to east
+
+
+
+        actionSequence.Add(new MoveAction(32685, 32781, 7));
+
+        actionSequence.Add(new MoveAction(32692, 32783, 7));
+        actionSequence.Add(new MoveAction(32699, 32784, 7));
+
+        actionSequence.Add(new MoveAction(32706, 32785, 7));
+        actionSequence.Add(new MoveAction(32710, 32788, 7));
+        actionSequence.Add(new MoveAction(32713, 32786, 7));
+        actionSequence.Add(new MoveAction(32716, 32791, 7));
+        actionSequence.Add(new MoveAction(32723, 32794, 7));
+        actionSequence.Add(new MoveAction(32728, 32799, 7));
+        actionSequence.Add(new MoveAction(32735, 32803, 7));
+        actionSequence.Add(new MoveAction(32741, 32807, 7));
+
+        actionSequence.Add(new MoveAction(32748, 32811, 7));
+        actionSequence.Add(new MoveAction(32755, 32807, 7));
+        actionSequence.Add(new MoveAction(32762, 32807, 7));
+        actionSequence.Add(new MoveAction(32769, 32805, 7));
+        actionSequence.Add(new MoveAction(32776, 32803, 7));
+        actionSequence.Add(new MoveAction(32782, 32803, 7));
+        actionSequence.Add(new MoveAction(32789, 32807, 7));
+        actionSequence.Add(new MoveAction(32795, 32809, 7));
+
+        actionSequence.Add(new MoveAction(32801, 32811, 7));
+        actionSequence.Add(new MoveAction(32807, 32810, 7));
+        actionSequence.Add(new MoveAction(32814, 32809, 7));
+        actionSequence.Add(new MoveAction(32817, 32809, 7));
+
+
+
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Right, 200)); //down the hole
+
+        ////HERE SHOULD FIGHT TARANTULAS UNTIL 200 SOUL
+        actionSequence.Add(new FightTarantulasAction());
+
+
+
+        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
+
+
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200)); //down the hole
+
+        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
+                                                       
+
+
+        actionSequence.Add(new MoveAction(32817, 32809, 7));
+
+
+
+        actionSequence.Add(new MoveAction(32814, 32809, 7));
+        actionSequence.Add(new MoveAction(32807, 32810, 7));
+        actionSequence.Add(new MoveAction(32801, 32811, 7));
+        actionSequence.Add(new MoveAction(32795, 32809, 7));
+        actionSequence.Add(new MoveAction(32789, 32807, 7));
+        actionSequence.Add(new MoveAction(32782, 32803, 7));
+        actionSequence.Add(new MoveAction(32776, 32803, 7));
+        actionSequence.Add(new MoveAction(32769, 32805, 7));
+        actionSequence.Add(new MoveAction(32762, 32807, 7));
+        actionSequence.Add(new MoveAction(32755, 32807, 7));
+        actionSequence.Add(new MoveAction(32748, 32811, 7));
+        actionSequence.Add(new MoveAction(32741, 32807, 7));
+        actionSequence.Add(new MoveAction(32735, 32803, 7));
+        actionSequence.Add(new MoveAction(32728, 32799, 7));
+        actionSequence.Add(new MoveAction(32723, 32794, 7));
+        actionSequence.Add(new MoveAction(32716, 32791, 7));
+        actionSequence.Add(new MoveAction(32713, 32786, 7));
+        actionSequence.Add(new MoveAction(32710, 32788, 7));
+        actionSequence.Add(new MoveAction(32706, 32785, 7));
+        actionSequence.Add(new MoveAction(32699, 32784, 7));
+        actionSequence.Add(new MoveAction(32692, 32783, 7));
+        actionSequence.Add(new MoveAction(32685, 32781, 7));
+        actionSequence.Add(new MoveAction(32679, 32777, 7));
+
+
+        actionSequence.Add(new HotkeyAction(VK_F8, 800)); //bring me to centre
+
+        actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
+      DragAction.DragBackpack.MANAS, 8, 100)); //water
+
+        actionSequence.Add(new MoveAction(32622, 32769, 7));
+
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 19, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 21, baseY + 14, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 9, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 31, baseY + 2, baseZ + 0));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Right, 200));
+        actionSequence.Add(new MoveAction(baseX + 35, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 39, baseY - 6, baseZ - 1));
+
+        actionSequence.Add(new HotkeyAction(VK_F4, 800)); //money withdraw
+
+        actionSequence.Add(new MoveAction(baseX + 33, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 5, baseZ - 1));
+        actionSequence.Add(new RightClickAction(200));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY - 6, baseZ - 2));
+
+        actionSequence.Add(new HotkeyAction(VK_F5, 800)); //blanks
+
+        actionSequence.Add(new HotkeyAction(VK_F9, 800)); //fluids
+
+        for (int i = 0; i < 20; i++)
+        {
+            actionSequence.Add(new ScanBackpackAction());
+        }
+
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+        actionSequence.Add(new MoveAction(baseX + 33, baseY + 0, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 32, baseY + 1, baseZ - 1));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+        actionSequence.Add(new MoveAction(baseX + 25, baseY + 8, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 20, baseY + 13, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 13, baseY + 15, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 8, baseY + 10, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 1, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 0, baseY + 3, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX - 2, baseY - 2, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 2, baseY - 4, baseZ + 0));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+
+        Debugger($"Initialized action sequence with {actionSequence.Count} actions:");
+        for (int i = 0; i < actionSequence.Count; i++)
+        {
+            Debugger($"  {i + 1}: {actionSequence[i].GetDescription()}");
+        }
+    }
+
+    static void InitializeMiddleSequence()
+    {
+        //// Clear any existing actions
+        actionSequence.Clear();
+
+        ////// Base coordinates
+        int baseX = 32597, baseY = 32747, baseZ = 7;
+
+        // Inside InitializeActionSequence()
+        for (int i = 0; i < 20; i++)
+        {
+            actionSequence.Add(new ScanBackpackAction());
+        }
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+
+        actionSequence.Add(new MoveAction(baseX + 0, baseY + 0, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 0, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 7, baseY + 6, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 9, baseY + 11, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 15, baseY + 15, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 22, baseY + 15, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 20, baseZ + 0));
+
+
+        actionSequence.Add(new MoveAction(32624, 32769, 7));
+        actionSequence.Add(new MoveAction(32631, 32769, 7));
+        actionSequence.Add(new MoveAction(32638, 32769, 7));
+
+        actionSequence.Add(new RightClickAction(200)); //up the ladder 
+
+        actionSequence.Add(new MoveAction(32635, 32773, 6));
+        actionSequence.Add(new MoveAction(32630, 32773, 6));
+        actionSequence.Add(new MoveAction(32627, 32772, 6));
+
+
+
+        for (int i = 0; i < 20; i++)
+        {
+            actionSequence.Add(new ScanBackpackAction());
+        }
+
+        actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
+            DragAction.DragBackpack.MANAS, 8, 100)); //water
+
+        actionSequence.Add(new MoveAction(32625, 32769, 6));
+        actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
+            DragAction.DragBackpack.SD, 2, 100));
+
+        actionSequence.Add(new MoveAction(32627, 32772, 6));
+        actionSequence.Add(new MoveAction(32632, 32773, 6));
+        actionSequence.Add(new MoveAction(32638, 32773, 6));
+        actionSequence.Add(new MoveAction(32638, 32770, 6));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Up, 200)); //down the ladder
+
+        actionSequence.Add(new MoveAction(32632, 32768, 7));
+        actionSequence.Add(new MoveAction(32626, 32769, 7));
+        actionSequence.Add(new MoveAction(32622, 32769, 7));
+
+
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 19, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 21, baseY + 14, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY + 9, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 31, baseY + 2, baseZ + 0));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Right, 200));
+        actionSequence.Add(new MoveAction(baseX + 35, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 39, baseY - 6, baseZ - 1));
+
+        actionSequence.Add(new HotkeyAction(VK_F4, 800)); //money withdraw
+
+        actionSequence.Add(new MoveAction(baseX + 33, baseY - 3, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 5, baseZ - 1));
+        actionSequence.Add(new RightClickAction(200));
+        actionSequence.Add(new MoveAction(baseX + 24, baseY - 6, baseZ - 2));
+
+        actionSequence.Add(new HotkeyAction(VK_F5, 800)); //blanks
+
+        actionSequence.Add(new HotkeyAction(VK_F9, 800)); //fluids
+
+        for (int i = 0; i < 20; i++)
+        {
+            actionSequence.Add(new ScanBackpackAction());
+        }
+
+        actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+        actionSequence.Add(new MoveAction(baseX + 33, baseY + 0, baseZ - 1));
+        actionSequence.Add(new MoveAction(baseX + 32, baseY + 1, baseZ - 1));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+        actionSequence.Add(new MoveAction(baseX + 25, baseY + 8, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 20, baseY + 13, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 13, baseY + 15, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 8, baseY + 10, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 1, baseY + 5, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 0, baseY + 3, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX - 2, baseY - 2, baseZ + 0));
+        actionSequence.Add(new MoveAction(baseX + 2, baseY - 4, baseZ + 0));
+        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
+
+        Debugger($"Initialized action sequence with {actionSequence.Count} actions:");
+        for (int i = 0; i < actionSequence.Count; i++)
+        {
+            Debugger($"  {i + 1}: {actionSequence[i].GetDescription()}");
+        }
+
+
+    }
+
+    // Updated ExecuteActionSequence with retry logic
+    static void ExecuteActionSequence()
+    {
+        try
+        {
+            actionSequenceRunning = true;
+            currentActionIndex = 0;
+
+            Debugger("Action sequence started...");
+
+            for (currentActionIndex = 0; currentActionIndex < actionSequence.Count; currentActionIndex++)
+            {
+                // Check for pause before executing each action
+                CheckForPause();
+
+                if (cancellationTokenSource.Token.IsCancellationRequested || !programRunning)
+                {
+                    Debugger("Action sequence cancelled.");
+                    break;
+                }
+
+                var action = actionSequence[currentActionIndex];
+                Debugger($"Executing action {currentActionIndex + 1}/{actionSequence.Count}: {action.GetDescription()}");
+
+                bool success = false;
+                int retryCount = 0;
+
+                // Retry logic
+                while (!success && retryCount < action.MaxRetries)
+                {
+                    // Check for pause during retry loops
+                    CheckForPause();
+
+                    if (retryCount > 0)
+                    {
+                        Debugger($"Retry attempt {retryCount}/{action.MaxRetries} for action: {action.GetDescription()}");
+                    }
+
+                    double hpPercent = (curHP / maxHP) * 100;
+                    double manaPercent = (curMana / maxMana) * 100;
+                    double mana = curMana;
+
+                    // HP check
+                    if (hpPercent <= HP_THRESHOLD)
+                    {
+                        if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
+                        {
+                            SendKeyPress(VK_F1);
+                            lastHpAction = DateTime.Now;
+                            Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
+                        }
+                    }
+
+                    // Mana check
+                    if (mana <= MANA_THRESHOLD)
+                    {
+                        if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
+                        {
+                            SendKeyPress(VK_F3);
+                            lastManaAction = DateTime.Now;
+                            Debugger($"Mana low ({mana:F1}) - pressed F3");
+                        }
+                    }
+
+                    bool executeSuccess = action.Execute();
+
+                    if (executeSuccess)
+                    {
+                        // Verify if the action was successful
+                        success = action.VerifySuccess();
+
+                        if (!success)
+                        {
+                            Debugger($"Action executed but verification failed.");
+                        }
+                    }
+                    else
+                    {
+                        Debugger($"Action execution failed.");
+                    }
+
+                    if (!success)
+                    {
+                        retryCount++;
+                        if (retryCount < action.MaxRetries)
+                        {
+                            // Wait before retrying, but check for pause during the wait
+                            for (int i = 0; i < 10; i++)
+                            {
+                                CheckForPause();
+                                Thread.Sleep(100);
+                            }
+                        }
+                    }
+                }
+
+                if (!success)
+                {
+                    Debugger($"Action {currentActionIndex + 1} failed after {action.MaxRetries} attempts. Exiting program.");
+                    programRunning = false;
+                    break;
+                }
+
+                // Read and display current coordinates after each successful action
+                ReadMemoryValues();
+                //Debugger($"Current coordinates: ({currentX}, {currentY}, {currentZ})");
+
+                // Small delay between actions, but check for pause
+                for (int i = 0; i < 2; i++)
+                {
+                    CheckForPause();
+                    Thread.Sleep(100);
+                }
+            }
+
+            if (currentActionIndex >= actionSequence.Count && programRunning)
+            {
+                Debugger("\nAction sequence completed successfully!");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[OUTFIT] Error during initial outfit setting: {ex.Message}");
+            Debugger($"Error during action sequence: {ex.Message}");
         }
-        while (memoryReadActive && maintainOutfitActive)
+        finally
         {
-            try
-            {
-                DateTime now = DateTime.Now;
-                if ((now - lastCheckTime).TotalMilliseconds < CHECK_INTERVAL_MS)
-                {
-                    Sleep(50);
-                    continue;
-                }
-                lastCheckTime = now;
-                int currentOutfitValue;
-                lock (memoryLock)
-                {
-                    currentOutfitValue = currentOutfit;
-                }
-                lock (outfitLock)
-                {
-                    if (currentOutfitValue != desiredOutfit)
-                    {
-                        IntPtr outfitAddress = IntPtr.Zero;
-                        foreach (var variable in variables)
-                        {
-                            if (variable.Name.Contains("currentOutfit"))
-                            {
-                                IntPtr baseAddress = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
-                                byte[] buffer = new byte[4];
-                                if (!ReadProcessMemory(processHandle, baseAddress, buffer, buffer.Length, out _))
-                                {
-                                    break;
-                                }
-                                outfitAddress = BitConverter.ToInt32(buffer, 0);
-                                outfitAddress = IntPtr.Add(outfitAddress, variable.Offsets[0]);
-                                break;
-                            }
-                        }
-                        if (outfitAddress == IntPtr.Zero)
-                        {
-                            Sleep(1000);
-                            continue;
-                        }
-                        byte[] exactOutfitBuffer = BitConverter.GetBytes(desiredOutfit);
-                        int bytesWritten;
-                        if (!WriteProcessMemory(processHandle, outfitAddress, exactOutfitBuffer, exactOutfitBuffer.Length, out bytesWritten))
-                        {
-                            int errorCode = Marshal.GetLastWin32Error();
-                            Sleep(1000);
-                            continue;
-                        }
-                        currentOutfit = desiredOutfit;
-                        Sleep(50);
-                    }
-                }
-                Sleep(200);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[OUTFIT] Error in outfit maintenance: {ex.Message}");
-                Sleep(1000);
-            }
-        }
-    }
-    static void StartWorkerThreads()
-    {
-        memoryReadActive = true;
-        Thread memoryThread = new Thread(MemoryReadingThread);
-        memoryThread.IsBackground = true;
-        memoryThread.Name = "MemoryReader";
-        memoryThread.Start();
-        Thread autoPotionThread = new Thread(AutoPotionThread);
-        autoPotionThread.IsBackground = true;
-        autoPotionThread.Name = "AutoPotion";
-        autoPotionThread.Start();
-        if (false)
-        {
-            Thread outfitThread = new Thread(MaintainOutfitThread);
-            outfitThread.IsBackground = true;
-            outfitThread.Name = "OutfitMaintenance";
-            outfitThread.Start();
-        }
-        Thread lootRecognizerThread = new Thread(LootRecognizerThread);
-        lootRecognizerThread.IsBackground = true;
-        lootRecognizerThread.Name = "LootRecognizer";
-        lootRecognizerThread.Start();
-        StartClickOverlay();
-        if (threadFlags["spawnwatch"])
-        {
-            SPAWNWATCHER.Start(targetWindow, pixelSize);
-        }
-    }
-    static void StopWorkerThreads()
-    {
-        memoryReadActive = false;
-        threadFlags["recording"] = false;
-        threadFlags["playing"] = false;
-        threadFlags["autopot"] = false;
-        threadFlags["overlay"] = false;
-        lootRecognizerActive = false;
-        SPAWNWATCHER.Stop();
-        StopPositionAlertSound();
-        StopOverlay();
-        StopClickOverlay();
-        Sleep(1000);
-    }
-    static List<Variable> variables = new List<Variable>
-    {
-        new Variable
-        {
-            Name = "Current Mana",
-            BaseAddress = 0x009432D0,
-            Offsets = new List<int> { 1240 },
-            Type = "Double"
-        },
-        new Variable
-        {
-            Name = "Current HP",
-            BaseAddress = 0x009432D0,
-            Offsets = new List<int> { 1184 },
-            Type = "Double"
-        },
-        new Variable
-        {
-            Name = "Max Mana",
-            BaseAddress = 0x009432D0,
-            Offsets = new List<int> { 1248 },
-            Type = "Double"
-        },
-        new Variable
-        {
-            Name = "Max HP",
-            BaseAddress = 0x009432D0,
-            Offsets = new List<int> { 1192 },
-            Type = "Double"
-        },
-        new Variable
-        {
-            Name = "currentOutfit",
-            BaseAddress = 0x009432D0,
-            Offsets = new List<int> { 88 },
-            Type = "Int32"
-        },
-        new Variable
-        {
-            Name = "invisibilityCode",
-            BaseAddress = 0x009432D0,
-            Offsets = new List<int> { 84 },
-            Type = "Int32"
-        }
-    };
-    static void MemoryReadingThread()
-    {
-        DateTime lastDebugOutputTime = DateTime.MinValue;
-        DateTime lastFullScanTime = DateTime.MinValue;
-        const double DEBUG_COOLDOWN_SECONDS = 1.5;
-        const double FULL_SCAN_INTERVAL_MS = 100;
-        int consecutiveFailures = 0;
-        const int MAX_FAILURES = 5;
-        while (memoryReadActive)
-        {
-            try
-            {
-                if (consecutiveFailures == 0 && selectedProcess.HasExited)
-                {
-                    shouldRestartMemoryThread = true;
-                    break;
-                }
-                DateTime now = DateTime.Now;
-                bool shouldDoFullScan = (now - lastFullScanTime).TotalMilliseconds >= FULL_SCAN_INTERVAL_MS;
-                if (shouldDoFullScan)
-                {
-                    lastFullScanTime = now;
-                    foreach (var variable in variables)
-                    {
-                        try
-                        {
-                            IntPtr address = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
-                            byte[] buffer;
-                            if (variable.Offsets.Count > 0)
-                            {
-                                buffer = new byte[4];
-                                if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _))
-                                    continue;
-                                address = BitConverter.ToInt32(buffer, 0);
-                                address = IntPtr.Add(address, variable.Offsets[0]);
-                            }
-                            buffer = new byte[8];
-                            if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _))
-                                continue;
-                            if (variable.Name.Contains("currentOutfit"))
-                            {
-                                int rawValue = BitConverter.ToInt32(buffer, 0);
-                                currentOutfit = rawValue;
-                            }
-                            else if (variable.Name.Contains("invisibilityCode"))
-                            {
-                                int rawValue = BitConverter.ToInt32(buffer, 0);
-                                invisibilityCode = rawValue;
-                            }
-                            else if (variable.Type == "Double")
-                            {
-                                double value = BitConverter.ToDouble(buffer, 0);
-                                lock (memoryLock)
-                                {
-                                    if (variable.Name.Contains("HP") && !variable.Name.Contains("Max"))
-                                        curHP = value;
-                                    if (variable.Name.Contains("Mana") && !variable.Name.Contains("Max"))
-                                        curMana = value;
-                                    if (variable.Name.Contains("Max HP"))
-                                        maxHP = value;
-                                    if (variable.Name.Contains("Max Mana"))
-                                        maxMana = value;
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[DEBUG] Error reading variable {variable.Name}: {ex.Message}");
-                        }
-                    }
-                    lock (memoryLock)
-                    {
-                        posX = ReadInt32(processHandle, moduleBase, xAddressOffset);
-                        posY = ReadInt32(processHandle, moduleBase, yAddressOffset);
-                        posZ = ReadInt32(processHandle, moduleBase, zAddressOffset);
-                        targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
-                        follow = ReadInt32(processHandle, moduleBase, followOffset);
-                        if (threadFlags["recording"])
-                        {
-                            RecordCoordinate(posX, posY, posZ);
-                        }
-                    }
-                    //lock (memoryLock)
-                    //{
-                    //    chaseTracker.Update(posX, posY, posZ, targetId);
-                    //    if (debug && targetId != 0)
-                    //    {
-                    //        DateTime debugNow = DateTime.Now;
-                    //        if ((debugNow - lastDebugOutputTime).TotalSeconds >= DEBUG_COOLDOWN_SECONDS)
-                    //        {
-                    //            lastDebugOutputTime = debugNow;
-                    //        }
-                    //    }
-                    //}
-
-                    if (loadedCoords != null && loadedCoords.cords.Count > 0 && threadFlags["playing"])
-                    {
-                        CheckPositionDistance(loadedCoords.cords);
-                    }
-                    consecutiveFailures = 0;
-                }
-                else
-                {
-                    lock (memoryLock)
-                    {
-                        posX = ReadInt32(processHandle, moduleBase, xAddressOffset);
-                        posY = ReadInt32(processHandle, moduleBase, yAddressOffset);
-                        targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
-                    }
-                }
-                int sleepTime = (targetId == 0) ? 50 : 20;
-                Sleep(sleepTime);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Memory reading error: {ex.Message}");
-                consecutiveFailures++;
-                if (consecutiveFailures >= MAX_FAILURES)
-                {
-                    shouldRestartMemoryThread = true;
-                    break;
-                }
-                Sleep(500);
-            }
+            actionSequenceRunning = false;
+            currentActionIndex = 0;
         }
     }
 
-    static Dictionary<int, DateTime> targetEngagementTimes = new Dictionary<int, DateTime>();
-    static readonly TimeSpan MAX_TARGET_ENGAGEMENT_TIME = TimeSpan.FromSeconds(10);
-    static DateTime lastTargetChangeTime = DateTime.MinValue;
-    static int currentTargetEngagementId = 0;
-    static TimeSpan currentTargetEngagementDuration = TimeSpan.Zero;
-    static bool shouldForceTargetChange = false;
-
-    // Add this method to handle target engagement tracking
-    static void UpdateTargetEngagement()
+    static bool IsAtPosition(int targetX, int targetY, int targetZ)
     {
-        int currentTargetId;
-        lock (memoryLock)
+        ReadMemoryValues();
+        return Math.Abs(currentX - targetX) <= TOLERANCE &&
+               Math.Abs(currentY - targetY) <= TOLERANCE &&
+               currentZ == targetZ;
+    }
+
+    // [Keep all other methods unchanged - Main, ClickWaypoint, RightClickOnCharacter, etc.]
+
+    static DateTime lastDropScanTime = DateTime.MinValue;
+    static readonly TimeSpan DROP_SCAN_INTERVAL = TimeSpan.FromSeconds(1);
+
+    static Thread motionDetectionThread;
+    static bool motionDetectionRunning = false;
+    static DateTime lastMotionTime = DateTime.MinValue;
+    static DateTime lastUtaniGranHurTime = DateTime.MinValue;
+    static DateTime lastUtaniGranHurAttemptTime = DateTime.MinValue;
+    static DateTime lastUtanaVidTime = DateTime.MinValue;
+    static DateTime lastUtanaVidAttemptTime = DateTime.MinValue;
+    static Coordinate lastKnownPosition = null;
+    static readonly object positionLock = new object();
+    static readonly object spellCastingLock = new object();
+    static bool characterIsMoving = false;
+    static bool movementDetectedSinceStart = false;
+    static int lastInvisibilityCode = -1;
+
+    const int UTANI_GRAN_HUR_INTERVAL_SECONDS = 20;
+    const int UTANA_VID_INTERVAL_SECONDS = 180; // 3 minutes
+    const int UTANA_VID_RETRY_INTERVAL_SECONDS = 3; // Retry failed utana vid after 5 seconds
+    const int UTANI_GRAN_HUR_RETRY_INTERVAL_SECONDS = 3; // Retry failed utani gran hur after 5 seconds
+    const int POSITION_CHECK_INTERVAL_MS = 1000; // Check position every second
+    const int MIN_SPELL_INTERVAL_SECONDS = 3; // Minimum 3 seconds between spells
+    const double MIN_SPEED_FOR_UTANI_GRAN_HUR = 400.0; // Speed threshold for successful utani gran hur
+
+    // Add this method to start the motion detection thread
+    static void StartMotionDetectionThread()
+    {
+        ReadMemoryValues();
+        if (motionDetectionThread != null && motionDetectionThread.IsAlive)
         {
-            currentTargetId = targetId;
+            Debugger("[MOTION] Motion detection thread already running");
+            return;
         }
 
-        DateTime now = DateTime.Now;
-
-        // If we have a new target
-        if (currentTargetId != 0 && currentTargetId != currentTargetEngagementId)
+        motionDetectionRunning = true;
+        movementDetectedSinceStart = false;
+        motionDetectionThread = new Thread(MotionDetectionWorker)
         {
-            // Record when we started attacking this target
-            if (!targetEngagementTimes.ContainsKey(currentTargetId))
-            {
-                targetEngagementTimes[currentTargetId] = now;
-                Console.WriteLine($"[COMBAT] Started engaging target {currentTargetId}");
-            }
+            IsBackground = true,
+            Name = "MotionDetectionThread"
+        };
+        motionDetectionThread.Start();
+        Debugger("[MOTION] Motion detection thread started");
+    }
 
-            currentTargetEngagementId = currentTargetId;
-            lastTargetChangeTime = now;
-        }
-
-        // If we currently have a target
-        if (currentTargetId != 0 && targetEngagementTimes.ContainsKey(currentTargetId))
+    // Add this method to stop the motion detection thread
+    static void StopMotionDetectionThread()
+    {
+        motionDetectionRunning = false;
+        if (motionDetectionThread != null && motionDetectionThread.IsAlive)
         {
-            DateTime engagementStart = targetEngagementTimes[currentTargetId];
-            currentTargetEngagementDuration = now - engagementStart;
-
-            // Check if we've been attacking too long
-            if (currentTargetEngagementDuration >= MAX_TARGET_ENGAGEMENT_TIME)
-            {
-                Console.WriteLine($"[COMBAT] Target {currentTargetId} engagement timeout after {currentTargetEngagementDuration.TotalSeconds:F1}s");
-                shouldForceTargetChange = true;
-
-                // Force target change by pressing F6
-                InstantSendKeyPress(VK_F6);
-
-                // Clean up this target from our tracking
-                targetEngagementTimes.Remove(currentTargetId);
-                currentTargetEngagementId = 0;
-                currentTargetEngagementDuration = TimeSpan.Zero;
-            }
-        }
-        else if (currentTargetId == 0)
-        {
-            // No target - reset engagement tracking
-            currentTargetEngagementId = 0;
-            currentTargetEngagementDuration = TimeSpan.Zero;
-            shouldForceTargetChange = false;
-        }
-
-        // Clean up old target entries (older than 30 seconds)
-        var oldTargets = targetEngagementTimes
-            .Where(kvp => (now - kvp.Value).TotalSeconds > 30)
-            .Select(kvp => kvp.Key)
-            .ToList();
-
-        foreach (var oldTarget in oldTargets)
-        {
-            targetEngagementTimes.Remove(oldTarget);
+            motionDetectionThread.Join(2000);
+            Debugger("[MOTION] Motion detection thread stopped");
         }
     }
-    static void ChangeOutfit(int change)
+
+    // Helper method to safely cast spells with coordination
+    static bool TryCastSpell(int keyCode, string spellName, ref DateTime lastCastTime, int intervalSeconds)
     {
+        lock (spellCastingLock)
+        {
+            DateTime now = DateTime.Now;
+
+            if ((now - lastCastTime).TotalSeconds < intervalSeconds)
+            {
+                return false;
+            }
+
+            DateTime lastAnySpell = GetLatestSpellTime();
+            if ((now - lastAnySpell).TotalSeconds < MIN_SPELL_INTERVAL_SECONDS)
+            {
+                Debugger($"[MOTION] Delaying {spellName} cast - too close to previous spell");
+                return false;
+            }
+
+            Debugger($"[MOTION] Casting {spellName}");
+            SendKeyPress(keyCode);
+            lastCastTime = now;
+            return true;
+        }
+    }
+
+    // Helper method to check if utana vid was successful
+    static bool CheckUtanaVidSuccess()
+    {
+        ReadMemoryValues();
+        return invisibilityCode != 1;
+    }
+
+    // Helper method to check if utani gran hur was successful
+    static bool CheckUtaniGranHurSuccess()
+    {
+        ReadMemoryValues();
+        bool success = speed >= MIN_SPEED_FOR_UTANI_GRAN_HUR;
+        Debugger($"[MOTION] Utani Gran Hur validation - Speed: {speed:F1}, Success: {success}");
+        return success;
+    }
+
+    // Helper method to get the most recent spell cast time
+    static DateTime GetLatestSpellTime()
+    {
+        DateTime latest = DateTime.MinValue;
+
+        if (lastUtaniGranHurTime > latest)
+            latest = lastUtaniGranHurTime;
+        if (lastUtanaVidTime > latest)
+            latest = lastUtanaVidTime;
+
+        return latest;
+    }
+
+    static void MotionDetectionWorker()
+    {
+        Debugger("[MOTION] Motion detection worker started");
+
         try
         {
-            int currentOutfitVar;
-            lock (memoryLock)
-            {
-                currentOutfitVar = currentOutfit;
-            }
-            int previousOutfit = currentOutfitVar;
-            int newOutfit = previousOutfit + change;
-            const int MIN_OUTFIT = 0;
-            const int MAX_OUTFIT = 99999;
-            if (newOutfit < MIN_OUTFIT)
-                newOutfit = MIN_OUTFIT;
-            if (newOutfit > MAX_OUTFIT)
-                newOutfit = MAX_OUTFIT;
-            if (newOutfit == previousOutfit)
-            {
-                return;
-            }
-            IntPtr outfitAddress = IntPtr.Zero;
-            foreach (var variable in variables)
-            {
-                if (variable.Name.Contains("currentOutfit"))
-                {
-                    IntPtr baseAddress = IntPtr.Add(moduleBase, (int)variable.BaseAddress);
-                    byte[] buffer = new byte[4];
-                    if (!ReadProcessMemory(processHandle, baseAddress, buffer, buffer.Length, out _))
-                    {
-                        return;
-                    }
-                    outfitAddress = BitConverter.ToInt32(buffer, 0);
-                    outfitAddress = IntPtr.Add(outfitAddress, variable.Offsets[0]);
-                    break;
-                }
-            }
-            if (outfitAddress == IntPtr.Zero)
-            {
-                return;
-            }
-            byte[] newOutfitBuffer = BitConverter.GetBytes(newOutfit);
-            int bytesWritten;
-            if (!WriteProcessMemory(processHandle, outfitAddress, newOutfitBuffer, newOutfitBuffer.Length, out bytesWritten))
-            {
-                int errorCode = Marshal.GetLastWin32Error();
-                return;
-            }
-            currentOutfit = newOutfit;
-            lock (outfitLock)
-            {
-                desiredOutfit = newOutfit;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[DEBUG] Error changing outfit: {ex.Message}");
-        }
-    }
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool WriteProcessMemory(
-    IntPtr hProcess,
-    IntPtr lpBaseAddress,
-    byte[] lpBuffer,
-    int nSize,
-    out int lpNumberOfBytesWritten
-);
-    static void AutoPotionThread()
-    {
-        DateTime lastStatsDisplay = DateTime.MinValue;
-        const int STATS_DISPLAY_INTERVAL_MS = 2000;
-        while (memoryReadActive)
-        {
-            try
-            {
-                DateTime now = DateTime.Now;
-                if ((now - lastStatsDisplay).TotalMilliseconds >= STATS_DISPLAY_INTERVAL_MS)
-                {
-                    lastStatsDisplay = now;
-                }
-                if (threadFlags["autopot"] && targetWindow != IntPtr.Zero)
-                {
-                    var thresholdms = 1000;
-                    double hpPercent, manaPercent;
-                    lock (memoryLock)
-                    {
-                        hpPercent = (curHP / maxHP) * 100;
-                        manaPercent = (curMana / maxMana) * 100;
-                    }
-                    if (hpPercent == 0)
-                    {
-                        Sleep(50);
-                        continue;
-                    }
-                    if (hpPercent <= DEFAULT_BEEP_HP_THRESHOLD)
-                    {
-                        StartPositionAlertSound();
-                    }
-                    if (hpPercent <= DEFAULT_HP_THRESHOLD)
-                    {
-                        if ((now - lastHpActionTime).TotalMilliseconds >= thresholdms)
-                        {
-                            SendKeyPress(DEFAULT_HP_KEY);
-                            lastHpActionTime = now.AddMilliseconds(random.Next(0, 100));
-                        }
-                    }
-                    if (manaPercent <= DEFAULT_MANA_THRESHOLD)
-                    {
-                        if ((now - lastManaActionTime).TotalMilliseconds >= thresholdms)
-                        {
-                            SendKeyPress(DEFAULT_MANA_KEY);
-                            lastManaActionTime = now.AddMilliseconds(random.Next(0, 100));
-                        }
-                    }
-                }
-                Sleep(250);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Auto-potion error: {ex.Message}");
-                Sleep(1000);
-            }
-        }
-    }
-    static void DisplayStats()
-    {
-        double hpPercent;
-        double manaPercent;
-        int currentX,
-            currentY,
-            currentZ;
-        lock (memoryLock)
-        {
-            hpPercent = (curHP / maxHP) * 100;
-            manaPercent = (curMana / maxMana) * 100;
-            currentX = posX;
-            currentY = posY;
-            currentZ = posZ;
-        }
-        if (threadFlags["recording"])
-        {
-        }
-        if (threadFlags["playing"] && currentTarget != null)
-        {
-            int distanceX = Math.Abs(currentTarget.X - currentX);
-            int distanceY = Math.Abs(currentTarget.Y - currentY);
-            int barLength = 20;
-            int progress = (int)Math.Round(
-                (double)(currentCoordIndex + 1) / totalCoords * barLength
-            );
-            for (int i = 0; i < barLength; i++)
-            {
-            }
-        }
-        Console.WriteLine("\nActive Features:");
-        Console.WriteLine($"Auto-Potions: {(threadFlags["autopot"] ? "✅ ON" : "❌ OFF")} (A)");
-        Console.WriteLine($"Recording: {(threadFlags["recording"] ? "✅ ON" : "❌ OFF")} (R)");
-        Console.WriteLine($"Playback: {(threadFlags["playing"] ? "✅ ON" : "❌ OFF")} (P)");
-        Console.WriteLine("\nCommands:");
-        Console.WriteLine("R - Start/Stop Recording");
-        Console.WriteLine("P - Start/Stop Path Playback");
-        Console.WriteLine("A - Toggle Auto-Potions");
-        Console.WriteLine("Q - Quit");
-    }
-    static void HandleUserInput(ConsoleKey key)
-    {
-        switch (key)
-        {
-            case ConsoleKey.R:
-                if (!threadFlags["recording"] && !threadFlags["playing"])
-                {
-                    Console.Write("Start recording coordinates? (y/n): ");
-                    string confirm = Console.ReadLine();
-                    if (confirm.ToLower() == "y")
-                    {
-                        threadFlags["recording"] = true;
-                        recordedCoords.Clear();
-                        Console.WriteLine("Started recording coordinates...");
-                    }
-                }
-                else if (threadFlags["recording"])
-                {
-                    threadFlags["recording"] = false;
-                    SaveCoordinates();
-                    Console.WriteLine("Stopped recording and saved coordinates.");
-                }
-                break;
-            case ConsoleKey.P:
-                if (!threadFlags["playing"] && !threadFlags["recording"])
-                {
-                    if (File.Exists(cordsFilePath))
-                    {
-                        threadFlags["playing"] = true;
-                        StartPathPlayback();
-                    }
-                    else
-                    {
-                        Console.WriteLine("cords.json not found!");
-                        Sleep(1000);
-                    }
-                }
-                else if (threadFlags["playing"])
-                {
-                    threadFlags["playing"] = false;
-                    Console.WriteLine("Path playback stopped.");
-                }
-                break;
-            case ConsoleKey.A:
-                threadFlags["autopot"] = !threadFlags["autopot"];
-                Console.WriteLine($"Auto-potions {(threadFlags["autopot"] ? "enabled" : "disabled")}");
-                break;
-            case ConsoleKey.S:
-                StopPositionAlertSound();
-                Console.WriteLine("Position alert sound stopped manually.");
-                break;
-            case ConsoleKey.Q:
-                if (SPAWNWATCHER.IsColorAlarmActive())
-                {
-                    SPAWNWATCHER.StopColorAlarm();
-                    return;
-                }
-                programRunning = false;
-                memoryReadActive = false;
-                threadFlags["recording"] = false;
-                threadFlags["playing"] = false;
-                threadFlags["autopot"] = false;
-                StopPositionAlertSound();
-                break;
-            case ConsoleKey.W:
-                bool isActive = SPAWNWATCHER.Toggle(targetWindow, pixelSize);
-                threadFlags["spawnwatch"] = isActive;
-                Console.WriteLine($"Spawn watcher {(isActive ? "enabled" : "disabled")}");
-                break;
-            case ConsoleKey.F:
-                ChangeOutfit(-1);
-                break;
-            case ConsoleKey.G:
-                ChangeOutfit(1);
-                break;
-            case ConsoleKey.H:
-                ChangeOutfit(-10);
-                break;
-            case ConsoleKey.J:
-                ChangeOutfit(10);
-                break;
-            case ConsoleKey.O:
-                threadFlags["overlay"] = !threadFlags["overlay"];
-                if (threadFlags["overlay"])
-                {
-                    StartOverlay();
-                }
-                else
-                {
-                    StopOverlay();
-                }
-                break;
-        }
-    }
-    static void StartPathPlayback()
-    {
-        Thread playThread = new Thread(
-            () =>
+            while (motionDetectionRunning && programRunning)
             {
                 try
                 {
-                    PlayCoordinates();
+                    ReadMemoryValues();
+                    Coordinate currentPosition = new Coordinate
+                    {
+                        X = currentX,
+                        Y = currentY,
+                        Z = currentZ
+                    };
+
+                    lock (positionLock)
+                    {
+                        if (lastKnownPosition == null)
+                        {
+                            lastKnownPosition = new Coordinate
+                            {
+                                X = currentPosition.X,
+                                Y = currentPosition.Y,
+                                Z = currentPosition.Z
+                            };
+                            Debugger($"[MOTION] Initial position set: ({currentPosition.X}, {currentPosition.Y}, {currentPosition.Z})");
+                        }
+                        else
+                        {
+                            bool hasMoved = lastKnownPosition.X != currentPosition.X ||
+                                           lastKnownPosition.Y != currentPosition.Y ||
+                                           lastKnownPosition.Z != currentPosition.Z;
+
+                            if (hasMoved)
+                            {
+                                characterIsMoving = true;
+                                lastMotionTime = DateTime.Now;
+
+                                if (!movementDetectedSinceStart)
+                                {
+                                    movementDetectedSinceStart = true;
+                                    //Debugger("[MOTION] First movement detected since start - utana vid now eligible");
+                                }
+
+                                int distanceX = Math.Abs(currentPosition.X - lastKnownPosition.X);
+                                int distanceY = Math.Abs(currentPosition.Y - lastKnownPosition.Y);
+                                if (distanceX > 1 || distanceY > 1 || currentPosition.Z != lastKnownPosition.Z)
+                                {
+                                    //Debugger($"[MOTION] Significant movement detected: ({lastKnownPosition.X}, {lastKnownPosition.Y}, {lastKnownPosition.Z}) -> ({currentPosition.X}, {currentPosition.Y}, {currentPosition.Z})");
+                                }
+
+                                lastKnownPosition.X = currentPosition.X;
+                                lastKnownPosition.Y = currentPosition.Y;
+                                lastKnownPosition.Z = currentPosition.Z;
+                            }
+                            else
+                            {
+                                if (characterIsMoving && (DateTime.Now - lastMotionTime).TotalSeconds > 3)
+                                {
+                                    characterIsMoving = false;
+                                    Debugger("[MOTION] Character stopped moving");
+                                }
+                            }
+                        }
+                    }
+
+                    DateTime now = DateTime.Now;
+                    bool needsUtanaVid = invisibilityCode == 1;
+
+                    ReadMemoryValues();
+                    // Check if we need to cast utana vid (F11)
+                    if (movementDetectedSinceStart && needsUtanaVid)
+                    {
+                        bool shouldCastUtanaVid = false;
+
+                        if ((now - lastUtanaVidTime).TotalSeconds >= UTANA_VID_INTERVAL_SECONDS)
+                        {
+                            shouldCastUtanaVid = true;
+                        }
+                        else if ((now - lastUtanaVidAttemptTime).TotalSeconds >= UTANA_VID_RETRY_INTERVAL_SECONDS &&
+                                 lastUtanaVidAttemptTime > lastUtanaVidTime)
+                        {
+                            shouldCastUtanaVid = true;
+                            Debugger("[MOTION] Retrying utana vid (previous attempt failed)");
+                        }
+
+                        if (shouldCastUtanaVid && curMana > 440 && (currentX >= 32706))
+                        {
+                            lastUtanaVidAttemptTime = now;
+
+                            if (TryCastSpell(VK_F11, "utana vid", ref lastUtanaVidTime, 0))
+                            {
+                                lastUtanaVidTime = now; // Update the successful cast time
+
+                                if (CheckUtanaVidSuccess())
+                                {
+                                    Debugger("[MOTION] Utana vid successful - invisibility removed");
+                                }
+                                else
+                                {
+                                    Debugger("[MOTION] Utana vid failed - still invisible, will retry");
+                                    lastUtanaVidTime = lastUtanaVidAttemptTime - TimeSpan.FromSeconds(UTANA_VID_INTERVAL_SECONDS);
+                                }
+                            }
+                        }
+                    }
+                    // Check if we need to cast utani gran hur (backslash)
+                    if (characterIsMoving)
+                    {
+                        bool shouldCastUtaniGranHur = false;
+
+                        if ((now - lastUtaniGranHurTime).TotalSeconds >= UTANI_GRAN_HUR_INTERVAL_SECONDS)
+                        {
+                            shouldCastUtaniGranHur = true;
+                        }
+                        else if ((now - lastUtaniGranHurAttemptTime).TotalSeconds >= UTANI_GRAN_HUR_RETRY_INTERVAL_SECONDS &&
+                                 lastUtaniGranHurAttemptTime > lastUtaniGranHurTime)
+                        {
+                            shouldCastUtaniGranHur = true;
+                            Debugger("[MOTION] Retrying utani gran hur (previous attempt failed)");
+                        }
+
+                        if (currentZ != 8 && shouldCastUtaniGranHur && curMana > 100)
+                        {
+                            lastUtaniGranHurAttemptTime = now;
+
+                            if (TryCastSpell(BACKSLASH, "utani gran hur", ref lastUtaniGranHurTime, 0))
+                            {
+                                lastUtaniGranHurTime = now; // Update the successful cast time
+
+                                if (CheckUtaniGranHurSuccess())
+                                {
+                                    Debugger("[MOTION] Utani gran hur successful - speed increased");
+                                }
+                                else
+                                {
+                                    Debugger("[MOTION] Utani gran hur failed - speed too low, will retry");
+                                    lastUtaniGranHurTime = lastUtaniGranHurAttemptTime - TimeSpan.FromSeconds(UTANI_GRAN_HUR_INTERVAL_SECONDS);
+                                }
+                            }
+                        }
+                    }
+
+                    Thread.Sleep(POSITION_CHECK_INTERVAL_MS);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Path playback error: {ex.Message}");
-                }
-                finally
-                {
-                    threadFlags["playing"] = false;
+                    Debugger($"[MOTION] Error in motion detection loop: {ex.Message}");
+                    Thread.Sleep(1000);
                 }
             }
-        );
-        playThread.IsBackground = true;
-        playThread.Name = "PathPlayer";
-        playThread.Start();
-    }
-    static int ReadInt32(IntPtr handle, IntPtr moduleBase, IntPtr offset)
-    {
-        IntPtr address = IntPtr.Add(moduleBase, (int)offset);
-        byte[] buffer = new byte[4];
-        if (ReadProcessMemory(handle, address, buffer, buffer.Length, out _))
-            return BitConverter.ToInt32(buffer, 0);
-        return 0;
-    }
-    private static DateTime lastF6Press = DateTime.MinValue;
-    private static bool canPressF6 = true;
-    private static readonly TimeSpan F6Cooldown = TimeSpan.FromSeconds(0.7);
-    static void SendKeyPress(int key)
-    {
-        if (key == 0x75)
-        {
-            DateTime currentTime = DateTime.Now;
-            if (!canPressF6 || (currentTime - lastF6Press) < F6Cooldown)
-            {
-                return;
-            }
-            lastF6Press = currentTime;
-            canPressF6 = false;
-            System.Threading.Timer cooldownTimer = null;
-            cooldownTimer = new System.Threading.Timer((state) =>
-            {
-                canPressF6 = true;
-                cooldownTimer?.Dispose();
-            }, null, F6Cooldown, TimeSpan.Zero);
         }
-        SendMessage(targetWindow, WM_KEYDOWN, key, IntPtr.Zero);
-        Sleep(random.Next(10, 25));
-        SendMessage(targetWindow, WM_KEYUP, key, IntPtr.Zero);
+        catch (Exception ex)
+        {
+            Debugger($"[MOTION] Fatal error in motion detection thread: {ex.Message}");
+        }
+        finally
+        {
+            Debugger("[MOTION] Motion detection worker stopped");
+        }
     }
-    static void InstantSendKeyPress(int key)
+
+    // Add a method to manually reset motion detection (useful when teleporting/traveling)
+    static void ResetMotionDetection()
     {
-        SendMessage(targetWindow, WM_KEYDOWN, key, IntPtr.Zero);
-        Sleep(random.Next(10, 25));
-        SendMessage(targetWindow, WM_KEYUP, key, IntPtr.Zero);
+        lock (positionLock)
+        {
+            lastKnownPosition = null;
+            characterIsMoving = false;
+            lastMotionTime = DateTime.MinValue;
+            movementDetectedSinceStart = false;
+            Debugger("[MOTION] Motion detection reset - movement eligibility reset");
+        }
     }
+
+    // Add a method to manually reset spell timers
+    static void ResetSpellTimers()
+    {
+        lock (spellCastingLock)
+        {
+            lastUtaniGranHurTime = DateTime.MinValue;
+            lastUtaniGranHurAttemptTime = DateTime.MinValue;
+            lastUtanaVidTime = DateTime.MinValue;
+            lastUtanaVidAttemptTime = DateTime.MinValue;
+            Debugger("[MOTION] Spell timers reset");
+        }
+    }
+
+    // Add a method to check if character is currently moving
+    static bool IsCharacterMoving()
+    {
+        lock (positionLock)
+        {
+            return characterIsMoving;
+        }
+    }
+
+
+    // Add a method to get spell status information
+    static void PrintSpellStatus()
+    {
+        lock (spellCastingLock)
+        {
+            DateTime now = DateTime.Now;
+            double utaniGranHurCooldown = UTANI_GRAN_HUR_INTERVAL_SECONDS - (now - lastUtaniGranHurTime).TotalSeconds;
+            double utanaVidCooldown = UTANA_VID_INTERVAL_SECONDS - (now - lastUtanaVidTime).TotalSeconds;
+            double utanaVidRetryCooldown = UTANA_VID_RETRY_INTERVAL_SECONDS - (now - lastUtanaVidAttemptTime).TotalSeconds;
+            double utaniGranHurRetryCooldown = UTANI_GRAN_HUR_RETRY_INTERVAL_SECONDS - (now - lastUtaniGranHurAttemptTime).TotalSeconds;
+
+            Debugger("[MOTION] Spell Status:");
+
+            // Utani Gran Hur status
+            if (lastUtaniGranHurAttemptTime > lastUtaniGranHurTime && speed < MIN_SPEED_FOR_UTANI_GRAN_HUR)
+            {
+                Debugger($"  Utani Gran Hur: {(utaniGranHurRetryCooldown > 0 ? $"{utaniGranHurRetryCooldown:F1}s retry cooldown" : "Ready to retry")} (last attempt failed)");
+            }
+            else
+            {
+                Debugger($"  Utani Gran Hur: {(utaniGranHurCooldown > 0 ? $"{utaniGranHurCooldown:F1}s cooldown" : "Ready")}");
+            }
+
+            // Utana Vid status
+            if (movementDetectedSinceStart)
+            {
+                if (lastUtanaVidAttemptTime > lastUtanaVidTime && invisibilityCode == 1)
+                {
+                    Debugger($"  Utana Vid: {(utanaVidRetryCooldown > 0 ? $"{utanaVidRetryCooldown:F1}s retry cooldown" : "Ready to retry")} (last attempt failed)");
+                }
+                else
+                {
+                    Debugger($"  Utana Vid: {(utanaVidCooldown > 0 ? $"{utanaVidCooldown:F1}s cooldown" : "Ready")}");
+                }
+            }
+            else
+            {
+                Debugger("  Utana Vid: Waiting for movement before becoming eligible");
+            }
+
+            Debugger($"  Character moving: {IsCharacterMoving()}");
+            Debugger($"  Movement detected since start: {movementDetectedSinceStart}");
+            Debugger($"  Current speed: {speed:F1}");
+            Debugger($"  Invisibility code: {invisibilityCode}");
+        }
+    }
+
+    // Modify your Main method to start the motion detection thread
+    // Add this line after you find the window handle and before the main loop:
+    // StartMotionDetectionThread();
+
+    // Also modify the quit section in your Main method:
+    // Before Environment.Exit(0), add:
+    // StopMotionDetectionThread();
+    static Thread qKeyListenerThread;
+    static bool qKeyListenerRunning = false;
+
+    // Add this method to start the Q key listener thread
+    static void StartQKeyListenerThread()
+    {
+        if (qKeyListenerThread != null && qKeyListenerThread.IsAlive)
+        {
+            Debugger("[Q-KEY] Q key listener thread already running");
+            return;
+        }
+
+        qKeyListenerRunning = true;
+        qKeyListenerThread = new Thread(QKeyListenerWorker)
+        {
+            IsBackground = true,
+            Name = "QKeyListenerThread"
+        };
+        qKeyListenerThread.Start();
+        Debugger("[Q-KEY] Q key listener thread started - press Q at any time to quit");
+    }
+
+    static bool isPaused = false;
+    static readonly object pauseLock = new object();
+    static void QKeyListenerWorker()
+    {
+        Debugger("[Q-KEY] Q key listener worker started (Q=Quit, P=Pause/Resume)");
+
+        try
+        {
+            while (qKeyListenerRunning && programRunning)
+            {
+                try
+                {
+                    if (Console.KeyAvailable)
+                    {
+                        var key = Console.ReadKey(true).Key;
+
+                        if (key == ConsoleKey.Q)
+                        {
+                            Debugger("\n[Q-KEY] Q key pressed - shutting down program...");
+
+                            // Set flags to stop everything
+                            programRunning = false;
+                            qKeyListenerRunning = false;
+                            actionSequenceRunning = false;
+                            cancellationTokenSource.Cancel();
+
+                            // Stop all other threads
+                            StopMotionDetectionThread();
+                            StopSoulPositionMonitorThread();
+
+                            Debugger("[Q-KEY] Cleanup completed - exiting...");
+                            Environment.Exit(0);
+                        }
+                        else if (key == ConsoleKey.P)
+                        {
+                            lock (pauseLock)
+                            {
+                                isPaused = !isPaused;
+                                if (isPaused)
+                                {
+                                    Debugger("\n[PAUSE] Program PAUSED - press P again to resume");
+                                }
+                                else
+                                {
+                                    Debugger("\n[PAUSE] Program RESUMED");
+                                }
+                            }
+                        }
+                    }
+
+                    // Check every 100ms for better responsiveness
+                    Thread.Sleep(100);
+                }
+                catch (Exception ex)
+                {
+                    Debugger($"[Q-KEY] Error in Q key listener: {ex.Message}");
+                    Thread.Sleep(1000);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debugger($"[Q-KEY] Fatal error in Q key listener thread: {ex.Message}");
+        }
+        finally
+        {
+            Debugger("[Q-KEY] Q key listener worker stopped");
+        }
+    }
+
+    // Add this helper method to check for pause state
+    static void CheckForPause()
+    {
+        while (isPaused && programRunning)
+        {
+            Thread.Sleep(100);
+        }
+    }
+
+    static int f2ClickCount = 0;
+    const int MAX_F2_CLICKS = 20;
+    static DateTime lastF2AttemptTime = DateTime.MinValue;
+    static double lastManaBeforeF2 = 0;
+    static bool hasExecutedSequencesAfterF2Limit = false; // Flag to track if we've executed sequences after F2 limit
+
+
+
+    static void Main()
+    {
+        Debugger("Starting RealeraDX Auto-Potions...");
+        ShowAllProcessesWithWindows();
+
+        // Initialize action sequence
+        InitializeActionSequence();
+
+        // Find the process
+        Process process = FindRealeraProcess();
+        if (process == null)
+        {
+            Debugger("RealeraDX process not found!");
+            return;
+        }
+
+        // Get process handle
+        processHandle = OpenProcess(PROCESS_ALL_ACCESS, false, process.Id);
+        moduleBase = process.MainModule.BaseAddress;
+
+        // Find window handle
+        FindRealeraWindow(process);
+
+        ReadMemoryValues();
+        Debugger($"Found RealeraDX process (ID: {process.Id})");
+        Debugger($"Window handle: {targetWindow}");
+        Debugger("\nThresholds:");
+        Debugger($"HP: {HP_THRESHOLD}%");
+        Debugger($"Mana: {MANA_THRESHOLD}");
+        Debugger($"Soul: {SOUL_THRESHOLD} (absolute value)");
+        Debugger($"X: {currentX} (absolute value)");
+        Debugger($"Y: {currentY} (absolute value)");
+        Debugger($"Z: {currentZ} (absolute value)");
+        Debugger($"InvisibilityCode: {invisibilityCode}");
+        Debugger($"Speed: {speed}");
+        Debugger("\nControls:");
+        Debugger("Q - Quit");
+        Debugger("E - Drag items from backpack to ground (8x)");
+        Debugger("R - Drag items from ground to backpack (8x)");
+        Debugger("P - Execute action sequence");
+        Debugger("M - Reset motion detection");
+        Debugger("N - Check if character is moving");
+        Debugger("T - Reset spell timers");
+        Debugger("S - Show spell status");
+        Debugger("\nAuto-spells:");
+        Debugger("- Utani Gran Hur (\\): Every 20 seconds when moving");
+        Debugger("- Utana Vid (F11): Every 3 minutes when invisible");
+        Debugger("- Minimum 3 seconds between any spells");
+
+        StartQKeyListenerThread();
+        StartMotionDetectionThread();
+        StartSoulPositionMonitorThread();
+
+        while (programRunning)
+        {
+
+            CheckForPause();
+            ReadMemoryValues();
+            try
+            {
+                // Check for quit key
+                if (Console.KeyAvailable)
+                {
+                    var key = Console.ReadKey(true).Key;
+                    if (key == ConsoleKey.E)
+                    {
+                        if (!itemDragInProgress)
+                        {
+                            Debugger("Starting to drag items from backpack to ground (8x)...");
+                            currentDragCount = 0;
+                            Task.Run(() => StartItemDragging(false));
+                        }
+                        else
+                        {
+                            Debugger("Item dragging already in progress...");
+                        }
+                    }
+                    else if (key == ConsoleKey.R)
+                    {
+                        if (!itemDragInProgress)
+                        {
+                            Debugger("Starting to drag items from ground to backpack (8x)...");
+                            currentDragCount = 0;
+                            Task.Run(() => StartItemDragging(true));
+                        }
+                        else
+                        {
+                            Debugger("Item dragging already in progress...");
+                        }
+                    }
+                }
+
+
+                if (currentZ == 8)
+                {
+                    tarantulaSeqeunce();
+                    ExecuteActionSequence();
+                }
+
+                double hpPercent = (curHP / maxHP) * 100;
+                double manaPercent = (curMana / maxMana) * 100;
+                double mana = curMana;
+
+                // HP check
+                if (hpPercent <= HP_THRESHOLD)
+                {
+                    if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
+                    {
+                        SendKeyPress(VK_F1);
+                        lastHpAction = DateTime.Now;
+                        Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
+                    }
+                }
+
+                // Mana check
+                if (mana <= MANA_THRESHOLD)
+                {
+                    if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
+                    {
+                        SendKeyPress(VK_F3);
+                        lastManaAction = DateTime.Now;
+                        Debugger($"Mana low ({mana:F1}) - pressed F3");
+                    }
+                }
+                // Mana & Soul check
+                else if (curMana >= MANA_THRESHOLD)
+                {
+                    if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
+                    {
+                        PressF2WithValidation();
+                        Debugger($"Mana>900 ({curMana:F0}), Soul: ({curSoul:F1}) - attempted F2");
+                    }
+                }
+
+                Debugger($"==========");
+                Debugger($"f2ClickCount {f2ClickCount}");
+                Debugger($"attempts: {attempts}");
+                Debugger($"==========");
+
+                Thread.Sleep(1000);
+
+                if (f2ClickCount >= MAX_F2_CLICKS || curSoul <= 4 || (attempts >= 3 && curMana >= MANA_THRESHOLD)) {
+                    attempts = 0;
+                    if (curSoul >= 100)
+                    {
+                        InitializeMiddleSequence();
+                        ExecuteActionSequence();
+                        lastManaAction = DateTime.Now;
+                        Debugger($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
+                        lastManaAction = DateTime.Now;
+                        f2ClickCount = 0;
+                    }
+                    else
+                    {
+                        InitializeActionSequence();
+                        ExecuteActionSequence();
+                        f2ClickCount = 0;
+                    }
+                }
+                Thread.Sleep(100);
+            }
+            catch (Exception ex)
+            {
+                Debugger($"Error: {ex.Message}");
+                Thread.Sleep(1000);
+            }
+        }
+    }
+
+    static int attempts = 0;
+    static void PressF2WithValidation()
+    {
+        attempts++;
+        if (f2ClickCount >= MAX_F2_CLICKS)
+        {
+            Debugger($"[F2] F2 limit reached ({f2ClickCount}/{MAX_F2_CLICKS}). Skipping F2 press.");
+            return;
+        }
+
+        // Record mana before F2 press
+        ReadMemoryValues();
+        double manaBeforeF2 = curMana;
+        DateTime attemptTime = DateTime.Now;
+
+        // Press F2
+        SendKeyPress(VK_F2);
+        lastManaAction = DateTime.Now;
+        Debugger($"[F2] Pressed F2. Mana before: {manaBeforeF2:F0}");
+
+        // Wait for the effect to apply
+        Thread.Sleep(3000); // Give it a bit more time to register
+
+        // Read mana after F2
+        ReadMemoryValues();
+        double manaAfterF2 = curMana;
+        double manaDrop = manaBeforeF2 - manaAfterF2;
+
+        // Validate the click
+        if (manaDrop >= 500)
+        {
+            f2ClickCount++;
+            Debugger($"[F2] F2 validated successfully! Mana dropped by {manaDrop:F0}. Total F2 clicks: {f2ClickCount}/{MAX_F2_CLICKS}");
+            attempts = 0;
+        }
+        else
+        {
+            Debugger($"[F2] F2 failed validation! Mana only dropped by {manaDrop:F0} (expected at least 800). Not counting this click.");
+        }
+    }
+
+  
+
+    // [All remaining methods stay the same]
+    static bool ClickWaypoint(int targetX, int targetY)
+    {
+        SendKeyPress(VK_ESCAPE);
+        ReadMemoryValues();
+        GetClientRect(targetWindow, out RECT rect);
+
+        int centerX = groundX;
+        int centerY = groundY;
+        int lParam = (centerX << 16) | (centerY & 0xFFFF);
+
+        int diffX = targetX - currentX;
+        int diffY = targetY - currentY;
+
+        int screenX = centerX + (diffX * WAYPOINT_SIZE);
+        int screenY = centerY + (diffY * WAYPOINT_SIZE);
+
+        lParam = (screenY << 16) | (screenX & 0xFFFF);
+
+        SendMessage(targetWindow, WM_MOUSEMOVE, IntPtr.Zero, lParam);
+        SendMessage(targetWindow, WM_LBUTTONDOWN, 1, lParam);
+        SendMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, lParam);
+
+        return true;
+    }
+
+    static void RightClickOnCharacter()
+    {
+        int lParam = (groundY << 16) | (groundX & 0xFFFF);
+
+        SendMessage(targetWindow, WM_MOUSEMOVE, IntPtr.Zero, lParam);
+        SendMessage(targetWindow, WM_RBUTTONDOWN, 1, lParam);
+        SendMessage(targetWindow, WM_RBUTTONUP, IntPtr.Zero, lParam);
+
+        Debugger($"Right-clicked on character at screen coordinates ({groundX}, {groundY})");
+    }
+
+    static void StartItemDragging(bool reverseDirection)
+    {
+        try
+        {
+            itemDragInProgress = true;
+            string direction = reverseDirection ? "ground to backpack" : "backpack to ground";
+            Debugger($"Item dragging task started ({direction})...");
+
+            RECT clientRect;
+            GetClientRect(targetWindow, out clientRect);
+            int localX = backpackX;
+            int localY = backpackY;
+            if (reverseDirection)
+            {
+                localX += 125;
+                localY += 125;
+            }
+
+            POINT groundPoint = new POINT { X = groundX, Y = groundY };
+            POINT backpackPoint = new POINT { X = localX, Y = localY };
+
+            ClientToScreen(targetWindow, ref groundPoint);
+            ClientToScreen(targetWindow, ref backpackPoint);
+
+            POINT sourcePoint, destPoint;
+            if (reverseDirection)
+            {
+                sourcePoint = groundPoint;
+                destPoint = backpackPoint;
+            }
+            else
+            {
+                sourcePoint = backpackPoint;
+                destPoint = groundPoint;
+            }
+
+            const int MAX_DRAGS = 8;
+            for (currentDragCount = 1; currentDragCount <= MAX_DRAGS; currentDragCount++)
+            {
+                if (cancellationTokenSource.Token.IsCancellationRequested || !programRunning)
+                {
+                    Debugger($"Item dragging interrupted during drag #{currentDragCount}");
+                    cancellationTokenSource = new CancellationTokenSource();
+                    break;
+                }
+
+                DragItem(sourcePoint.X, sourcePoint.Y, destPoint.X, destPoint.Y);
+                Debugger($"Drag #{currentDragCount} completed... ({currentDragCount}/{MAX_DRAGS})");
+
+                try
+                {
+                    cancellationTokenSource.Token.WaitHandle.WaitOne(100);
+                }
+                catch (OperationCanceledException)
+                {
+                    Debugger("Item dragging cancelled");
+                    cancellationTokenSource = new CancellationTokenSource();
+                    break;
+                }
+            }
+
+            if (currentDragCount > MAX_DRAGS)
+            {
+                Debugger($"All {MAX_DRAGS} item drags completed ({direction}).");
+            }
+        }
+        catch (Exception ex)
+        {
+            Debugger($"Error during item dragging: {ex.Message}");
+        }
+        finally
+        {
+            itemDragInProgress = false;
+            currentDragCount = 0;
+        }
+    }
+
+    static void DragItem(int fromX, int fromY, int toX, int toY)
+    {
+        POINT sourcePoint = new POINT { X = fromX, Y = fromY };
+        POINT destPoint = new POINT { X = toX, Y = toY };
+
+        // DEBUG: Convert game window coords to screen coords and show cursor
+        POINT sourceScreenPoint = sourcePoint;
+        POINT destScreenPoint = destPoint;
+        ClientToScreen(targetWindow, ref sourceScreenPoint);
+        ClientToScreen(targetWindow, ref destScreenPoint);
+
+        // DEBUG: Show source position
+        Debugger($"[DEBUG] Moving cursor to source: Game({fromX}, {fromY}) -> Screen({sourceScreenPoint.X}, {sourceScreenPoint.Y})");
+        //SetCursorPos(fromX, fromY);
+        //Thread.Sleep(4000);
+
+        // DEBUG: Show destination position
+        Debugger($"[DEBUG] Moving cursor to destination: Game({toX}, {toY}) -> Screen({destScreenPoint.X}, {destScreenPoint.Y})");
+        //SetCursorPos(destScreenPoint.X, destScreenPoint.Y);
+        //Thread.Sleep(4000);
+
+        // Continue with original drag logic
+        ScreenToClient(targetWindow, ref sourcePoint);
+        ScreenToClient(targetWindow, ref destPoint);
+
+        IntPtr lParamFrom = (IntPtr)((sourcePoint.Y << 16) | (sourcePoint.X & 0xFFFF));
+        IntPtr lParamTo = (IntPtr)((destPoint.Y << 16) | (destPoint.X & 0xFFFF));
+
+        PostMessage(targetWindow, WM_MOUSEMOVE, IntPtr.Zero, lParamFrom);
+        Thread.Sleep(1);
+
+        PostMessage(targetWindow, WM_LBUTTONDOWN, IntPtr.Zero, lParamFrom);
+        Thread.Sleep(1);
+
+        PostMessage(targetWindow, WM_MOUSEMOVE, IntPtr.Zero, lParamTo);
+        Thread.Sleep(1);
+
+        PostMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, lParamTo);
+        Thread.Sleep(1);
+
+        Debugger($"Dragged item from ({fromX}, {fromY}) to ({toX}, {toY})");
+    }
+
+    static Process FindRealeraProcess()
+    {
+        var processes = Process
+            .GetProcesses()
+            .Where(p => p.ProcessName == processName)
+            .ToArray();
+
+        if (processes.Length == 0)
+        {
+            Debugger($"Process '{processName}' not found.");
+            return null;
+        }
+
+        var targetProcess = processes.FirstOrDefault(p =>
+            !string.IsNullOrEmpty(p.MainWindowTitle) &&
+            p.MainWindowTitle.Contains("Knajtka Martynka", StringComparison.OrdinalIgnoreCase));
+
+        if (targetProcess != null)
+        {
+            Debugger($"Found target process: {targetProcess.ProcessName} (ID: {targetProcess.Id})");
+            Debugger($"Window Title: {targetProcess.MainWindowTitle}");
+            return targetProcess;
+        }
+        else if (processes.Length == 1)
+        {
+            var process = processes[0];
+            Debugger($"One process found: {process.ProcessName} (ID: {process.Id})");
+            Debugger($"Window Title: {process.MainWindowTitle}");
+            Debugger("WARNING: Process doesn't contain 'Knajtka Martynka' in title!");
+            return process;
+        }
+        else
+        {
+            Debugger($"Multiple processes found with name '{processName}':");
+            for (int i = 0; i < processes.Length; i++)
+            {
+                Debugger($"{i + 1}: ID={processes[i].Id}, Name={processes[i].ProcessName}, Window Title={processes[i].MainWindowTitle}, StartTime={(processes[i].StartTime)}");
+            }
+            Debugger("Enter the number of the process you want to select (1-9):");
+            string input = Console.ReadLine();
+            if (
+                int.TryParse(input, out int choice)
+                && choice >= 1
+                && choice <= processes.Length
+            )
+            {
+                var selectedProc = processes[choice - 1];
+                Debugger($"Selected process: {selectedProc.ProcessName} (ID: {selectedProc.Id})");
+                Debugger($"Window Title: {selectedProc.MainWindowTitle}");
+                return selectedProc;
+            }
+            else
+            {
+                Debugger("Invalid selection. Please try again.");
+                return null;
+            }
+        }
+    }
+
     static void FindRealeraWindow(Process process)
     {
         EnumWindows(
@@ -978,7 +2461,7 @@ class Program
                 {
                     StringBuilder sb = new StringBuilder(256);
                     GetWindowText(hWnd, sb, sb.Capacity);
-                    if (sb.ToString().Contains("Realera 8.0"))
+                    if (sb.ToString().Contains("Realera 8.0 - Knajtka Martynka"))
                     {
                         targetWindow = hWnd;
                         return false;
@@ -989,4585 +2472,185 @@ class Program
             IntPtr.Zero
         );
     }
-    static void SaveCoordinates()
+
+    static void ReadMemoryValues()
     {
-        CoordinateData data = new CoordinateData { cords = recordedCoords };
-        string json = JsonSerializer.Serialize(
-            data,
-            new JsonSerializerOptions { WriteIndented = true }
-        );
-        File.WriteAllText(cordsFilePath, json);
-    }
-    static void RecordCoordinate(int x, int y, int z)
-    {
-        if (
-            recordedCoords.Count == 0
-            || recordedCoords.Last().X != x
-            || recordedCoords.Last().Y != y
-            || recordedCoords.Last().Z != z
-        )
-        {
-            recordedCoords.Add(new Coordinate { X = x, Y = y, Z = z });
-        }
-    }
-    private static void MoveCharacterTowardsWaypoint(
-    int currentX,
-    int currentY,
-    int waypointX,
-    int waypointY
-)
-    {
-        int diffX = waypointX - currentX;
-        int diffY = waypointY - currentY;
-        bool moveXFirst = Math.Abs(diffX) >= Math.Abs(diffY);
-        if (moveXFirst)
-        {
-            if (diffX > 0)
-            {
-                SendKeyPress(VK_RIGHT);
-            }
-            else if (diffX < 0)
-            {
-                SendKeyPress(VK_LEFT);
-            }
-        }
-        else
-        {
-            if (diffY > 0)
-            {
-                SendKeyPress(VK_DOWN);
-            }
-            else if (diffY < 0)
-            {
-                SendKeyPress(VK_UP);
-            }
-        }
-    }
-    static bool shouldClickAround = true;
-    private static int previousTargetId = 0;
-    static Coordinate? previousChasePosition = null;
-    static bool isReturningFromChase = false;
-    static private HashSet<int> clickedAroundTargets = new HashSet<int>();
-    static private int lastTrackedTargetId = 0;
-    static bool firstFound = true;
-    private static DateTime lastWaypointClickTime = DateTime.MinValue;
-    private static bool waypointStuckDetectionEnabled = true;
-    private static TimeSpan waypointStuckTimeout = TimeSpan.FromSeconds(2);
-    private static int consecutiveStuckCount = 0;
-    private static int maxConsecutiveStuckCount = 3;
-    private static Coordinate? lastClickedWaypoint = null;
-    private static List<Point> failedClickPoints = new List<Point>();
-    private static int waypointRetryCount = 0;
-    private static readonly int MAX_WAYPOINT_RETRIES = 3;
-    private static DateTime lastFailedClickPointsCleanupTime = DateTime.MinValue;
-    private static readonly TimeSpan FAILED_CLICK_POINTS_CLEANUP_INTERVAL = TimeSpan.FromMinutes(5);
-    static bool boolInit = true;
+        curHP = ReadDouble(HP_OFFSET);
+        maxHP = ReadDouble(MAX_HP_OFFSET);
+        curMana = ReadDouble(MANA_OFFSET);
+        maxMana = ReadDouble(MAX_MANA_OFFSET);
+        curSoul = ReadDouble(SOUL_OFFSET);
 
+        currentX = ReadInt32(POSITION_X_OFFSET);
+        currentY = ReadInt32(POSITION_Y_OFFSET);
+        currentZ = ReadInt32(POSITION_Z_OFFSET);
 
-
-
-
-
-
-
-
-
-
-
-
-    // Add these static variables near the top of your Program class
-    static Dictionary<int, int> monsterStepCounter = new Dictionary<int, int>();
-    static int MAX_STEPS_PER_MONSTER = 3;
-
-    static Dictionary<int, DateTime> monsterDetectionTimes = new Dictionary<int, DateTime>();
-    static readonly TimeSpan MONSTER_APPROACH_DELAY = TimeSpan.FromMilliseconds(800);
-
-    // Add this method to your Program class (replace the existing TryMoveTowardsMonster method)
-    static bool TryMoveTowardsMonster(int currentTargetId)
-    {
-        try
-        {
-            // Get current position
-            int currentX, currentY, currentZ;
-            lock (memoryLock)
-            {
-                currentX = posX;
-                currentY = posY;
-                currentZ = posZ;
-            }
-
-            // Get monster coordinates
-            var (monsterX, monsterY, monsterZ) = GetTargetMonsterCoordinates();
-
-            if (monsterX == 0 && monsterY == 0) // Monster coordinates not available
-            {
-                return false;
-            }
-
-            // Calculate distance
-            int distanceX = Math.Abs(monsterX - currentX);
-            int distanceY = Math.Abs(monsterY - currentY);
-            int totalDistance = distanceX + distanceY;
-
-            // Only move if monster is more than 1 square away
-            if (totalDistance <= 1)
-            {
-                return false;
-            }
-
-            // Check if we've already taken 3 steps towards this monster
-            if (!monsterStepCounter.ContainsKey(currentTargetId))
-            {
-                monsterStepCounter[currentTargetId] = 0;
-            }
-
-            if (monsterStepCounter[currentTargetId] >= MAX_STEPS_PER_MONSTER)
-            {
-                return false;
-            }
-
-            // NEW: Check if enough time has passed since the monster was first detected
-            if (!monsterDetectionTimes.ContainsKey(currentTargetId))
-            {
-                // First time seeing this monster - record the time
-                monsterDetectionTimes[currentTargetId] = DateTime.Now;
-                Console.WriteLine($"[COMBAT] Monster {currentTargetId} detected, waiting {MONSTER_APPROACH_DELAY.TotalMilliseconds}ms before approach");
-                return false;
-            }
-
-            // Check if the delay has passed
-            DateTime detectionTime = monsterDetectionTimes[currentTargetId];
-            if (DateTime.Now - detectionTime < MONSTER_APPROACH_DELAY)
-            {
-                // Still within the delay period
-                double remainingMs = (MONSTER_APPROACH_DELAY - (DateTime.Now - detectionTime)).TotalMilliseconds;
-                Console.WriteLine($"[COMBAT] Monster {currentTargetId} approach delayed, {remainingMs:F0}ms remaining");
-                return false;
-            }
-
-            // Calculate direction to move
-            int stepX = 0;
-            int stepY = 0;
-            int directionX = monsterX - currentX;
-            int directionY = monsterY - currentY;
-
-            // Determine which direction to move (prioritize larger distance)
-            if (Math.Abs(directionX) >= Math.Abs(directionY))
-            {
-                // Move horizontally
-                if (directionX > 0)
-                {
-                    stepX = 1;
-                }
-                else if (directionX < 0)
-                {
-                    stepX = -1;
-                }
-            }
-            else
-            {
-                // Move vertically
-                if (directionY > 0)
-                {
-                    stepY = 1;
-                }
-                else if (directionY < 0)
-                {
-                    stepY = -1;
-                }
-            }
-
-            // Send the appropriate key press
-            bool keyPressed = false;
-            if (stepX == 1)
-            {
-                SendKeyPress(VK_RIGHT);
-                keyPressed = true;
-                Console.WriteLine($"[COMBAT] Moving RIGHT towards monster {currentTargetId} (step {monsterStepCounter[currentTargetId] + 1}/{MAX_STEPS_PER_MONSTER})");
-            }
-            else if (stepX == -1)
-            {
-                SendKeyPress(VK_LEFT);
-                keyPressed = true;
-                Console.WriteLine($"[COMBAT] Moving LEFT towards monster {currentTargetId} (step {monsterStepCounter[currentTargetId] + 1}/{MAX_STEPS_PER_MONSTER})");
-            }
-            else if (stepY == 1)
-            {
-                SendKeyPress(VK_DOWN);
-                keyPressed = true;
-                Console.WriteLine($"[COMBAT] Moving DOWN towards monster {currentTargetId} (step {monsterStepCounter[currentTargetId] + 1}/{MAX_STEPS_PER_MONSTER})");
-            }
-            else if (stepY == -1)
-            {
-                SendKeyPress(VK_UP);
-                keyPressed = true;
-                Console.WriteLine($"[COMBAT] Moving UP towards monster {currentTargetId} (step {monsterStepCounter[currentTargetId] + 1}/{MAX_STEPS_PER_MONSTER})");
-            }
-
-            if (keyPressed)
-            {
-                monsterStepCounter[currentTargetId]++;
-
-                // Add a small delay after movement
-                Sleep(400);
-
-                // Clean up old entries to prevent memory leak
-                CleanupOldMonsterSteps();
-
-                return true;
-            }
-
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[COMBAT] Error in TryMoveTowardsMonster: {ex.Message}");
-            return false;
-        }
+        targetId = ReadInt32(TARGET_ID_OFFSET);
+        invisibilityCode = ReadIntFromPointerOffset(INVIS_OFFSET);
+        speed = ReadIntFromPointerOffset(SPEED_OFFSET);
     }
 
-    // Add this method to clean up old detection times (place it near CleanupOldMonsterSteps)
-    static void CleanupOldMonsterDetectionTimes()
-    {
-        if (monsterDetectionTimes.Count > 50) // Prevent memory leak
-        {
-            // Remove entries older than 30 seconds
-            var now = DateTime.Now;
-            var oldEntries = monsterDetectionTimes
-                .Where(kvp => (now - kvp.Value).TotalSeconds > 30)
-                .Select(kvp => kvp.Key)
-                .ToList();
 
-            foreach (var key in oldEntries)
+    static int ReadIntFromPointerOffset(int offset)
+    {
+        IntPtr address = IntPtr.Add(moduleBase, (int)BASE_ADDRESS);
+        byte[] buffer = new byte[4];
+
+        if (ReadProcessMemory(processHandle, address, buffer, 4, out _))
+        {
+            IntPtr finalAddress = BitConverter.ToInt32(buffer, 0);
+            finalAddress = IntPtr.Add(finalAddress, offset);
+
+            byte[] valueBuffer = new byte[4];
+            if (ReadProcessMemory(processHandle, finalAddress, valueBuffer, 4, out _))
             {
-                monsterDetectionTimes.Remove(key);
+                return BitConverter.ToInt32(valueBuffer, 0);
             }
         }
+        return 0;
     }
 
-    // Update the existing CleanupOldMonsterSteps method to also clean up detection times
-    static void CleanupOldMonsterSteps()
+    static double ReadDouble(int offset)
     {
-        if (monsterStepCounter.Count > 50) // Prevent memory leak
+        IntPtr address = IntPtr.Add(moduleBase, (int)BASE_ADDRESS);
+        byte[] buffer = new byte[4];
+
+        if (ReadProcessMemory(processHandle, address, buffer, 4, out _))
         {
-            // Remove random 25% of entries
-            var keysToRemove = monsterStepCounter.Keys.Take(monsterStepCounter.Count / 4).ToList();
-            foreach (var key in keysToRemove)
+            IntPtr finalAddress = BitConverter.ToInt32(buffer, 0);
+            finalAddress = IntPtr.Add(finalAddress, offset);
+
+            byte[] valueBuffer = new byte[8];
+            if (ReadProcessMemory(processHandle, finalAddress, valueBuffer, 8, out _))
             {
-                monsterStepCounter.Remove(key);
+                return BitConverter.ToDouble(valueBuffer, 0);
             }
         }
-
-        // Also clean up old detection times
-        CleanupOldMonsterDetectionTimes();
+        return 0;
     }
 
-    static void PlayCoordinates()
+    static int ReadInt32(IntPtr offset)
     {
-        UpdateUIPositions();
-        Console.WriteLine("Path playback starting...");
+        IntPtr address = IntPtr.Add(moduleBase, (int)offset);
+        byte[] buffer = new byte[4];
+        if (ReadProcessMemory(processHandle, address, buffer, buffer.Length, out _))
+            return BitConverter.ToInt32(buffer, 0);
+        return 0;
+    }
 
-        string json = File.ReadAllText(cordsFilePath);
-        loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
+    static void SendKeyPress(int key)
+    {
+        SendMessage(targetWindow, WM_KEYDOWN, key, IntPtr.Zero);
+        Thread.Sleep(10);
+        SendMessage(targetWindow, WM_KEYUP, key, IntPtr.Zero);
+    }
 
-        if (loadedCoords == null || loadedCoords.cords.Count == 0)
-        {
-            threadFlags["playing"] = false;
-            return;
-        }
+    static void ShowAllProcessesWithWindows()
+    {
+        Debugger("\n=== REALERA PROCESSES WITH WINDOWS ===");
+        var processes = Process.GetProcesses()
+            .Where(p => p.ProcessName.Contains("Realera", StringComparison.OrdinalIgnoreCase))
+            .Where(p => !string.IsNullOrEmpty(p.MainWindowTitle))
+            .OrderBy(p => p.ProcessName);
 
-        List<Coordinate> waypoints = loadedCoords.cords;
-        totalCoords = waypoints.Count;
-
-        // Find starting position
-        int currentX, currentY, currentZ;
-        lock (memoryLock)
-        {
-            currentX = posX;
-            currentY = posY;
-            currentZ = posZ;
-        }
-
-        // Use the improved FindClosestWaypointIndex
-        if (boolInit)
-        {
-            currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-            boolInit = false;
-        }
-        else
-        {
-            currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-
-        }
-            
-        // Initialize or validate global state
-        if (globalLastIndex < 0 || Math.Abs(globalLastIndex - currentCoordIndex) > maxBacktrackDistance)
-        {
-            globalLastIndex = currentCoordIndex;
-            Console.WriteLine($"[DEBUG] Initialized global state. Starting at waypoint index: {currentCoordIndex}");
-        }
-        else
-        {
-            Console.WriteLine($"[DEBUG] Using existing global state. Current: {currentCoordIndex}, Global: {globalLastIndex}");
-        }
-
-        // Main navigation loop - rest of the code remains the same...
-        while (threadFlags["playing"])
+        foreach (var process in processes)
         {
             try
             {
-                // Update current position
-                lock (memoryLock)
-                {
-                    currentX = posX;
-                    currentY = posY;
-                    currentZ = posZ;
-                }
-
-                // Check if combat is active
-                UpdateTargetEngagement();
-                int currentTargetId;
-                lock (memoryLock)
-                {
-                    currentTargetId = targetId;
-                }
-
-                if (currentTargetId == 0)
-                {
-                    SendKeyPress(VK_F6);
-                    Thread.Sleep(150);
-                }
-                lock (memoryLock)
-                {
-                    currentTargetId = targetId;
-                }
-
-                // If combat is active, wait until target is killed
-                if (currentTargetId != 0)
-                {
-                    
-                    Console.WriteLine($"[COMBAT] Fighting target {currentTargetId}...");
-
-                    // Wait until target is killed
-                    while (threadFlags["playing"])
-                    {
-                        UpdateTargetEngagement();
-                        lock (memoryLock)
-                        {
-                            if (targetId == 0)
-                            {
-                                Console.WriteLine("[COMBAT] Target killed!");
-                                // Click around for loot after killing target
-                                ClickAroundCharacter(targetWindow);
-                                break;
-                            }
-
-                            if (shouldForceTargetChange)
-                            {
-                                Console.WriteLine($"[COMBAT] Target timeout during combat - switching target");
-                                SendKeyPress(VK_F6);
-                                shouldForceTargetChange = false;
-                                currentTargetEngagementId = 0;
-                                currentTargetEngagementDuration = TimeSpan.Zero;
-                                Thread.Sleep(150);
-                                break; // Exit combat loop to recheck targets
-                            }
-                        }
-
-
-                        // Try to move towards monster if it's more than 1 square away
-                        if (currentTargetId != 0)
-                        {
-                            TryMoveTowardsMonster(currentTargetId);
-                        }
-                        Sleep(100);
-                    }
-
-                    // Update current position after combat
-                    lock (memoryLock)
-                    {
-                        currentX = posX;
-                        currentY = posY;
-                        currentZ = posZ;
-                    }
-
-                    // Find closest waypoint to continue from using the improved function
-                    currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                    Console.WriteLine($"[COMBAT] Resuming from waypoint index {currentCoordIndex}");
-                    continue;
-                }
-
-                // Get next navigation point
-                NavigationAction action = DetermineNextAction(waypoints, currentX, currentY, currentZ);
-
-                // Execute the action
-                switch (action.Type)
-                {
-                    case ActionType.UseKeyboard:
-                        MoveCharacterTowardsWaypoint(currentX, currentY, action.TargetX, action.TargetY);
-                        currentCoordIndex = action.WaypointIndex;
-                        globalLastIndex = currentCoordIndex; // Update global state
-                        break;
-
-                    case ActionType.ClickWaypoint:
-                        if (ClickWaypoint(action.TargetX, action.TargetY))
-                        {
-                            WaitForMovementCompletion(action.TargetX, action.TargetY);
-                        }
-                        currentCoordIndex = action.WaypointIndex;
-                        globalLastIndex = currentCoordIndex; // Update global state
-                        break;
-
-                    case ActionType.UseF4:
-                        HandleF4Transition(action.TargetX, action.TargetY, action.FromZ, action.ToZ);
-                        currentCoordIndex = action.WaypointIndex;
-                        globalLastIndex = currentCoordIndex; // Update global state
-                        break;
-
-                    case ActionType.WaitForTarget:
-                        SendKeyPress(VK_F6);
-                        Sleep(100);
-                        break;
-                }
-
-                Sleep(100);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error in path playback: {ex.Message}");
-                Sleep(1000);
-            }
-        }
-    }
-
-    // Determine what action to take next
-    static NavigationAction DetermineNextAction(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
-    {
-        // Find the furthest reachable waypoint (max distance = 5)
-        Coordinate target = FindFurthestReachableWaypoint(waypoints, currentX, currentY, currentZ);
-
-
-        // Check if we need to change floors
-        if (target.Z != currentZ)
-        {
-            Console.WriteLine($"[NAV] Detected floor change needed: Current Z={currentZ}, Target Z={target.Z}");
-            return HandleZLevelChange(target, waypoints);
-        }
-
-        // Check if we're already close enough to the target
-        int distanceX = Math.Abs(target.X - currentX);
-        int distanceY = Math.Abs(target.Y - currentY);
-
-        if (distanceX == 0 && distanceY == 0)
-        {
-            Console.WriteLine($"[NAV] Already at target position - distance X={distanceX}, Y={distanceY}");
-            return new NavigationAction
-            {
-                Type = ActionType.WaitAtPosition,
-                TargetX = currentX,
-                TargetY = currentY,
-                WaypointIndex = currentCoordIndex
-            };
-        }
-
-        // Decide whether to use keyboard or click
-        int totalDistance = distanceX + distanceY;
-
-        if (totalDistance <= 1)
-        {
-            // Close enough - use keyboard
-            Console.WriteLine($"[NAV] Using keyboard - total distance {totalDistance}");
-            return new NavigationAction
-            {
-                Type = ActionType.UseKeyboard,
-                TargetX = target.X,
-                TargetY = target.Y,
-                WaypointIndex = FindWaypointIndex(waypoints, target)
-            };
-        }
-        else
-        {
-            // Far enough - use click
-            Console.WriteLine($"[NAV] Using click - total distance {totalDistance} > 3");
-            return new NavigationAction
-            {
-                Type = ActionType.ClickWaypoint,
-                TargetX = target.X,
-                TargetY = target.Y,
-                WaypointIndex = FindWaypointIndex(waypoints, target)
-            };
-        }
-    }
-
-    // Add these static variables to track progression
-    static int lastTargetedIndex = -1; // Remember the last waypoint we actually targeted
-    static Coordinate lastTargetedWaypoint = null;
-
-
-    static HashSet<string> visitedWaypoints = new HashSet<string>();
-    static string MakeCoordKey(Coordinate coord) => $"{coord.X}_{coord.Y}_{coord.Z}";
-
-
-    // Fixed FindFurthestReachableWaypoint with proper Z-level handling
-    static Coordinate FindFurthestReachableWaypoint(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
-    {
-        const int MAX_DISTANCE = 5;
-        Console.WriteLine($"[NAV] Looking for furthest reachable waypoint from ({currentX},{currentY},{currentZ})");
-        Console.WriteLine($"[NAV] Current waypoint index: {currentCoordIndex}");
-        Console.WriteLine($"[NAV] Global last index: {globalLastIndex}");
-
-        // Sync currentCoordIndex with globalLastIndex if they're out of sync
-        if (globalLastIndex >= 0 && Math.Abs(globalLastIndex - currentCoordIndex) <= maxBacktrackDistance)
-        {
-            if (globalLastIndex != currentCoordIndex)
-            {
-                Console.WriteLine($"[NAV] Syncing currentCoordIndex ({currentCoordIndex}) with globalLastIndex ({globalLastIndex})");
-                currentCoordIndex = globalLastIndex;
-            }
-        }
-
-        // Check if we've reached our last targeted waypoint
-        if (lastTargetedIndex >= 0 && lastTargetedWaypoint != null)
-        {
-            int distanceToTarget = Math.Abs(lastTargetedWaypoint.X - currentX) + Math.Abs(lastTargetedWaypoint.Y - currentY);
-            if (distanceToTarget <= 2) // Close enough to consider "reached"
-            {
-                Console.WriteLine($"[NAV] Reached targeted waypoint {lastTargetedIndex}. Advancing current index from {currentCoordIndex} to {lastTargetedIndex}");
-                currentCoordIndex = lastTargetedIndex;
-                globalLastIndex = lastTargetedIndex; // Update global state too
-                lastTargetedIndex = -1; // Reset since we've reached it
-                lastTargetedWaypoint = null;
-            }
-        }
-
-        // Keep track of the best reachable waypoints found (for random selection)
-        List<(Coordinate waypoint, int index, int distance)> reachableWaypoints = new List<(Coordinate, int, int)>();
-
-        // Look forward through the waypoint list (only forward, never backward)
-        for (int i = 1; i < Math.Min(15, waypoints.Count); i++) // Start from i=1 to skip current waypoint
-        {
-            // Calculate next index, wrapping around if needed
-            int checkIndex = (currentCoordIndex + i) % waypoints.Count;
-            Coordinate check = waypoints[checkIndex];
-            Console.WriteLine($"[NAV] Checking waypoint {checkIndex}: ({check.X},{check.Y},{check.Z})");
-
-            // Handle Z-level changes for the very next waypoint (i == 1)
-            if (check.Z != currentZ)
-            {
-                if (i == 1)
-                {
-                    // This is the next waypoint and it has a different Z level
-                    Console.WriteLine($"[NAV] Next waypoint {checkIndex} requires floor change (Z={check.Z} vs current Z={currentZ})");
-
-                    // Handle the floor change for the next waypoint
-                    Coordinate transitionWaypoint = null;
-                    int transitionIndex = -1;
-                    int minTransitionDistance = int.MaxValue;
-
-                    if (check.Z > currentZ)
-                    {
-                        // Need to go UP - find closest waypoint with higher Z
-                        Console.WriteLine($"[NAV] Need to go UP to Z={check.Z}");
-                        for (int j = 0; j < waypoints.Count; j++)
-                        {
-                            var candidate = waypoints[j];
-                            if (candidate.Z == check.Z)
-                            {
-                                int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
-                                if (distance < minTransitionDistance)
-                                {
-                                    minTransitionDistance = distance;
-                                    transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
-                                    transitionIndex = j;
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // Need to go DOWN - find closest waypoint with lower Z
-                        Console.WriteLine($"[NAV] Need to go DOWN to Z={check.Z}");
-                        for (int j = 0; j < waypoints.Count; j++)
-                        {
-                            var candidate = waypoints[j];
-                            if (candidate.Z == check.Z)
-                            {
-                                int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
-                                if (distance < minTransitionDistance)
-                                {
-                                    minTransitionDistance = distance;
-                                    transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
-                                    transitionIndex = j;
-                                }
-                            }
-                        }
-                    }
-
-                    if (transitionWaypoint != null)
-                    {
-                        Console.WriteLine($"[NAV] Found transition waypoint: index {transitionIndex} at ({transitionWaypoint.X},{transitionWaypoint.Y},{transitionWaypoint.Z})");
-                        lastTargetedIndex = checkIndex;
-                        lastTargetedWaypoint = check;
-                        return transitionWaypoint;
-                    }
-                    else
-                    {
-                        Console.WriteLine($"[NAV] No transition waypoint found - returning the next waypoint directly");
-                        lastTargetedIndex = checkIndex;
-                        lastTargetedWaypoint = check;
-                        return check;
-                    }
-                }
-                else
-                {
-                    // This is not the next waypoint and has different Z - skip it entirely
-                    Console.WriteLine($"[NAV] Skipping waypoint {checkIndex} - different Z level (Z={check.Z}) and not next waypoint");
-                    continue;
-                }
-            }
-
-            // Calculate distance to this waypoint (same Z level as current)
-            int distanceX = Math.Abs(check.X - currentX);
-            int distanceY = Math.Abs(check.Y - currentY);
-            int totalDistance = distanceX + distanceY;
-            Console.WriteLine($"[NAV] Distance to waypoint {checkIndex}: dx={distanceX}, dy={distanceY}, total={totalDistance}");
-
-            // Check if this waypoint is reachable
-            if (distanceX <= MAX_DISTANCE && distanceY <= MAX_DISTANCE)
-            {
-                // This waypoint is reachable, add it to our list
-                reachableWaypoints.Add((check, checkIndex, totalDistance));
-                Console.WriteLine($"[NAV] Reachable waypoint added: {checkIndex} at distance {totalDistance}");
-            }
-            else
-            {
-                // We've reached a waypoint that's too far, so we should stop
-                Console.WriteLine($"[NAV] Waypoint {checkIndex} too far (dx={distanceX}, dy={distanceY}), stopping search");
-
-                // If we found reachable waypoints, break and process them
-                if (reachableWaypoints.Count > 0)
-                {
-                    Console.WriteLine($"[NAV] Found {reachableWaypoints.Count} reachable waypoints, processing for random selection");
-                    break;
-                }
-                else
-                {
-                    // No reachable waypoint found yet, continue to next iteration
-                    Console.WriteLine($"[NAV] No reachable waypoint found yet, continuing search...");
-                    continue;
-                }
-            }
-        }
-
-        // Process reachable waypoints for random selection
-        Coordinate selectedWaypoint = null;
-        int selectedIndex = -1;
-        int selectedDistance = 0;
-
-        if (reachableWaypoints.Count > 0)
-        {
-            // Sort by distance (descending) to get the furthest waypoints first
-            reachableWaypoints.Sort((a, b) => b.distance.CompareTo(a.distance));
-
-            // Get top 3 (or as many as we have)
-            int topCount = Math.Min(3, reachableWaypoints.Count);
-            var topWaypoints = reachableWaypoints.Take(topCount).ToList();
-
-            // Check if ALL top waypoints have the same Z as current position
-            bool allTopSameZ = topWaypoints.All(wp => wp.waypoint.Z == currentZ);
-
-            // Check if the next 10 waypoints also have the same Z
-            bool next10SameZ = true;
-            for (int i = 1; i <= 10 && i < waypoints.Count; i++)
-            {
-                int checkIndex = (currentCoordIndex + i) % waypoints.Count;
-                if (waypoints[checkIndex].Z != currentZ)
-                {
-                    next10SameZ = false;
-                    break;
-                }
-            }
-
-            Console.WriteLine($"[NAV] Z-level checks: All top waypoints same Z={allTopSameZ}, Next 10 same Z={next10SameZ}");
-
-            if (allTopSameZ && next10SameZ)
-            {
-                // Randomly select from the top waypoints
-                Random rand = new Random();
-                int selectedIdx = rand.Next(topCount);
-                var selected = topWaypoints[selectedIdx];
-
-                selectedWaypoint = selected.waypoint;
-                selectedIndex = selected.index;
-                selectedDistance = selected.distance;
-
-                Console.WriteLine($"[NAV] Random selection enabled - Selected waypoint {selectedIndex} from top {topCount} reachable waypoints (distance={selectedDistance})");
-                Console.WriteLine($"[NAV] Available top waypoints were:");
-                for (int i = 0; i < topWaypoints.Count; i++)
-                {
-                    var wp = topWaypoints[i];
-                    Console.WriteLine($"[NAV]   {i}: Index {wp.index}, distance {wp.distance}");
-                }
-            }
-            else
-            {
-                // Take the furthest waypoint (first in sorted list)
-                var selected = topWaypoints[0];
-                selectedWaypoint = selected.waypoint;
-                selectedIndex = selected.index;
-                selectedDistance = selected.distance;
-
-                Console.WriteLine($"[NAV] Z-level criteria not met - Selected furthest waypoint {selectedIndex} (distance={selectedDistance})");
-                if (!allTopSameZ)
-                    Console.WriteLine($"[NAV] Reason: Not all top waypoints have same Z-level");
-                if (!next10SameZ)
-                    Console.WriteLine($"[NAV] Reason: Next 10 waypoints don't all have same Z-level");
-            }
-        }
-
-        // If still no waypoint found, create a directional step
-        if (selectedWaypoint == null)
-        {
-            Console.WriteLine($"[NAV] No reachable waypoint found, calculating direction to next waypoint");
-
-            // Get the next waypoint in sequence
-            int nextIndex = (currentCoordIndex + 1) % waypoints.Count;
-            Coordinate nextWaypoint = waypoints[nextIndex];
-
-            // Calculate direction to the next waypoint
-            int deltaX = nextWaypoint.X - currentX;
-            int deltaY = nextWaypoint.Y - currentY;
-
-            int stepX = 0;
-            int stepY = 0;
-
-            bool canMoveX = deltaX != 0;
-            bool canMoveY = deltaY != 0;
-
-            Random rand = new Random();
-
-            if (canMoveX && canMoveY)
-            {
-                // Randomly choose one axis to step in
-                if (rand.Next(2) == 0)
-                {
-                    stepX = deltaX > 0 ? 1 : -1;
-                }
-                else
-                {
-                    stepY = deltaY > 0 ? 1 : -1;
-                }
-            }
-            else if (canMoveX)
-            {
-                stepX = deltaX > 0 ? 1 : -1;
-            }
-            else if (canMoveY)
-            {
-                stepY = deltaY > 0 ? 1 : -1;
-            }
-
-            // Create coordinate 1 square away in the chosen direction
-            selectedWaypoint = new Coordinate
-            {
-                X = currentX + stepX,
-                Y = currentY + stepY,
-                Z = currentZ
-            };
-
-            selectedIndex = -1;
-            selectedDistance = 1;
-
-            Console.WriteLine($"[NAV] Returning directional step: ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) toward waypoint {nextIndex}");
-        }
-
-        // Remember what we're targeting
-        if (selectedIndex != currentCoordIndex)
-        {
-            lastTargetedIndex = selectedIndex;
-            lastTargetedWaypoint = selectedWaypoint;
-            Console.WriteLine($"[NAV] Targeting waypoint {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z})");
-        }
-
-        Console.WriteLine($"[NAV] Selected reachable waypoint: {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) distance={selectedDistance}");
-        return selectedWaypoint;
-    }
-    // Handle floor changes
-    int retries = 0;
-    static NavigationAction HandleZLevelChange(Coordinate target, List<Coordinate> waypoints)
-    {
-        int currentX, currentY, currentZ;
-        lock (memoryLock)
-        {
-            currentX = posX;
-            currentY = posY;
-            currentZ = posZ;
-        }
-        bool isGoingUp = target.Z < currentZ;
-        if (currentX == target.X)
-        {
-            target.Y = target.Y - 1;
-        }
-        Console.WriteLine($"[FLOOR] Need to change floors from Z={currentZ} to Z={target.Z} ({(isGoingUp ? "UP" : "DOWN")})");
-
-        if (isGoingUp)
-        {
-            // Going UP - need to be at exact position and press F4
-            int distanceX = Math.Abs(target.X - currentX);
-            int distanceY = Math.Abs(target.Y - currentY);
-
-            Console.WriteLine($"[FLOOR] Going UP - distance to F4 position: dx={distanceX}, dy={distanceY}");
-
-            if (distanceX == 0 && distanceY == 0)
-            {
-                // We're at the F4 position
-                Console.WriteLine($"[FLOOR] At F4 position - will press F4");
-                return new NavigationAction
-                {
-                    Type = ActionType.UseF4,
-                    TargetX = target.X,
-                    TargetY = target.Y,
-                    FromZ = currentZ,
-                    ToZ = target.Z,
-                    WaypointIndex = FindWaypointIndex(waypoints, target)
-                };
-            }
-            else
-            {
-                // Move to F4 position
-                Console.WriteLine($"[FLOOR] Moving to F4 position at ({target.X},{target.Y})");
-                return new NavigationAction
-                {
-                    Type = ActionType.ClickWaypoint,
-                    TargetX = target.X,
-                    TargetY = target.Y,
-                    FromZ = currentZ,
-                    ToZ = target.Z,
-                    WaypointIndex = currentCoordIndex
-                };
-            }
-        }
-        else
-        {
-            Console.WriteLine($"[FLOOR] Going DOWN - will click hole at ({target.X},{target.Y})");
-            return new NavigationAction
-            {
-                Type = ActionType.ClickWaypoint,
-                TargetX = target.X,
-                TargetY = target.Y,
-                FromZ = currentZ,
-                ToZ = target.Z,
-                WaypointIndex = FindWaypointIndex(waypoints, target)
-            };
-        }
-    }
-
-    // Handle F4 transitions
-    static void HandleF4Transition(int targetX, int targetY, int fromZ, int toZ)
-    {
-        Console.WriteLine($"[F4] Pressing F4 to go from Z={fromZ} to Z={toZ}");
-
-        SendKeyPress(VK_F4);
-
-        // Wait for Z change
-        DateTime startTime = DateTime.Now;
-        while ((DateTime.Now - startTime).TotalMilliseconds < 2000)
-        {
-            Sleep(100);
-            lock (memoryLock)
-            {
-                if (posZ == toZ)
-                {
-                    Console.WriteLine($"[F4] Successfully changed to Z={toZ}");
-                    return;
-                }
-            }
-        }
-
-        Console.WriteLine($"[F4] Warning: Z change may have failed or taken longer than expected");
-    }
-
-    static bool ClickWaypoint(int targetX, int targetY)
-    {
-        try
-        {
-            SendKeyPress(VK_ESCAPE);
-            UpdateUIPositions();
-
-            // Get window dimensions
-            GetClientRect(targetWindow, out RECT rect);
-
-            // Calculate center coordinates
-            int centerX = (rect.Right - rect.Left) / 2 - 186;
-            int centerY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
-            
-            // Initial lParam calculation (this gets overwritten)
-            int lParam = (centerX << 16) | (centerY & 0xFFFF);
-           
-
-            // Record center waypoint
-            RecordWaypointClick(centerX, centerY);
-
-
-            // Get current position
-            int currentX, currentY;
-            lock (memoryLock)
-            {
-                currentX = posX;
-                currentY = posY;
-            }
-        
-
-            // Calculate differences
-            int diffX = targetX - currentX;
-            int diffY = targetY - currentY;
-          
-
-            // Calculate screen coordinates
-            int screenX = centerX + (diffX * pixelSize);
-            int screenY = centerY + (diffY * pixelSize);
-         
-            // Create the lParam for the screen coordinates
-            lParam = (screenY << 16) | (screenX & 0xFFFF);
-          
-            SendMessage(targetWindow, WM_MOUSEMOVE, IntPtr.Zero, lParam);
-            Sleep(1);
-
-            // Send the click
-          
-            SendMessage(targetWindow, WM_LBUTTONDOWN, 1, lParam);
-            Sleep(1);
-
-         
-            SendMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, lParam);
-
-            // Record the click
-            RecordWaypointClick(screenX, screenY);
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[CLICK] Error: {ex.Message}");
-            Console.WriteLine($"[CLICK] Stack trace: {ex.StackTrace}");
-            return false;
-        }
-    }
-
-    // Wait for movement completion
-    static void WaitForMovementCompletion(int targetX, int targetY)
-    {
-        DateTime startTime = DateTime.Now;
-        const int TIMEOUT_MS = 5000;
-
-        // Movement tracking variables
-        int lastPosX = -1;
-        int lastPosY = -1;
-        int noMovementCount = 0;
-        const int MAX_NO_MOVEMENT_COUNT = 1;
-
-        while ((DateTime.Now - startTime).TotalMilliseconds < TIMEOUT_MS)
-        {
-            Sleep(500);
-            SendKeyPress(VK_F6);
-
-            lock (memoryLock)
-            {
-                // Check if monster appeared
-                if (targetId != 0)
-                {
-                    return;
-                }
-
-                // Check if character moved
-                if (lastPosX != -1 && lastPosY != -1)
-                {
-                    if (posX == lastPosX && posY == lastPosY)
-                    {
-                        noMovementCount++;
-                        Console.WriteLine($"[MOVE] No movement detected. Count: {noMovementCount}/{MAX_NO_MOVEMENT_COUNT}");
-
-                        if (noMovementCount >= MAX_NO_MOVEMENT_COUNT)
-                        {
-                            Console.WriteLine($"[MOVE] Character hasn't moved for {noMovementCount} checks. Returning early.");
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        noMovementCount = 0; // Reset counter if character moved
-                        Console.WriteLine($"[MOVE] Character moved from ({lastPosX},{lastPosY}) to ({posX},{posY})");
-                    }
-                }
-
-                // Update last known position
-                lastPosX = posX;
-                lastPosY = posY;
-
-                // Check if we've reached the target
-                int distanceX = Math.Abs(targetX - posX);
-                int distanceY = Math.Abs(targetY - posY);
-                if (distanceX <= 1 && distanceY <= 1)
-                {
-                    Console.WriteLine($"[MOVE] Reached target position ({targetX},{targetY})");
-                    Thread.Sleep(400);
-                    return;
-                }
-            }
-        }
-
-        Console.WriteLine($"[MOVE] Timeout reached after {TIMEOUT_MS}ms");
-    }
-
-    // Helper function to find waypoint index
-    static int FindWaypointIndex(List<Coordinate> waypoints, Coordinate target)
-    {
-        for (int i = 0; i < waypoints.Count; i++)
-        {
-            if (waypoints[i].X == target.X && waypoints[i].Y == target.Y && waypoints[i].Z == target.Z)
-                return i;
-        }
-        return currentCoordIndex;
-    }
-
-    // Navigation action types
-    public enum ActionType
-    {
-        UseKeyboard,    // Walk with arrow keys
-        ClickWaypoint,  // Click on game screen
-        UseF4,          // Press F4 for stairs
-        WaitAtPosition,
-        WaitForTarget
-    }
-
-    // Navigation action structure
-    public class NavigationAction
-    {
-        public ActionType Type { get; set; }
-        public int TargetX { get; set; }
-        public int TargetY { get; set; }
-        public int FromZ { get; set; }
-        public int ToZ { get; set; }
-        public int WaypointIndex { get; set; }
-    }
-    static bool strictZCoordinateMode = true;
-
-    static int globalLastIndex = -1; // Global state for waypoint progression
-    static Coordinate globalLastPosition = null; // Last player position
-    static DateTime lastPositionUpdate = DateTime.MinValue;
-    static int maxBacktrackDistance = 15; // Max allowed backtrack distance
-
-    // Modified FindClosestWaypointIndex with state preservation
-    static int FindClosestWaypointIndex(
-    List<Coordinate> waypoints,
-    int currentX,
-    int currentY,
-    int currentZ
-)
-    {
-        if (waypoints == null || waypoints.Count == 0)
-        {
-            return 0;
-        }
-
-        // Update global last position if we've moved
-        bool positionChanged = false;
-        if (globalLastPosition == null ||
-            globalLastPosition.X != currentX ||
-            globalLastPosition.Y != currentY ||
-            globalLastPosition.Z != currentZ)
-        {
-            positionChanged = true;
-            globalLastPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
-            lastPositionUpdate = DateTime.Now;
-        }
-
-        // If we have a valid global last index and haven't moved much, prefer forward progression
-        if (globalLastIndex >= 0 && globalLastIndex < waypoints.Count)
-        {
-            var lastWaypoint = waypoints[globalLastIndex];
-            int distanceToLast = Math.Abs(lastWaypoint.X - currentX) + Math.Abs(lastWaypoint.Y - currentY);
-
-            // If we're still close to our last waypoint and on the same Z level, don't backtrack
-            if (distanceToLast <= 3 && lastWaypoint.Z == currentZ)
-            {
-                Console.WriteLine($"[WAYPOINT] Still close to last waypoint {globalLastIndex}, maintaining progression");
-                return globalLastIndex;
-            }
-        }
-
-        // Find closest waypoint with progression awareness
-        int closestIndex = -1;
-        int minDistance = int.MaxValue;
-
-        // Calculate search range around current global last index
-        int searchStart = Math.Max(0, globalLastIndex - maxBacktrackDistance);
-        int searchEnd = Math.Min(waypoints.Count - 1, globalLastIndex + maxBacktrackDistance);
-
-        // If no global last index set, search everything
-        if (globalLastIndex < 0)
-        {
-            searchStart = 0;
-            searchEnd = waypoints.Count - 1;
-        }
-
-        Console.WriteLine($"[WAYPOINT] Searching waypoints from {searchStart} to {searchEnd} (current global: {globalLastIndex})");
-
-        // First pass: Look for waypoints on the same Z-level within the search range
-        for (int i = searchStart; i <= searchEnd; i++)
-        {
-            var waypoint = waypoints[i];
-
-            if (waypoint.Z != currentZ)
-            {
-                continue;
-            }
-
-            int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-
-            // Prefer forward progression if distances are similar
-            if (globalLastIndex >= 0 && i > globalLastIndex && distance <= minDistance + 2)
-            {
-                minDistance = distance;
-                closestIndex = i;
-                Console.WriteLine($"[WAYPOINT] Preferring forward waypoint {i} (distance {distance})");
-            }
-            else if (distance < minDistance)
-            {
-                minDistance = distance;
-                closestIndex = i;
-            }
-        }
-
-        // Second pass: If no suitable waypoint found on same Z-level, expand search
-        if (closestIndex == -1)
-        {
-            Console.WriteLine($"[WAYPOINT] No waypoint found on Z-level {currentZ}, expanding search");
-
-            for (int i = searchStart; i <= searchEnd; i++)
-            {
-                var waypoint = waypoints[i];
-                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-
-                if (distance < minDistance)
-                {
-                    minDistance = distance;
-                    closestIndex = i;
-                }
-            }
-        }
-
-        // Third pass: If still nothing found, fall back to full search
-        if (closestIndex == -1)
-        {
-            Console.WriteLine($"[WARNING] No waypoint found in range, doing full search");
-
-            for (int i = 0; i < waypoints.Count; i++)
-            {
-                var waypoint = waypoints[i];
-
-                if (waypoint.Z != currentZ)
-                {
-                    continue;
-                }
-
-                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-                if (distance < minDistance)
-                {
-                    minDistance = distance;
-                    closestIndex = i;
-                }
-            }
-        }
-
-        // Final fallback
-        if (closestIndex == -1)
-        {
-            Console.WriteLine("[WARNING] No waypoints found at all, returning index 0");
-            closestIndex = 0;
-        }
-
-        // Update global state if we found a valid waypoint
-        if (closestIndex >= 0)
-        {
-            // Only update global last index if we're moving forward or within reasonable backtrack distance
-            if (globalLastIndex < 0 ||
-                closestIndex > globalLastIndex ||
-                Math.Abs(closestIndex - globalLastIndex) <= maxBacktrackDistance)
-            {
-                Console.WriteLine($"[WAYPOINT] Updating global last index from {globalLastIndex} to {closestIndex}");
-                globalLastIndex = closestIndex;
-            }
-            else
-            {
-                Console.WriteLine($"[WAYPOINT] Not updating global index - would backtrack too far ({Math.Abs(closestIndex - globalLastIndex)} > {maxBacktrackDistance})");
-            }
-        }
-
-        Console.WriteLine($"[WAYPOINT] Selected index {closestIndex} at ({waypoints[closestIndex].X}, {waypoints[closestIndex].Y}, {waypoints[closestIndex].Z}) distance {minDistance}");
-        return closestIndex;
-    }
-
-    // Alternative version with optional strict Z filtering
-    static int FindClosestWaypointIndex(
-        List<Coordinate> waypoints,
-        int currentX,
-        int currentY,
-        int currentZ,
-        bool strictZFilter = true
-    )
-    {
-        if (waypoints == null || waypoints.Count == 0)
-        {
-            return 0;
-        }
-
-        int closestIndex = -1;
-        int minDistance = int.MaxValue;
-
-        for (int i = 0; i < waypoints.Count; i++)
-        {
-            var waypoint = waypoints[i];
-
-            // Apply Z-filter if strict mode is enabled
-            if (strictZFilter && waypoint.Z != currentZ)
-            {
-                continue;
-            }
-
-            int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-            if (distance < minDistance)
-            {
-                minDistance = distance;
-                closestIndex = i;
-            }
-        }
-
-        // If no waypoint found with strict Z filtering, try without it
-        if (closestIndex == -1 && strictZFilter)
-        {
-            Console.WriteLine($"[WARNING] No waypoint found on Z-level {currentZ}, trying without Z filter");
-            return FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ, false);
-        }
-
-        // If still no waypoint found, return 0 as last resort
-        if (closestIndex == -1)
-        {
-            Console.WriteLine("[WARNING] No waypoints found at all, returning index 0");
-            closestIndex = 0;
-        }
-
-        return closestIndex;
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    static bool waypointRandomizationEnabled = false;
-    static int randomizationRange = 1;
-    static bool smallWindow = true;
-    static bool previousSmallWindowValue = true;
-    static int pixelSize;
-    static int baseYOffset;
-    static int inventoryX;
-    static int inventoryY;
-    static int equipmentX;
-    static int equipmentY;
-    static int firstSlotBpX;
-    static int firstSlotBpY;
-    static int secondSlotBpX;
-    static int secondSLotBpY;
-    static int closeCorpseX;
-    static int closeCorpseY;
-    static int squareSizeBP;
-    static (int, int)[] normalCoordinates;
-    static (int, int)[] smallCoordinates;
-    static (int, int)[] GetCorspeFoodCoordinates()
-    {
-        return smallWindow ? smallCoordinates : normalCoordinates;
-    }
-    static void UpdateUIPositions()
-    {
-        
-        GetClientRect(targetWindow, out RECT windowRect);
-        int windowHeight = windowRect.Bottom - windowRect.Top;
-        smallWindow = windowHeight < 1200;
-
-        squareSizeBP = smallWindow ? 40 : 45;
-        bool valueChanged = (previousSmallWindowValue != smallWindow);
-        previousSmallWindowValue = smallWindow;
-        pixelSize = smallWindow ? 39 : 58;
-        baseYOffset = smallWindow ? 225 : 300;
-        inventoryX = smallWindow ? 620 : 940;
-        inventoryY = 65;
-        equipmentX = smallWindow ? 800 : 1115;
-        equipmentY = 150;
-        secondSlotBpX = smallWindow ? 840 : 1165;
-        secondSLotBpY = 250;
-
-        
-        firstSlotBpX = smallWindow ? 840 - squareSizeBP : 1165 - squareSizeBP;
-        firstSlotBpY = 250;
-        closeCorpseX = smallWindow ? 944 : 1262;
-        closeCorpseY = smallWindow ? 320 : 400;
-
-        smallCoordinates = new (int, int)[]
-        {
-            (800, 460),
-            (800+pixelSize, 460),
-            (800+2*pixelSize, 460),
-            (800+3*pixelSize, 460),
-            (800, 500),
-            (800+pixelSize, 500),
-            (800+2*pixelSize, 500),
-            (800+3*pixelSize, 500)
-        };
-
-        normalCoordinates = new (int, int)[]
-        {
-            (1126, 325),
-            (1165, 325),
-            (1203, 325),
-            (1236, 325),
-            (1126, 340),
-            (1165, 340),
-            (1203, 340),
-            (1236, 340)
-        };
-
-        if (threadFlags["spawnwatch"] && SPAWNWATCHER.IsActive())
-        {
-            SPAWNWATCHER.UpdateScanArea(targetWindow, squareSizeBP);
-        }
-    }
-    const byte VK_ESCAPE = 0x1B;
-    const int VK_F6 = 0x75;
-    const int WM_LBUTTONDOWN = 0x0201;
-    const int WM_LBUTTONUP = 0x0202;
-    [StructLayout(LayoutKind.Sequential)]
-    struct INPUT
-    {
-        public uint type;
-        public InputUnion u;
-    }
-    [StructLayout(LayoutKind.Explicit)]
-    struct InputUnion
-    {
-        [FieldOffset(0)]
-        public MOUSEINPUT mi;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    struct MOUSEINPUT
-    {
-        public int dx;
-        public int dy;
-        public uint mouseData;
-        public uint dwFlags;
-        public uint time;
-        public IntPtr dwExtraInfo;
-    }
-    const int INPUT_MOUSE = 0;
-    const uint MOUSEEVENTF_MOVE = 0x0001;
-    const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
-    const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
-    const uint MOUSEEVENTF_LEFTUP = 0x0004;
-    [DllImport("user32.dll")]
-    static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
-    [DllImport("user32.dll")]
-    static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
-    [DllImport("user32.dll")]
-    static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-    [StructLayout(LayoutKind.Sequential)]
-    struct RECT
-    {
-        public int Left,
-            Top,
-            Right,
-            Bottom;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    struct POINT
-    {
-        public int X;
-        public int Y;
-    }
-    [DllImport("user32.dll")]
-    static extern int GetSystemMetrics(int nIndex);
-    [DllImport("user32.dll")]
-    static extern bool SetCursorPos(int X, int Y);
-    static void CloseCorpse(IntPtr hWnd)
-    {
-        (int x, int y)[] locations = new (int, int)[] { (closeCorpseX, closeCorpseY) };
-        GetClientRect(hWnd, out RECT rect);
-        foreach (var location in locations)
-        {
-            int x = location.x;
-            int y = location.y;
-            POINT screenPoint = new POINT { X = x, Y = y };
-            ClientToScreen(hWnd, ref screenPoint);
-            Sleep(1);
-            VirtualLeftClick(hWnd, x, y);
-            Sleep(1);
-        }
-    }
-    static int maxItemsToEat = 4;
-    static void CorpseEatFood(IntPtr hWnd)
-    {
-        UpdateUIPositions();
-        (int x, int y)[] locations = GetCorspeFoodCoordinates();
-        GetClientRect(hWnd, out RECT rect);
-        if (rect.Right < 1237 || rect.Bottom < 319)
-        {
-            int itemsToProcess = Math.Min(maxItemsToEat, locations.Length);
-            for (int i = 0; i < itemsToProcess; i++)
-            {
-                int x = locations[i].x;
-                int y = locations[i].y;
-                POINT screenPoint = new POINT { X = x, Y = y };
-                ClientToScreen(hWnd, ref screenPoint);
-                Sleep(1);
-                VirtualRightClick(hWnd, x, y);
-                Sleep(50);
-            }
-        }
-    }
-    static void ClickSecondSlotInBackpack(IntPtr hWnd)
-    {
-        return;
-        (int x, int y)[] locations = new (int, int)[] { (secondSlotBpX, secondSLotBpY) };
-        GetClientRect(hWnd, out RECT rect);
-        foreach (var location in locations)
-        {
-            int x = location.x;
-            int y = location.y;
-            POINT screenPoint = new POINT { X = x, Y = y };
-            ClientToScreen(hWnd, ref screenPoint);
-            Sleep(1);
-            VirtualRightClick(hWnd, x, y);
-            Sleep(1);
-        }
-    }
-    const int MK_LBUTTON = 0x0001;
-    static IntPtr MakeLParam(int x, int y)
-    {
-        return (y << 16) | (x & 0xFFFF);
-    }
-    static void ShuffleArray((int dx, int dy)[] array, Random random)
-    {
-        int n = array.Length;
-        for (int i = n - 1; i > 0; i--)
-        {
-            int j = random.Next(0, i + 1);
-            (array[i], array[j]) = (array[j], array[i]);
-        }
-    }
-    static bool isClickAroundInProgress = false;
-    static DateTime lastClickAroundCompleted = DateTime.MinValue;
-    static int lastClickAroundTargetId = 0;
-    static bool ClickAroundCharacter(IntPtr hWnd)
-    {
-        try
-        {
-            isClickAroundInProgress = true;
-            int currentX, currentY, currentZ;
-            int monsterX = 0, monsterY = 0, monsterZ = 0;
-            lock (memoryLock)
-            {
-                currentX = posX;
-                currentY = posY;
-                currentZ = posZ;
-                monsterX = lastKnownMonsterX;
-                monsterY = lastKnownMonsterY;
-                monsterZ = lastKnownMonsterZ;
-            }
-            GetClientRect(hWnd, out RECT rect);
-            int screenCenterX = (rect.Right - rect.Left) / 2 - 186;
-            int screenCenterY = (rect.Bottom - rect.Top) / 2 - baseYOffset;
-            (int dx, int dy)[] clickPattern = new[]
-            {
-            (0, 0),
-            (0, -1),
-            (1, -1),
-            (1, 0),
-            (1, 1),
-            (0, 1),
-            (-1, 1),
-            (-1, 0),
-            (-1, -1)
-        };
-            (int dx, int dy) monsterRelativePos = (0, 0);
-            if (monsterX != 0 || monsterY != 0)
-            {
-                int relX = monsterX - currentX;
-                int relY = monsterY - currentY;
-                if (relX != 0 || relY != 0)
-                {
-                    monsterRelativePos = (
-                        Math.Max(-1, Math.Min(1, relX)),
-                        Math.Max(-1, Math.Min(1, relY))
-                    );
-                }
-            }
-            List<(int dx, int dy)> orderedClickPattern = new List<(int dx, int dy)>();
-            if (monsterRelativePos.dx != 0 || monsterRelativePos.dy != 0)
-            {
-                orderedClickPattern.Add(monsterRelativePos);
-            }
-            foreach (var pos in clickPattern)
-            {
-                if (pos != monsterRelativePos)
-                {
-                    orderedClickPattern.Add(pos);
-                }
-            }
-            for (int i = 0; i < orderedClickPattern.Count; i++)
-            {
-            }
-            Sleep(1);
-            foreach (var direction in orderedClickPattern)
-            {
-                int dx = direction.dx;
-                int dy = direction.dy;
-                int clickX = screenCenterX + (dx * pixelSize);
-                int clickY = screenCenterY + (dy * pixelSize);
-                Sleep(1);
-                VirtualRightClick(targetWindow, clickX, clickY);
-                Sleep(1);
-                int currentTargetId;
-                lock (memoryLock)
-                {
-                    currentTargetId = targetId;
-                }
-                if (currentTargetId != 0)
-                {
-                    lastClickAroundTargetId = currentTargetId;
-                    lastClickAroundCompleted = DateTime.Now;
-                    isClickAroundInProgress = false;
-                    return true;
-                }
-            }
-            CorpseEatFood(targetWindow);
-            Sleep(1);
-            ClickSecondSlotInBackpack(hWnd);
-            Sleep(1);
-            if (typeof(Program).GetMethod("PlayClickCompletedSound") != null)
-            {
-                PlayClickCompletedSound();
-            }
-            lastClickAroundCompleted = DateTime.Now;
-            isClickAroundInProgress = false;
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[ERROR] Error in ClickAroundCharacter: {ex.Message}");
-            isClickAroundInProgress = false;
-            return false;
-        }
-    }
-    const int WM_MOUSEMOVE = 0x0200;
-    const int WM_RBUTTONDOWN = 0x0204;
-    const int WM_RBUTTONUP = 0x0205;
-    const uint VK_LCONTROL = 0xA2;
-    const uint VK_LMENU = 0xA4;
-    const uint KEYEVENTF_KEYUP = 0x0002;
-    [DllImport("user32.dll")]
-    static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, uint dwExtraInfo);
-    static void VirtualLeftClick(IntPtr hWnd, int x, int y)
-    {
-        int lParam = (y << 16) | (x & 0xFFFF);
-        SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lParam);
-        Sleep(1);
-        SendMessage(hWnd, WM_LBUTTONDOWN, 1, lParam);
-        Sleep(1);
-        SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lParam);
-        Sleep(1);
-        RecordClickPosition(x, y, true);
-    }
-    static void VirtualRightClick(IntPtr hWnd, int x, int y)
-    {
-        int lParam = (y << 16) | (x & 0xFFFF);
-        SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lParam);
-        SendMessage(hWnd, WM_RBUTTONDOWN, 1, lParam);
-        SendMessage(hWnd, WM_RBUTTONUP, IntPtr.Zero, lParam);
-        //RecordClickPosition(x, y, false);
-    }
-    static int GetTargetId()
-    {
-        lock (memoryLock)
-        {
-            return targetId;
-        }
-    }
-    static (int monsterX, int monsterY, int monsterZ) GetTargetMonsterCoordinates()
-    {
-        int targetId = 0;
-        int monsterX = 0,
-            monsterY = 0,
-            monsterZ = 0;
-        lock (memoryLock)
-        {
-            targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
-            if (targetId != 0)
-            {
-                IntPtr monsterInstancePtr = IntPtr.Zero;
-                byte[] buffer = new byte[4];
-                if (
-                    ReadProcessMemory(
-                        processHandle,
-                        IntPtr.Add(moduleBase, (int)targetIdOffset),
-                        buffer,
-                        buffer.Length,
-                        out _
-                    )
-                )
-                {
-                    monsterInstancePtr = BitConverter.ToInt32(buffer, 0);
-                    if (
-                        ReadProcessMemory(
-                            processHandle,
-                            IntPtr.Add(monsterInstancePtr, 0x000C),
-                            buffer,
-                            buffer.Length,
-                            out _
-                        )
-                    )
-                    {
-                        monsterX = BitConverter.ToInt32(buffer, 0);
-                    }
-                    if (
-                        ReadProcessMemory(
-                            processHandle,
-                            IntPtr.Add(monsterInstancePtr, 0x0010),
-                            buffer,
-                            buffer.Length,
-                            out _
-                        )
-                    )
-                    {
-                        monsterY = BitConverter.ToInt32(buffer, 0);
-                    }
-                    if (
-                        ReadProcessMemory(
-                            processHandle,
-                            IntPtr.Add(monsterInstancePtr, 0x0014),
-                            buffer,
-                            buffer.Length,
-                            out _
-                        )
-                    )
-                    {
-                        monsterZ = BitConverter.ToInt32(buffer, 0);
-                    }
-                }
-            }
-            if (monsterX != 0) lastKnownMonsterX = monsterX;
-            if (monsterY != 0) lastKnownMonsterY = monsterY;
-            if (monsterZ != 0) lastKnownMonsterZ = monsterZ;
-        }
-        return (monsterX, monsterY, monsterZ);
-    }
-    static string ReadStringFromMemory(IntPtr handle, IntPtr address, int maxLength = 128)
-    {
-        try
-        {
-            byte[] buffer = new byte[maxLength];
-            int bytesRead;
-            if (!ReadProcessMemory(handle, address, buffer, buffer.Length, out bytesRead))
-            {
-                return string.Empty;
-            }
-            int nullTerminatorPos = 0;
-            while (nullTerminatorPos < buffer.Length && buffer[nullTerminatorPos] != 0)
-            {
-                nullTerminatorPos++;
-            }
-            if (nullTerminatorPos > 0)
-            {
-                return Encoding.ASCII.GetString(buffer, 0, nullTerminatorPos);
-            }
-            return string.Empty;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error reading string from memory: {ex.Message}");
-            return string.Empty;
-        }
-    }
-    static List<string> blacklistedMonsterNames = new List<string> { "Rat", "Rabbit", "Snake" };
-    static List<string> whitelistedMonsterNames = new List<string> {
-        "Tarantula",
-        "Poison Spider",
-        "Frost Giant",
-        "Frost Giantess",
-        "Amazon",
-        "Valkryie",
-        "Dwarf Guard"
-    };
-    static (int monsterX, int monsterY, int monsterZ, string monsterName) GetTargetMonsterInfo()
-    {
-        int targetId = 0;
-        int monsterX = 0,
-            monsterY = 0,
-            monsterZ = 0;
-        string monsterName = "";
-        lock (memoryLock)
-        {
-            targetId = ReadInt32(processHandle, moduleBase, targetIdOffset);
-            if (targetId != 0)
-            {
-                IntPtr monsterInstancePtr = IntPtr.Zero;
-                byte[] buffer = new byte[4];
-                if (
-                    ReadProcessMemory(
-                        processHandle,
-                        IntPtr.Add(moduleBase, (int)targetIdOffset),
-                        buffer,
-                        buffer.Length,
-                        out _
-                    )
-                )
-                {
-                    monsterInstancePtr = BitConverter.ToInt32(buffer, 0);
-                    if (
-                        ReadProcessMemory(
-                            processHandle,
-                            IntPtr.Add(monsterInstancePtr, 0x000C),
-                            buffer,
-                            buffer.Length,
-                            out _
-                        )
-                    )
-                    {
-                        monsterX = BitConverter.ToInt32(buffer, 0);
-                    }
-                    if (
-                        ReadProcessMemory(
-                            processHandle,
-                            IntPtr.Add(monsterInstancePtr, 0x0010),
-                            buffer,
-                            buffer.Length,
-                            out _
-                        )
-                    )
-                    {
-                        monsterY = BitConverter.ToInt32(buffer, 0);
-                    }
-                    if (
-                        ReadProcessMemory(
-                            processHandle,
-                            IntPtr.Add(monsterInstancePtr, 0x0014),
-                            buffer,
-                            buffer.Length,
-                            out _
-                        )
-                    )
-                    {
-                        monsterZ = BitConverter.ToInt32(buffer, 0);
-                    }
-                    monsterName = ReadStringFromMemory(
-                        processHandle,
-                        IntPtr.Add(monsterInstancePtr, 0x0030)
-                    );
-                    if (targetId == 0)
-                    {
-                        monsterName = "";
-                    }
-                }
-            }
-            if (monsterX != 0) lastKnownMonsterX = monsterX;
-            if (monsterY != 0) lastKnownMonsterY = monsterY;
-            if (monsterZ != 0) lastKnownMonsterZ = monsterZ;
-        }
-        if (!string.IsNullOrEmpty(monsterName) && monsterName != "" && !whitelistedMonsterNames.Contains(monsterName))
-        {
-            threadFlags["recording"] = false;
-            threadFlags["playing"] = false;
-            threadFlags["autopot"] = false;
-            memoryReadActive = false;
-            PlayEmergencyAlert(60);
-            Environment.Exit(1);
-        }
-        return (monsterX, monsterY, monsterZ, monsterName);
-    }
-    static void PlayEmergencyAlert(int durationSeconds)
-    {
-        Thread alertThread = new Thread(() =>
-        {
-            DateTime endTime = DateTime.Now.AddSeconds(durationSeconds);
-            try
-            {
-                while (DateTime.Now < endTime)
-                {
-                    Beep(2000, 300);
-                    Thread.Sleep(100);
-                    Beep(1800, 300);
-                    Thread.Sleep(100);
-                    Beep(2000, 300);
-                    Thread.Sleep(500);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error in emergency alert: {ex.Message}");
-            }
-        });
-        alertThread.IsBackground = false;
-        alertThread.Start();
-        alertThread.Join();
-    }
-    static bool withLifeRing = true;
-    static bool onceLifeRing = true;
-    static int lastRingEquippedTargetId = 0;
-    static bool isRingCurrentlyEquipped = false;
-    static List<string> blacklistedRingMonsters = new List<string> { "Poison Spider", };
-    static readonly int MAX_MONSTER_DISTANCE = 4;
-    static void ToggleRing(IntPtr hWnd, bool equip)
-    {
-        return;
-        ScanRingContainersForMisplacedRings();
-        try
-        {
-            int currentTargetId;
-            int invisiblityCodeVar;
-            Thread.Sleep(256);
-            lock (memoryLock)
-            {
-                currentTargetId = targetId;
-                invisiblityCodeVar = invisibilityCode;
-            }
-            bool isRingEquipped = invisiblityCodeVar == 2;
-            if ((equip && isRingEquipped) || (!equip && !isRingEquipped))
-            {
-                return;
-            }
-            if (equip && isRingEquipped == false && withLifeRing && currentTargetId != 0)
-            {
-                int lifeRingX = inventoryX;
-                int lifeRingY = inventoryY + 3 * pixelSize + 15;
-                IntPtr lifeRingSourceLParam = MakeLParam(equipmentX, equipmentY);
-                SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lifeRingSourceLParam);
-                Sleep(1);
-                SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lifeRingSourceLParam);
-                Sleep(1);
-                IntPtr lifeRingDestLParam = MakeLParam(lifeRingX, lifeRingY);
-                SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lifeRingDestLParam);
-                Sleep(1);
-                SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
-                Sleep(1);
-                Sleep(1);
-            }
-            Sleep(256);
-            if (equip && currentTargetId != 0)
-            {
-                var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
-                if (!string.IsNullOrEmpty(monsterName) && blacklistedRingMonsters.Contains(monsterName))
-                {
-                    return;
-                }
-                int currentX, currentY;
-                lock (memoryLock)
-                {
-                    currentX = posX;
-                    currentY = posY;
-                }
-                int distanceX = Math.Abs(monsterX - currentX);
-                int distanceY = Math.Abs(monsterY - currentY);
-                int totalDistance = distanceX + distanceY;
-                if (totalDistance > MAX_MONSTER_DISTANCE)
-                {
-                    return;
-                }
-            }
-            int sourceX = equip ? inventoryX : equipmentX;
-            int sourceY = equip ? inventoryY : equipmentY;
-            int destX = equip ? equipmentX : inventoryX;
-            int destY = equip ? equipmentY : inventoryY;
-            IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
-            SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
-            Sleep(25);
-            SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
-            Sleep(25);
-            IntPtr destLParam = MakeLParam(destX, destY);
-            SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
-            Sleep(25);
-            SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, destLParam);
-            Sleep(128);
-            onceLifeRing = true;
-            if (!equip && withLifeRing && onceLifeRing && currentTargetId == 0)
-            {
-                onceLifeRing = false;
-                int lifeRingX = inventoryX;
-                int lifeRingY = inventoryY + 3 * pixelSize + 15;
-                double manaPercent = 0;
-                lock (memoryLock)
-                {
-                    manaPercent = (curMana / maxMana) * 100;
-                }
-                if (manaPercent < 90)
-                {
-                    IntPtr lifeRingSourceLParam = MakeLParam(lifeRingX, lifeRingY);
-                    SendMessage(hWnd, WM_MOUSEMOVE, IntPtr.Zero, lifeRingSourceLParam);
-                    Sleep(25);
-                    SendMessage(hWnd, WM_LBUTTONDOWN, IntPtr.Zero, lifeRingSourceLParam);
-                    Sleep(25);
-                    RecordClickPosition(lifeRingX, lifeRingY, true);
-                    IntPtr lifeRingDestLParam = MakeLParam(equipmentX, equipmentY);
-                    SendMessage(hWnd, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), lifeRingDestLParam);
-                    Sleep(25);
-                    SendMessage(hWnd, WM_LBUTTONUP, IntPtr.Zero, lifeRingDestLParam);
-                    Sleep(1);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[DEBUG] Error toggling ring: {ex.Message}");
-        }
-    }
-    static void Sleep(int miliseconds)
-    {
-        Thread.Sleep(miliseconds);
-    }
-    static CancellationTokenSource? positionAlertCts = null;
-    static readonly object soundLock = new object();
-    static DateTime lastPositionAlertTime = DateTime.MinValue;
-    static readonly int POSITION_ALERT_COOLDOWN_SEC = 60;
-    static readonly int MAX_DISTANCE_SQMS = 50;
-    [DllImport("kernel32.dll")]
-    static extern bool Beep(int frequency, int duration);
-    [DllImport("winmm.dll", SetLastError = true, CallingConvention = CallingConvention.Winapi)]
-    static extern bool PlaySound(string pszSound, IntPtr hmod, uint fdwSound);
-    const uint SND_FILENAME = 0x00020000;
-    const uint SND_ASYNC = 0x0001;
-    const uint SND_NODEFAULT = 0x0002;
-    const int CLICK_COMPLETED_FREQ = 800;
-    const int CLICK_COMPLETED_DURATION = 200;
-    const int POSITION_ALERT_FREQ = 1200;
-    const int POSITION_ALERT_DURATION = 500;
-    static void InitializeSounds()
-    {
-        try
-        {
-            string clickCompletedSoundPath = Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory,
-                "click_completed.wav"
-            );
-            string positionAlertSoundPath = Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory,
-                "position_alert.wav"
-            );
-            if (!File.Exists(clickCompletedSoundPath))
-            {
-            }
-            else
-            {
-            }
-            if (!File.Exists(positionAlertSoundPath))
-            {
-            }
-            else
-            {
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error initializing sounds: {ex.Message}");
-        }
-    }
-    static void PlayClickCompletedSound()
-    {
-        try
-        {
-            string clickCompletedSoundPath = Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory,
-                "click_completed.wav"
-            );
-            if (File.Exists(clickCompletedSoundPath))
-            {
-                bool success = PlaySound(clickCompletedSoundPath, IntPtr.Zero, SND_FILENAME | SND_ASYNC);
-                if (success)
-                {
-                    return;
-                }
-            }
-            Beep(CLICK_COMPLETED_FREQ, CLICK_COMPLETED_DURATION);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error playing click completed sound: {ex.Message}");
-            try
-            {
-                Console.Beep(CLICK_COMPLETED_FREQ, CLICK_COMPLETED_DURATION);
+                Debugger($"Process: {process.ProcessName}");
+                Debugger($"  ID: {process.Id}");
+                Debugger($"  Main Window Title: '{process.MainWindowTitle}'");
+                Debugger($"  Window Handle: {process.MainWindowHandle}");
             }
             catch
             {
-                Console.WriteLine("All sound methods failed!");
+                // Some processes might not be accessible
             }
         }
-    }
-    static void StartPositionAlertSound(int maxDurationSeconds = 60)
-    {
-        lock (soundLock)
-        {
-            if (positionAlertCts != null ||
-                (DateTime.Now - lastPositionAlertTime).TotalSeconds < POSITION_ALERT_COOLDOWN_SEC)
-            {
-                return;
-            }
-            lastPositionAlertTime = DateTime.Now;
-            positionAlertCts = new CancellationTokenSource();
-            var token = positionAlertCts.Token;
-            string positionAlertSoundPath = Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory,
-                "position_alert.wav"
-            );
-            bool useWavFile = File.Exists(positionAlertSoundPath);
-            Task.Run(() =>
-            {
-                try
-                {
-                    DateTime startTime = DateTime.Now;
-                    while (!token.IsCancellationRequested &&
-                           (DateTime.Now - startTime).TotalSeconds < maxDurationSeconds)
-                    {
-                        try
-                        {
-                            if (useWavFile)
-                            {
-                                bool success = PlaySound(positionAlertSoundPath, IntPtr.Zero, SND_FILENAME | SND_ASYNC);
-                                if (!success)
-                                {
-                                    Beep(POSITION_ALERT_FREQ, POSITION_ALERT_DURATION);
-                                }
-                            }
-                            else
-                            {
-                                Beep(POSITION_ALERT_FREQ, POSITION_ALERT_DURATION);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Error playing position alert sound: {ex.Message}");
-                            try
-                            {
-                                Console.Beep(POSITION_ALERT_FREQ, POSITION_ALERT_DURATION);
-                            }
-                            catch
-                            {
-                                Console.WriteLine("All sound methods failed!");
-                            }
-                        }
-                        Thread.Sleep(1500);
-                    }
-                }
-                catch (TaskCanceledException)
-                {
-                    Console.WriteLine("[SOUND] Position alert sound cancelled.");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error in position alert sound loop: {ex.Message}");
-                }
-                finally
-                {
-                    lock (soundLock)
-                    {
-                        positionAlertCts = null;
-                    }
-                }
-            }, token);
-        }
-    }
-    static void StopPositionAlertSound()
-    {
-        lock (soundLock)
-        {
-            if (positionAlertCts != null)
-            {
-                positionAlertCts.Cancel();
-                positionAlertCts = null;
-            }
-        }
-    }
-    static void CheckPositionDistance(List<Coordinate> waypoints)
-    {
-        if (waypoints == null || waypoints.Count == 0)
-        {
-            return;
-        }
-        int currentX, currentY, currentZ;
-        lock (memoryLock)
-        {
-            currentX = posX;
-            currentY = posY;
-            currentZ = posZ;
-        }
-        int minDistance = int.MaxValue;
-        foreach (var waypoint in waypoints)
-        {
-            int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-            if (distance < minDistance)
-            {
-                minDistance = distance;
-            }
-        }
-        if (minDistance > MAX_DISTANCE_SQMS)
-        {
-            StartPositionAlertSound();
-        }
-        else
-        {
-        }
-    }
-    
-    static class SPAWNWATCHER
-    {
-        private static string imageFolderPath = "images";
-        private static bool watcherActive = false;
-        private static Thread? watcherThread = null;
-        private static object watcherLock = new object();
-        private static double matchThreshold = 0.84;
-        private static bool verboseDebug = false;
-        private static long scanCount = 0;
-        private static long totalScanTime = 0;
-        private static DateTime lastDebugOutput = DateTime.MinValue;
-        private static readonly TimeSpan debugOutputInterval = TimeSpan.FromSeconds(3);
-        private static int scanCenterX = 0;
-        private static int scanCenterY = 0;
-        private static int scanWidth = 0;
-        private static int scanHeight = 0;
-        private static bool colorDetectionEnabled = true;
-        private static DateTime lastColorAlarmTime = DateTime.MinValue;
-        private static readonly TimeSpan colorAlarmCooldown = TimeSpan.FromSeconds(60);
-        private static DateTime lastMatchTime = DateTime.MinValue;
-        private static readonly TimeSpan matchCooldown = TimeSpan.FromSeconds(30);
-        private static MCvScalar redLowerBound1 = new MCvScalar(0, 100, 100, 0);
-        private static MCvScalar redUpperBound1 = new MCvScalar(10, 255, 255, 0);
-        private static MCvScalar redLowerBound2 = new MCvScalar(160, 100, 100, 0);
-        private static MCvScalar redUpperBound2 = new MCvScalar(180, 255, 255, 0);
-        private static MCvScalar yellowLowerBound = new MCvScalar(20, 100, 100, 0);
-        private static MCvScalar yellowUpperBound = new MCvScalar(40, 255, 255, 0);
-        private static MCvScalar blueLowerBound = new MCvScalar(100, 100, 100, 0);
-        private static MCvScalar blueUpperBound = new MCvScalar(130, 255, 255, 0);
-        private class TemplateInfo
-        {
-            public required string FilePath { get; set; }
-            public required Mat Template { get; set; }
-            public string Name => Path.GetFileNameWithoutExtension(FilePath);
-            public int Width => Template?.Width ?? 0;
-            public int Height => Template?.Height ?? 0;
-            public int Priority { get; set; } = 0;
-        }
-        private static List<TemplateInfo> templates = new List<TemplateInfo>();
-        public static bool IsActive()
-        {
-            lock (watcherLock)
-            {
-                return watcherActive;
-            }
-        }
-        public static string GetStats()
-        {
-            lock (watcherLock)
-            {
-                if (!watcherActive || scanCount == 0)
-                    return "No stats available";
-                double avgScanTimeMs = (double)totalScanTime / scanCount;
-                double scansPerSecond = scanCount > 0 ? 1000.0 / avgScanTimeMs : 0;
-                return $"Scans: {scanCount}, Avg time: {avgScanTimeMs:F2}ms, Rate: {scansPerSecond:F1}/sec";
-            }
-        }
-        public static void Start(IntPtr gameWindow, int pixelSize)
-        {
-            lock (watcherLock)
-            {
-                if (watcherActive)
-                {
-                    return;
-                }
-                if (!Directory.Exists(imageFolderPath))
-                {
-                    Directory.CreateDirectory(imageFolderPath);
-                }
-                GetClientRect(gameWindow, out RECT rect);
-                scanCenterX = (rect.Right - rect.Left) / 2 - 186;
-                scanCenterY = (rect.Bottom - rect.Top) / 2 - 260;
-                scanWidth = pixelSize * 10;
-                scanHeight = pixelSize * 10;
-                LoadTemplates();
-                if (templates.Count == 0)
-                {
-                }
-                else
-                {
-                    foreach (var template in templates)
-                    {
-                    }
-                }
-                scanCount = 0;
-                totalScanTime = 0;
-                watcherActive = true;
-                watcherThread = new Thread(() => WatcherThreadFunction(gameWindow));
-                watcherThread.IsBackground = true;
-                watcherThread.Name = "OptimizedSpawnWatcher";
-                watcherThread.Start();
-            }
-        }
-        public static void Stop()
-        {
-            lock (watcherLock)
-            {
-                if (!watcherActive)
-                {
-                    return;
-                }
-                watcherActive = false;
-                if (scanCount > 0)
-                {
-                    double avgScanTimeMs = (double)totalScanTime / scanCount;
-                    double scansPerSecond = 1000.0 / avgScanTimeMs;
-                }
-                foreach (var template in templates)
-                {
-                    template.Template?.Dispose();
-                }
-                templates.Clear();
-            }
-        }
-        public static bool Toggle(IntPtr gameWindow, int pixelSize)
-        {
-            lock (watcherLock)
-            {
-                if (watcherActive)
-                {
-                    Stop();
-                    return false;
-                }
-                else
-                {
-                    Start(gameWindow, pixelSize);
-                    return true;
-                }
-            }
-        }
-        public static void UpdateScanArea(IntPtr gameWindow, int pixelSize)
-        {
-            lock (watcherLock)
-            {
-                if (!watcherActive)
-                    return;
-                GetClientRect(gameWindow, out RECT rect);
-                scanCenterX = (rect.Right - rect.Left) / 2 - 186;
-                scanCenterY = (rect.Bottom - rect.Top) / 2 - 260;
-                scanWidth = pixelSize * 10;
-                scanHeight = pixelSize * 10;
-            }
-        }
-        public static void ReloadTemplates()
-        {
-            lock (watcherLock)
-            {
-                foreach (var template in templates)
-                {
-                    template.Template?.Dispose();
-                }
-                templates.Clear();
-                LoadTemplates();
-                if (templates.Count == 0)
-                {
-                }
-                else
-                {
-                    foreach (var template in templates)
-                    {
-                    }
-                }
-            }
-        }
-        private static void LoadTemplates()
-        {
-            try
-            {
-                if (!Directory.Exists(imageFolderPath))
-                {
-                    return;
-                }
-                string[] imageFiles = Directory.GetFiles(imageFolderPath, "*.*", SearchOption.TopDirectoryOnly)
-                    .Where(f => IsImageFile(f))
-                    .ToArray();
-                Dictionary<string, int> priorityMap = LoadTemplatePriorities();
-                foreach (string filePath in imageFiles)
-                {
-                    try
-                    {
-                        string fileName = Path.GetFileNameWithoutExtension(filePath);
-                        Mat template = CvInvoke.Imread(filePath, ImreadModes.Color);
-                        if (template.IsEmpty)
-                        {
-                            continue;
-                        }
-                        int priority = 0;
-                        if (priorityMap.ContainsKey(fileName))
-                        {
-                            priority = priorityMap[fileName];
-                        }
-                        templates.Add(new TemplateInfo
-                        {
-                            FilePath = filePath,
-                            Template = template,
-                            Priority = priority
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[SPAWN] Error loading template {filePath}: {ex.Message}");
-                    }
-                }
-                templates = templates.OrderByDescending(t => t.Priority).ToList();
-                foreach (var template in templates)
-                {
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[SPAWN] Error loading templates: {ex.Message}");
-            }
-        }
-        private static Dictionary<string, int> LoadTemplatePriorities()
-        {
-            Dictionary<string, int> priorities = new Dictionary<string, int>();
-            string priorityFilePath = Path.Combine(imageFolderPath, "priorities.txt");
-            if (!File.Exists(priorityFilePath))
-            {
-                return priorities;
-            }
-            try
-            {
-                string[] lines = File.ReadAllLines(priorityFilePath);
-                foreach (string line in lines)
-                {
-                    if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#"))
-                        continue;
-                    string[] parts = line.Split('=');
-                    if (parts.Length == 2)
-                    {
-                        string imageName = parts[0].Trim();
-                        if (int.TryParse(parts[1].Trim(), out int priority))
-                        {
-                            priorities[imageName] = priority;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[SPAWN] Error loading priorities: {ex.Message}");
-            }
-            return priorities;
-        }
-        private static bool IsImageFile(string filePath)
-        {
-            string ext = Path.GetExtension(filePath).ToLower();
-            return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp";
-        }
-        private static unsafe Mat? CaptureWindowAsMat(IntPtr hWnd, int x, int y, int width, int height)
-        {
-            IntPtr hdcWindow = IntPtr.Zero;
-            IntPtr hdcMemDC = IntPtr.Zero;
-            IntPtr hBitmap = IntPtr.Zero;
-            IntPtr hOld = IntPtr.Zero;
-            Mat result = null;
-            try
-            {
-                hdcWindow = GetDC(hWnd);
-                if (hdcWindow == IntPtr.Zero)
-                {
-                    if (verboseDebug)
-                        return null;
-                }
-                hdcMemDC = CreateCompatibleDC(hdcWindow);
-                if (hdcMemDC == IntPtr.Zero)
-                {
-                    if (verboseDebug)
-                        return null;
-                }
-                hBitmap = CreateCompatibleBitmap(hdcWindow, width, height);
-                if (hBitmap == IntPtr.Zero)
-                {
-                    if (verboseDebug)
-                        return null;
-                }
-                hOld = SelectObject(hdcMemDC, hBitmap);
-                bool success = BitBlt(hdcMemDC, 0, 0, width, height, hdcWindow, x, y, SRCCOPY);
-                if (!success)
-                {
-                    if (verboseDebug)
-                        return null;
-                }
-                SelectObject(hdcMemDC, hOld);
-                using (Bitmap bmp = Bitmap.FromHbitmap(hBitmap))
-                {
-                    Rectangle rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
-                    BitmapData bmpData = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
-                    try
-                    {
-                        result = new Mat(bmp.Height, bmp.Width, DepthType.Cv8U, 3, bmpData.Scan0, bmpData.Stride);
-                        result = result.Clone();
-                    }
-                    finally
-                    {
-                        bmp.UnlockBits(bmpData);
-                    }
-                }
-                return result;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[SPAWN] Screenshot error: {ex.Message}");
-                result?.Dispose();
-                return null;
-            }
-            finally
-            {
-                if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
-                if (hdcMemDC != IntPtr.Zero) DeleteDC(hdcMemDC);
-                if (hdcWindow != IntPtr.Zero) ReleaseDC(hWnd, hdcWindow);
-            }
-        }
-        static void WatcherThreadFunction(IntPtr gameWindow)
-        {
-            try
-            {
-                Stopwatch iterationTimer = new Stopwatch();
-                int iterationCount = 0;
-                DateTime lastFullScanTime = DateTime.MinValue;
-                const int TEMPLATE_MATCHING_INTERVAL_MS = 1000;
-                Mat resultMat = new Mat();
-                while (watcherActive)
-                {
-                    try
-                    {
-                        iterationTimer.Restart();
-                        iterationCount++;
-                        DateTime now = DateTime.Now;
-                        GetClientRect(gameWindow, out RECT clientRect);
-                        int windowWidth = clientRect.Right - clientRect.Left;
-                        int windowHeight = clientRect.Bottom - clientRect.Top;
-                        bool shouldDoFullScan = (now - lastFullScanTime).TotalMilliseconds >= TEMPLATE_MATCHING_INTERVAL_MS;
-                        if (!shouldDoFullScan)
-                        {
-                            Thread.Sleep(100);
-                            continue;
-                        }
-                        lastFullScanTime = now;
-                        bool doTemplateMatching = templates.Count > 0 &&
-                                                  (DateTime.Now - lastMatchTime) >= matchCooldown;
-                        bool doColorDetection = colorChangeAlarmEnabled &&
-                                                  (DateTime.Now - lastColorAlarmTime) >= colorAlarmCooldown;
-                        if (!doTemplateMatching && !doColorDetection)
-                        {
-                            Thread.Sleep(100);
-                            continue;
-                        }
-                        if (doTemplateMatching)
-                        {
-                            int scanLeft = Math.Max(0, scanCenterX - (scanWidth / 2));
-                            int scanTop = Math.Max(0, scanCenterY - (scanHeight / 2));
-                            if (verboseDebug && DateTime.Now.Subtract(lastDebugOutput) > debugOutputInterval)
-                            {
-                                lastDebugOutput = DateTime.Now;
-                            }
-                            using (Mat screenshot = CaptureWindowAsMat(gameWindow, scanLeft, scanTop, scanWidth, scanHeight))
-                            {
-                                if (screenshot == null)
-                                {
-                                    if (verboseDebug && iterationCount % 100 == 0)
-                                    {
-                                    }
-                                }
-                                else
-                                {
-                                    bool debugOutputThisIteration = verboseDebug && iterationCount % 50 == 0;
-                                    if (debugOutputThisIteration)
-                                    {
-                                    }
-                                    bool matchFound = false;
-                                    foreach (var template in templates)
-                                    {
-                                        double minVal = 0, maxVal = 0;
-                                        Point minLoc = new Point(), maxLoc = new Point();
-                                        CvInvoke.MatchTemplate(screenshot, template.Template, resultMat, TemplateMatchingType.CcoeffNormed);
-                                        CvInvoke.MinMaxLoc(resultMat, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
-                                        bool match = maxVal >= matchThreshold;
-                                        if (debugOutputThisIteration || maxVal > 0.5)
-                                        {
-                                        }
-                                        if (match)
-                                        {
-                                            Rectangle matchedRect = new Rectangle(maxLoc, new Size(template.Width, template.Height));
-                                            Mat matchedRegion = new Mat(screenshot, matchedRect);
-                                            var (isColorSimilar, colorSimilarityPercent) = IsColorSimilar(template.Template, matchedRegion);
-                                            if (isColorSimilar)
-                                            {
-                                                HandleMatchFound(template.Name, screenshot, maxLoc, template.Width, template.Height, maxVal);
-                                                lastMatchTime = DateTime.Now;
-                                                matchFound = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    if (iterationCount % 200 == 0 && !matchFound)
-                                    {
-                                    }
-                                }
-                            }
-                        }
-                        if (doColorDetection)
-                        {
-                            int colorDetectWidth = (int)(windowWidth * 0.1);
-                            int colorDetectHeight = (int)(windowHeight * 0.1);
-                            int colorDetectX = 0;
-                            int colorDetectY = windowHeight - colorDetectHeight;
-                            using (Mat bottomLeftCorner = CaptureWindowAsMat(gameWindow, colorDetectX, colorDetectY, colorDetectWidth, colorDetectHeight))
-                            {
-                                if (bottomLeftCorner != null)
-                                {
-                                    string debugDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug");
-                                    if (!Directory.Exists(debugDir))
-                                    {
-                                        Directory.CreateDirectory(debugDir);
-                                    }
-                                    if (iterationCount % 10 == 0)
-                                    {
-                                        CvInvoke.Imwrite(Path.Combine(debugDir, "current_capture.png"), bottomLeftCorner);
-                                    }
-                                    string detectionResult = DetectColorChanges(bottomLeftCorner);
-                                    if (detectionResult == "change")
-                                    {
-                                        Console.WriteLine("[COLOR] Significant color change detected in bottom-left corner!");
-                                        HandleColorChangeDetection(bottomLeftCorner);
-                                        lastColorAlarmTime = DateTime.Now;
-                                    }
-                                }
-                            }
-                        }
-                        Thread.Sleep(200);
-                    }
-                    catch (Exception ex)
-                    {
-                        Thread.Sleep(500);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[SPAWN] Watcher thread error: {ex.Message}");
-            }
-            finally
-            {
-                Console.WriteLine("[SPAWN] Optimized watcher thread exited");
-            }
-        }
-        private static (bool, double) IsColorSimilar(Mat template, Mat matchedRegion, double allowedDifferencePercent = 20.0)
-        {
-            MCvScalar templateMean = CvInvoke.Mean(template);
-            MCvScalar matchedMean = CvInvoke.Mean(matchedRegion);
-            double colorDistance = Math.Sqrt(
-                Math.Pow(templateMean.V0 - matchedMean.V0, 2) +
-                Math.Pow(templateMean.V1 - matchedMean.V1, 2) +
-                Math.Pow(templateMean.V2 - matchedMean.V2, 2)
-            );
-            double maxPossibleDistance = Math.Sqrt(3 * Math.Pow(255, 2));
-            double differencePercent = 100.0 * (colorDistance / maxPossibleDistance);
-            double similarityPercent = 100.0 - differencePercent;
-            bool isSimilar = differencePercent <= allowedDifferencePercent;
-            return (isSimilar, similarityPercent);
-        }
-        private static void HandleMatchFound(string templateName, Mat screenshot, Point matchLocation, int templateWidth, int templateHeight, double similarity)
-        {
-            string matchesDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "matches");
-            if (!Directory.Exists(matchesDir))
-            {
-                Directory.CreateDirectory(matchesDir);
-            }
-            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string matchFileName = $"match_{templateName}_{timestamp}.png";
-            string matchPath = Path.Combine(matchesDir, matchFileName);
-            try
-            {
-                IntPtr gameWindow = Program.targetWindow;
-                GetClientRect(gameWindow, out RECT clientRect);
-                int windowWidth = clientRect.Right - clientRect.Left;
-                int windowHeight = clientRect.Bottom - clientRect.Top;
-                using (Mat fullScreenshot = CaptureWindowAsMat(gameWindow, 0, 0, windowWidth, windowHeight))
-                {
-                    if (fullScreenshot != null)
-                    {
-                        int scanLeft = Math.Max(0, scanCenterX - (scanWidth / 2));
-                        int scanTop = Math.Max(0, scanCenterY - (scanHeight / 2));
-                        Point fullScreenMatchLocation = new Point(
-                            scanLeft + matchLocation.X,
-                            scanTop + matchLocation.Y
-                        );
-                        Rectangle matchRect = new Rectangle(
-                            fullScreenMatchLocation.X,
-                            fullScreenMatchLocation.Y,
-                            templateWidth,
-                            templateHeight
-                        );
-                        CvInvoke.Rectangle(fullScreenshot, matchRect, new MCvScalar(0, 0, 255), 2);
-                        string label = $"{templateName} ({similarity:F2})";
-                        Point textLocation = new Point(matchRect.X, Math.Max(0, matchRect.Y - 10));
-                        CvInvoke.PutText(fullScreenshot, label, textLocation, FontFace.HersheyComplex, 0.5, new MCvScalar(0, 0, 255), 2);
-                        CvInvoke.Imwrite(matchPath, fullScreenshot);
-                    }
-                    else
-                    {
-                        CvInvoke.Imwrite(matchPath, screenshot);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[SPAWN] Error saving match screenshot: {ex.Message}");
-            }
-            TriggerAlarm(templateName);
-        }
-        private static Mat? referenceImage = null;
-        private static DateTime referenceImageTime = DateTime.MinValue;
-        private static bool isFirstCapture = true;
-        private static readonly TimeSpan referenceUpdateInterval = TimeSpan.FromMinutes(10);
-        private static double colorDifferenceThreshold = 30.0;
-        private static double changedPixelPercentageThreshold = 2.0;
-        private static bool colorChangeAlarmEnabled = true;
-        private static readonly object colorDetectionLock = new object();
-        private static string DetectColorChanges(Mat currentImage)
-        {
-            try
-            {
-                string debugDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug");
-                if (!Directory.Exists(debugDir))
-                {
-                    Directory.CreateDirectory(debugDir);
-                }
-                CvInvoke.Imwrite(Path.Combine(debugDir, "original_input.png"), currentImage);
-                lock (colorDetectionLock)
-                {
-                    if (isFirstCapture || referenceImage == null)
-                    {
-                        if (referenceImage != null)
-                        {
-                            referenceImage.Dispose();
-                        }
-                        referenceImage = currentImage.Clone();
-                        referenceImageTime = DateTime.Now;
-                        isFirstCapture = false;
-                        Console.WriteLine("[COLOR] First capture - saved as reference image");
-                        CvInvoke.Imwrite(Path.Combine(debugDir, "reference_image.png"), referenceImage);
-                        return null;
-                    }
-                    if (DateTime.Now - referenceImageTime > referenceUpdateInterval)
-                    {
-                        bool hasSignificantChanges = CheckForColorChanges(currentImage, referenceImage, debugDir, "reference_update_check");
-                        if (!hasSignificantChanges)
-                        {
-                            Console.WriteLine("[COLOR] Updating reference image (scheduled update)");
-                            referenceImage.Dispose();
-                            referenceImage = currentImage.Clone();
-                            referenceImageTime = DateTime.Now;
-                            CvInvoke.Imwrite(Path.Combine(debugDir, "updated_reference_image.png"), referenceImage);
-                        }
-                        else
-                        {
-                            Console.WriteLine("[COLOR] Skipping reference update because significant changes detected");
-                        }
-                    }
-                    bool changeDetected = CheckForColorChanges(currentImage, referenceImage, debugDir, "current_diff");
-                    if (changeDetected)
-                    {
-                        Console.WriteLine("[COLOR] Significant color change detected!");
-                        CvInvoke.Imwrite(Path.Combine(debugDir, "triggered_current.png"), currentImage);
-                        return "change"; 
-                    }
-                }
-                return null; 
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[COLOR] Error in color change detection: {ex.Message}");
-                return null;
-            }
-        }
-        private static bool CheckForColorChanges(Mat currentImage, Mat referenceImage, string debugDir, string debugPrefix)
-        {
-            using (Mat diffImage = new Mat(currentImage.Size, DepthType.Cv8U, 3))
-            {
-                using (VectorOfMat currentChannels = new VectorOfMat())
-                using (VectorOfMat referenceChannels = new VectorOfMat())
-                {
-                    CvInvoke.Split(currentImage, currentChannels);
-                    CvInvoke.Split(referenceImage, referenceChannels);
-                    using (Mat bDiff = new Mat())
-                    using (Mat gDiff = new Mat())
-                    using (Mat rDiff = new Mat())
-                    using (Mat combinedMask = new Mat(currentImage.Rows, currentImage.Cols, DepthType.Cv8U, 1))
-                    {
-                        CvInvoke.AbsDiff(currentChannels[0], referenceChannels[0], bDiff);
-                        CvInvoke.AbsDiff(currentChannels[1], referenceChannels[1], gDiff);
-                        CvInvoke.AbsDiff(currentChannels[2], referenceChannels[2], rDiff);
-                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_b_diff.png"), bDiff);
-                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_g_diff.png"), gDiff);
-                        CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_r_diff.png"), rDiff);
-                        using (Mat bMask = new Mat())
-                        using (Mat gMask = new Mat())
-                        using (Mat rMask = new Mat())
-                        {
-                            CvInvoke.Threshold(bDiff, bMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
-                            CvInvoke.Threshold(gDiff, gMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
-                            CvInvoke.Threshold(rDiff, rMask, colorDifferenceThreshold, 255, ThresholdType.Binary);
-                            CvInvoke.BitwiseOr(bMask, gMask, combinedMask);
-                            CvInvoke.BitwiseOr(combinedMask, rMask, combinedMask);
-                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_combined_mask.png"), combinedMask);
-                            double totalPixels = combinedMask.Rows * combinedMask.Cols;
-                            double changedPixels = CvInvoke.CountNonZero(combinedMask);
-                            double percentChanged = (changedPixels / totalPixels) * 100.0;
-                            currentImage.CopyTo(diffImage);
-                            using (Mat redLayer = new Mat(diffImage.Size, DepthType.Cv8U, 1))
-                            {
-                                CvInvoke.BitwiseNot(combinedMask, redLayer);
-                                using (VectorOfMat diffChannels = new VectorOfMat())
-                                {
-                                    CvInvoke.Split(diffImage, diffChannels);
-                                    CvInvoke.BitwiseAnd(diffChannels[0], redLayer, diffChannels[0]);
-                                    CvInvoke.BitwiseAnd(diffChannels[1], redLayer, diffChannels[1]);
-                                    CvInvoke.BitwiseOr(diffChannels[2], combinedMask, diffChannels[2]);
-                                    CvInvoke.Merge(diffChannels, diffImage);
-                                }
-                            }
-                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_visualization.png"), diffImage);
-                            bool isSignificantChange = percentChanged >= changedPixelPercentageThreshold;
-                            string percentText = $"Changed: {percentChanged:F1}% ({(isSignificantChange ? "ALERT" : "normal")})";
-                            CvInvoke.PutText(
-                                diffImage,
-                                percentText,
-                                new System.Drawing.Point(10, 20),
-                                FontFace.HersheyComplex,
-                                0.5,
-                                isSignificantChange ? new MCvScalar(0, 0, 255) : new MCvScalar(0, 255, 0),
-                                1
-                            );
-                            CvInvoke.Imwrite(Path.Combine(debugDir, $"{debugPrefix}_visualization_with_text.png"), diffImage);
-                            return isSignificantChange;
-                        }
-                    }
-                }
-            }
-        }
-        private static void SaveColorDistributionInfoSimple(Mat image, string outputPath)
-        {
-            try
-            {
-                using (StreamWriter writer = new StreamWriter(outputPath))
-                {
-                    writer.WriteLine("COLOR DETECTION INFORMATION");
-                    writer.WriteLine("===========================");
-                    writer.WriteLine($"Image size: {image.Width}x{image.Height}");
-                    writer.WriteLine();
-                    writer.WriteLine("COLOR DETECTION THRESHOLDS (HSV):");
-                    writer.WriteLine("Cyan/Teal: H(75-95), S(50-255), V(50-255)");
-                    writer.WriteLine("Green: H(45-75), S(50-255), V(50-255)");
-                    writer.WriteLine("Yellow: H(15-45), S(50-255), V(50-255)");
-                    writer.WriteLine("Red: H(0-10 or 160-180), S(50-255), V(50-255)");
-                    writer.WriteLine("Blue: H(100-130), S(50-255), V(50-255)");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[COLOR] Error saving color detection info: {ex.Message}");
-            }
-        }
-        private static bool HasSignificantColor(Mat mask)
-        {
-            double nonZeroPixels = CvInvoke.CountNonZero(mask);
-            double totalPixels = mask.Rows * mask.Cols;
-            double percentage = (nonZeroPixels / totalPixels) * 100;
-            bool isSignificant = percentage >= 2.0;
-            return isSignificant;
-        }
-        private static void HandleColorChangeDetection(Mat image)
-        {
-            try
-            {
-                string matchesDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "matches");
-                if (!Directory.Exists(matchesDir))
-                {
-                    Directory.CreateDirectory(matchesDir);
-                }
-                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                string matchFileName = $"color_change_{timestamp}.png";
-                string matchPath = Path.Combine(matchesDir, matchFileName);
-                CvInvoke.Imwrite(matchPath, image);
-                Console.WriteLine($"[COLOR] Color change detection screenshot saved to: {matchPath}");
-                TriggerColorChangeAlert();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[COLOR] Error handling color change detection: {ex.Message}");
-            }
-        }
-        public static CancellationTokenSource? colorAlarmCts = null;
-        public static readonly object colorAlarmLock = new object();
-        public static void TriggerColorChangeAlert()
-        {
-            try
-            {
-                Program.threadFlags["recording"] = false;
-                Program.threadFlags["playing"] = false;
-                Program.threadFlags["autopot"] = false;
-                Program.threadFlags["spawnwatch"] = false;
-                Program.memoryReadActive = false;
-                Program.programRunning = false;
-                IntPtr copyWindow = Program.targetWindow;
-                lock (colorAlarmLock)
-                {
-                    colorAlarmCts = new CancellationTokenSource();
-                }
-                var token = colorAlarmCts.Token;
-                Thread alarmSoundThread = new Thread(() =>
-                {
-                    try
-                    {
-                        while (!token.IsCancellationRequested)
-                        {
-                            Beep(1400, 200);
-                            if (token.IsCancellationRequested) break;
-                            Thread.Sleep(1);
-                            Beep(1800, 200);
-                            if (token.IsCancellationRequested) break;
-                            Thread.Sleep(1);
-                            Beep(1400, 200);
-                            if (token.IsCancellationRequested) break;
-                            Thread.Sleep(1);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[COLOR ALARM] Error in alarm sound: {ex.Message}");
-                    }
-                });
-                alarmSoundThread.IsBackground = true;
-                alarmSoundThread.Start();
-                Thread inputMonitorThread = new Thread(() =>
-                {
-                    try
-                    {
-                        while (!token.IsCancellationRequested)
-                        {
-                            if (Console.KeyAvailable)
-                            {
-                                var key = Console.ReadKey(true).Key;
-                                if (key == ConsoleKey.Q)
-                                {
-                                    Console.WriteLine("\n[COLOR ALARM] User pressed Q - stopping alarm...");
-                                    StopColorAlarm();
-                                    break;
-                                }
-                            }
-                            Thread.Sleep(50);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[COLOR ALARM] Error in input monitor: {ex.Message}");
-                    }
-                });
-                inputMonitorThread.IsBackground = true;
-                inputMonitorThread.Start();
-                Thread focusWindowThread = new Thread(() =>
-                {
-                    try
-                    {
-                        FocusGameWindow(copyWindow);
-                        for (int i = 0; i < 600; i++) 
-                        {
-                            if (token.IsCancellationRequested)
-                            {
-                                break;
-                            }
-                            Thread.Sleep(100);
-                        }
-                        if (!token.IsCancellationRequested)
-                        {
-                            Console.WriteLine("[COLOR ALARM] Timeout reached - exiting program");
-                            Environment.Exit(1);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[COLOR ALARM] Error in window focus: {ex.Message}");
-                    }
-                });
-                focusWindowThread.IsBackground = false;
-                focusWindowThread.Start();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[COLOR ALARM] Error triggering color change alert: {ex.Message}");
-            }
-        }
-        public static bool IsColorAlarmActive()
-        {
-            lock (colorAlarmLock)
-            {
-                return colorAlarmCts != null;
-            }
-        }
-        public static void StopColorAlarm()
-        {
-            lock (colorAlarmLock)
-            {
-                if (colorAlarmCts != null)
-                {
-                    Console.WriteLine("[COLOR ALARM] Stopping color alarm...");
-                    colorAlarmCts.Cancel();
-                    colorAlarmCts.Dispose();
-                    colorAlarmCts = null;
-                    Program.threadFlags["recording"] = false;
-                    Program.threadFlags["playing"] = false;
-                    Program.threadFlags["autopot"] = false;
-                    Program.threadFlags["spawnwatch"] = false;
-                    Program.memoryReadActive = false;
-                    Program.programRunning = false;
-                    Console.WriteLine("[COLOR ALARM] Alarm stopped. Exiting program...");
-                    Environment.Exit(0);
-                }
-            }
-        }
-        private static void TriggerAlarm(string templateName)
-        {
-            try
-            {
-                IntPtr copyWindow = Program.targetWindow;
-                Program.threadFlags["recording"] = false;
-                Program.threadFlags["playing"] = false;
-                Program.threadFlags["autopot"] = false;
-                Program.threadFlags["spawnwatch"] = false;
-                Program.memoryReadActive = false;
-                Program.programRunning = false;
-                Program.StopPositionAlertSound();
-                Thread alarmSoundThread = new Thread(() =>
-                {
-                    try
-                    {
-                        while (true)
-                        {
-                            Beep(2000, 200);
-                            Thread.Sleep(50);
-                            Beep(1500, 200);
-                            Thread.Sleep(50);
-                            Beep(2000, 200);
-                            Thread.Sleep(50);
-                            Beep(1500, 200);
-                            Thread.Sleep(200);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[ALARM] Error in alarm sound: {ex.Message}");
-                    }
-                });
-                alarmSoundThread.IsBackground = true;
-                alarmSoundThread.Start();
-                Thread panicKeysThread = new Thread(() =>
-                {
-                    try
-                    {
-                        SendPanicKeysToGame(copyWindow);
-                        Environment.Exit(1);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[ALARM] Error in panic keys: {ex.Message}");
-                        Environment.Exit(1);
-                    }
-                });
-                panicKeysThread.IsBackground = false;
-                panicKeysThread.Start();
-                panicKeysThread.Join();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ALARM] Error triggering alarm: {ex.Message}");
-                Environment.Exit(1);
-            }
-        }
-        private static void FocusGameWindow(IntPtr gameWindow)
-        {
-            if (gameWindow == IntPtr.Zero)
-            {
-                return;
-            }
-            try
-            {
-                if (!SetForegroundWindow(gameWindow))
-                {
-                    int error = Marshal.GetLastWin32Error();
-                    ShowWindow(gameWindow, SW_RESTORE);
-                    Thread.Sleep(100);
-                    SetForegroundWindow(gameWindow);
-                    Thread.Sleep(100);
-                }
-                IntPtr activeWindow = GetForegroundWindow();
-                if (activeWindow != gameWindow)
-                {
-                }
-                else
-                {
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ALARM] Error focusing window: {ex.Message}");
-            }
-        }
-        private static void SendPanicKeysToGame(IntPtr gameWindow)
-        {
-            if (gameWindow == IntPtr.Zero)
-            {
-                return;
-            }
-            try
-            {
-                FocusGameWindow(gameWindow);
-                Thread.Sleep(200);
-                for (int i = 0; i < 3; i++)
-                {
-                    SendKeys.SendWait("{ESC}");
-                    Thread.Sleep(100);
-                }
-                Random random = new Random();
-                int questionMarkCount = random.Next(4, 8);
-                for (int i = 0; i < questionMarkCount; i++)
-                {
-                    SendKeys.SendWait("?");
-                    Thread.Sleep(50);
-                }
-                SendKeys.SendWait("{ENTER}");
-                Thread.Sleep(50);
-                for (int i = 0; i < questionMarkCount; i++)
-                {
-                    SendKeys.SendWait("?");
-                    Thread.Sleep(50);
-                }
-                SendKeys.SendWait("{ENTER}");
-                Thread.Sleep(50);
-                DateTime endTime = DateTime.Now.AddSeconds(15);
-                while (DateTime.Now < endTime)
-                {
-                    string[] directions = new string[] { "{UP}", "{RIGHT}", "{DOWN}", "{LEFT}" };
-                    Random rand = new Random();
-                    int movementsInCycle = rand.Next(100, 250);
-                    for (int i = 0; i < movementsInCycle; i++)
-                    {
-                        string direction = directions[rand.Next(directions.Length)];
-                        bool useCtrl = true;
-                        if (useCtrl)
-                        {
-                            SendKeys.SendWait("^" + direction);
-                        }
-                        else
-                        {
-                            SendKeys.SendWait(direction);
-                        }
-                        int keyDelay = rand.Next(20, 30);
-                        Thread.Sleep(keyDelay);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ALARM] Error sending panic keys: {ex.Message}");
-            }
-        }
-        [DllImport("user32.dll")]
-        static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
-        [DllImport("gdi32.dll")]
-        static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight,
-            IntPtr hdcSrc, int nXSrc, int nYSrc, uint dwRop);
-        [DllImport("user32.dll")]
-        static extern IntPtr GetDC(IntPtr hWnd);
-        [DllImport("user32.dll")]
-        static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-        [DllImport("gdi32.dll")]
-        static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-        [DllImport("gdi32.dll")]
-        static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
-        [DllImport("gdi32.dll")]
-        static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
-        [DllImport("gdi32.dll")]
-        static extern bool DeleteObject(IntPtr hObject);
-        [DllImport("gdi32.dll")]
-        static extern bool DeleteDC(IntPtr hdc);
-        [DllImport("kernel32.dll")]
-        static extern bool Beep(int frequency, int duration);
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool SetForegroundWindow(IntPtr hWnd);
-        [DllImport("user32.dll")]
-        static extern IntPtr GetForegroundWindow();
-        [DllImport("user32.dll")]
-        static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-        const int SW_RESTORE = 9;
-        const uint SRCCOPY = 0x00CC0020;
-        [StructLayout(LayoutKind.Sequential)]
-        public struct RECT
-        {
-            public int Left, Top, Right, Bottom;
-        }
-    }
-    static System.Windows.Forms.Form? overlayForm = null;
-    static List<(int x, int y, int size, DateTime time, string label)> activeHighlights = new List<(int x, int y, int size, DateTime time, string label)>();
-    static System.Windows.Forms.Timer? cleanupTimer = null;
-    static object highlightLock = new object();
-    static bool showDebugCenter = true;
-    const int GWL_EXSTYLE = -20;
-    const int WS_EX_TRANSPARENT = 0x00000020;
-    const int WS_EX_LAYERED = 0x00080000;
-    [DllImport("user32.dll")]
-    static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-    [DllImport("user32.dll")]
-    static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-    static int statsOverlayRightOffset = 380;
-    static int statsOverlayBottomOffset = 40;
-    static float statsOverlaySizeScale = 0.92f;
-    static float statsOverlayOpacity = 0.99f;
-    const int WS_EX_NOACTIVATE = 0x08000000;
-    const int WS_EX_TOOLWINDOW = 0x00000080;
-    const int HWND_TOPMOST = -1;
-    const int SWP_NOMOVE = 0x0002;
-    const int SWP_NOSIZE = 0x0001;
-    const int SWP_NOACTIVATE = 0x0010;
-    [DllImport("user32.dll")]
-    static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-    // Add this with your other overlay configuration variables
-    static int overlayTopOffset = 650;  // Distance from top of game window (change this!)
-    static bool showOverlayDebugInfo = false; // Set to true to see position info
-
-    // Modified EnsureOverlayExists function with configurable top anchor
-    static DateTime lastEnsureTopmost = DateTime.MinValue;
-    static void EnsureOverlayExists()
-    {
-        if (overlayForm != null && overlayForm.IsHandleCreated && !overlayForm.IsDisposed)
-            return;
-
-        overlayForm = null;
-        Thread overlayThread = new Thread(() =>
-        {
-            try
-            {
-                System.Windows.Forms.Form threadForm = null;
-                try
-                {
-                    threadForm = new System.Windows.Forms.Form();
-                    threadForm.FormBorderStyle = System.Windows.Forms.FormBorderStyle.None;
-                    threadForm.ShowInTaskbar = false;
-                    threadForm.TopMost = true;
-                    threadForm.Opacity = statsOverlayOpacity;
-                    threadForm.TransparencyKey = Color.Black;
-                    threadForm.BackColor = Color.Black;
-
-                    // Prevent form from taking focus
-                    threadForm.Deactivate += (s, e) =>
-                    {
-                        if (threadForm != null && !threadForm.IsDisposed)
-                        {
-                            threadForm.TopMost = false;
-                            threadForm.TopMost = true;
-                        }
-                    };
-
-                    // Set initial size
-                    int baseWidth = 300;
-                    int initialContentLines = 14; // Base content lines
-                    int lineHeight = 18;
-                    int bottomMargin = 20;
-                    int baseHeight = initialContentLines * lineHeight + bottomMargin;
-
-                    threadForm.Width = (int)(baseWidth * statsOverlaySizeScale);
-                    threadForm.Height = (int)(baseHeight * statsOverlaySizeScale);
-                    threadForm.StartPosition = System.Windows.Forms.FormStartPosition.Manual;
-
-                    // Calculate initial position with configurable top offset
-                    try
-                    {
-                        GetWindowRect(targetWindow, out RECT gameWindowRect);
-                        int overlayX = Math.Max(0, gameWindowRect.Right - threadForm.Width - statsOverlayRightOffset);
-                        int overlayY = gameWindowRect.Top + overlayTopOffset; // Uses configurable offset
-
-                        threadForm.Location = new Point(overlayX, overlayY);
-
-                        if (showOverlayDebugInfo)
-                        {
-                            Console.WriteLine($"[OVERLAY] Initial position: X={overlayX}, Y={overlayY}");
-                            Console.WriteLine($"[OVERLAY] Top offset: {overlayTopOffset}");
-                            Console.WriteLine($"[OVERLAY] Game window: Top={gameWindowRect.Top}, Bottom={gameWindowRect.Bottom}");
-                        }
-                    }
-                    catch
-                    {
-                        // Fallback to screen position
-                        threadForm.Location = new Point(
-                            Math.Max(0, Screen.PrimaryScreen.WorkingArea.Right - threadForm.Width - statsOverlayRightOffset),
-                            overlayTopOffset);
-                    }
-
-                    // Set window styles ONCE during creation
-                    int exStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
-                    exStyle |= WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
-                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE, exStyle);
-
-                    // Cache target ID to minimize locking
-                    int lastKnownTargetId = -1;
-                    bool needsRedraw = false;
-
-                    threadForm.Paint += (sender, e) =>
-                    {
-                        try
-                        {
-                            if (statsOverlaySizeScale != 1.0f)
-                            {
-                                e.Graphics.ScaleTransform(statsOverlaySizeScale, statsOverlaySizeScale);
-                            }
-
-                            // Create dark background
-                            using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(180, 0, 0, 0)))
-                            {
-                                float scaledWidth = threadForm.Width / statsOverlaySizeScale;
-                                float scaledHeight = threadForm.Height / statsOverlaySizeScale;
-                                e.Graphics.FillRectangle(bgBrush, 0, 0, scaledWidth, scaledHeight);
-                            }
-
-                            // Font setup
-                            float titleFontSize = 10.0f;
-                            float statsFontSize = 9.0f;
-                            float smallFontSize = 8.0f;
-
-                            using (Font titleFont = new Font("Arial", titleFontSize, FontStyle.Bold))
-                            using (Font statsFont = new Font("Arial", statsFontSize, FontStyle.Regular))
-                            using (Font smallFont = new Font("Arial", smallFontSize, FontStyle.Regular))
-                            using (Brush whiteBrush = new SolidBrush(Color.White))
-                            using (Brush greenBrush = new SolidBrush(Color.LightGreen))
-                            using (Brush blueBrush = new SolidBrush(Color.LightBlue))
-                            using (Brush yellowBrush = new SolidBrush(Color.Yellow))
-                            using (Brush orangeBrush = new SolidBrush(Color.Orange))
-                            using (Brush pinkBrush = new SolidBrush(Color.LightPink))
-                            using (Brush redBrush = new SolidBrush(Color.LightCoral))
-                            using (Brush grayBrush = new SolidBrush(Color.LightGray))
-                            {
-                                float scaledWidth = threadForm.Width / statsOverlaySizeScale;
-                                int y = 5;
-                                int rightPadding = 20;
-                                int lineSpacing = 18;
-
-                                // Get data once with minimal lock time
-                                double hpPercent, manaPercent;
-                                int currentX, currentY, currentZ, currentTargetId, currentInvisibilityCode, currentOutfitValue;
-                                string currentTargetName = "";
-
-                                lock (memoryLock)
-                                {
-                                    hpPercent = (curHP / maxHP) * 100;
-                                    manaPercent = (curMana / maxMana) * 100;
-                                    currentX = posX;
-                                    currentY = posY;
-                                    currentZ = posZ;
-                                    currentTargetId = targetId;
-                                    currentInvisibilityCode = invisibilityCode;
-                                    currentOutfitValue = currentOutfit;
-                                }
-
-                                // Show debug info if enabled
-                                if (showOverlayDebugInfo)
-                                {
-                                    DrawRightAlignedStat(e, "Debug - Top Offset:", $"{overlayTopOffset}px",
-                                        smallFont, grayBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                    DrawRightAlignedStat(e, "Debug - Form Y:", $"{threadForm.Top}",
-                                        smallFont, grayBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                    y += 5;
-                                }
-
-                                // Draw title
-                                string titleText = "RealeraDX - Live Stats";
-                                SizeF titleSize = e.Graphics.MeasureString(titleText, titleFont);
-                                e.Graphics.DrawString(titleText, titleFont, whiteBrush,
-                                    scaledWidth - titleSize.Width - rightPadding, y);
-                                y += lineSpacing + 2;
-
-                                // Draw HP/Mana
-                                DrawRightAlignedStat(e, "HP:", $"{curHP:F0}/{maxHP:F0} ({hpPercent:F1}%)",
-                                    statsFont, hpPercent < 50 ? orangeBrush : greenBrush,
-                                    scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                DrawRightAlignedStat(e, "Mana:", $"{curMana:F0}/{maxMana:F0} ({manaPercent:F1}%)",
-                                    statsFont, blueBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                // Draw position
-                                DrawRightAlignedStat(e, "Position:", $"({currentX}, {currentY}, {currentZ})",
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                // Draw invisibility and outfit
-                                DrawRightAlignedStat(e, "Invisibility:", $"{currentInvisibilityCode} " +
-                                    (currentInvisibilityCode == 2 ? "(Ring ON)" : "(Ring OFF)"),
-                                    statsFont, pinkBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                DrawRightAlignedStat(e, "Outfit:", $"{currentOutfitValue}",
-                                    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                y += 5;
-
-                                // Target info
-                                if (currentTargetId != 0)
-                                {
-                                    var (monsterX, monsterY, monsterZ, monsterName) = GetTargetMonsterInfo();
-
-                                    string targetHeader = "Target Info:";
-                                    SizeF headerSize = e.Graphics.MeasureString(targetHeader, statsFont);
-                                    e.Graphics.DrawString(targetHeader, statsFont, redBrush,
-                                        scaledWidth - headerSize.Width - rightPadding, y);
-                                    y += lineSpacing;
-
-                                    DrawRightAlignedStat(e, "ID:", $"{currentTargetId}",
-                                        statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                    if (!string.IsNullOrEmpty(monsterName))
-                                    {
-                                        DrawRightAlignedStat(e, "Name:", $"{monsterName}",
-                                            statsFont, redBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                    }
-
-                                    if (monsterX != 0 || monsterY != 0 || monsterZ != 0)
-                                    {
-                                        DrawRightAlignedStat(e, "Pos:", $"({monsterX}, {monsterY}, {monsterZ})",
-                                            statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                        int distanceX = Math.Abs(monsterX - currentX);
-                                        int distanceY = Math.Abs(monsterY - currentY);
-                                        int totalDistance = distanceX + distanceY;
-
-                                        DrawRightAlignedStat(e, "Distance:", $"{totalDistance} steps",
-                                            statsFont, totalDistance > 5 ? orangeBrush : greenBrush,
-                                            scaledWidth - rightPadding, ref y, lineSpacing);
-                                    }
-
-                                    // ADD THIS NEW SECTION - Attack Timer Display
-                                    double engagementSeconds = currentTargetEngagementDuration.TotalSeconds;
-                                    double maxSeconds = MAX_TARGET_ENGAGEMENT_TIME.TotalSeconds;
-                                    double timeProgress = Math.Min(engagementSeconds / maxSeconds, 1.0);
-
-                                    // Display attack time with color coding
-                                    Brush timerBrush = timeProgress < 0.5 ? blueBrush :
-                                                      (timeProgress < 0.8 ? orangeBrush : redBrush);
-
-                                    DrawRightAlignedStat(e, "Attack Time:", $"{engagementSeconds:F1}s / {maxSeconds:F0}s",
-                                        statsFont, timerBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                    // Attack timer progress bar
-                                    int timerBarWidth = (int)(scaledWidth - 40 - rightPadding);
-                                    int timerBarHeight = 8;
-                                    int timerBarX = 20;
-                                    int timerFilledWidth = (int)(timerBarWidth * timeProgress);
-
-                                    // Background bar
-                                    e.Graphics.FillRectangle(new SolidBrush(Color.FromArgb(100, Color.DarkGray)),
-                                        timerBarX, y, timerBarWidth, timerBarHeight);
-
-                                    // Foreground progress bar (color changes as time progresses)
-                                    Color timerColor;
-                                    if (timeProgress < 0.5)
-                                        timerColor = Color.LimeGreen;
-                                    else if (timeProgress < 0.8)
-                                        timerColor = Color.Orange;
-                                    else
-                                        timerColor = Color.Red;
-
-                                    if (timerFilledWidth > 0)
-                                    {
-                                        e.Graphics.FillRectangle(new SolidBrush(timerColor),
-                                            timerBarX, y, timerFilledWidth, timerBarHeight);
-                                    }
-
-                                    // Add percentage text on the bar
-                                    string percentText = $"{(timeProgress * 100):F0}%";
-                                    using (Font smallFonty = new Font("Arial", 7.0f, FontStyle.Bold))
-                                    {
-                                        SizeF percentSize = e.Graphics.MeasureString(percentText, smallFonty);
-                                        float textX = timerBarX + (timerBarWidth - percentSize.Width) / 2;
-                                        float textY = y - 1;
-
-                                        // Draw shadow for better visibility
-                                        e.Graphics.DrawString(percentText, smallFonty, new SolidBrush(Color.Black),
-                                            textX + 1, textY + 1);
-                                        e.Graphics.DrawString(percentText, smallFonty, new SolidBrush(Color.White),
-                                            textX, textY);
-                                    }
-
-                                    y += timerBarHeight + 8;
-                                }
-                                else
-                                {
-                                    DrawRightAlignedStat(e, "Target:", "None",
-                                        statsFont, grayBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                }
-
-                                y += 5;
-
-                                // Active features
-                                //string featuresText = "Active Features:";
-                                //SizeF featuresSize = e.Graphics.MeasureString(featuresText, statsFont);
-                                //e.Graphics.DrawString(featuresText, statsFont, yellowBrush,
-                                //    scaledWidth - featuresSize.Width - rightPadding, y);
-                                y += lineSpacing;
-
-                                //DrawRightAlignedFeature(e, "Auto-Potions:", threadFlags["autopot"],
-                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                //DrawRightAlignedFeature(e, "Recording:", threadFlags["recording"],
-                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                //DrawRightAlignedFeature(e, "Playback:", threadFlags["playing"],
-                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                //DrawRightAlignedFeature(e, "Click Overlay:", clickOverlayActive,
-                                //    statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                // Playback progress - Enhanced
-                                if (threadFlags["playing"])
-                                {
-                                    y += 5;
-
-                                    // Waypoint status header
-                                    string waypointHeader = "Waypoint Status:";
-                                    SizeF waypointHeaderSize = e.Graphics.MeasureString(waypointHeader, statsFont);
-                                    e.Graphics.DrawString(waypointHeader, statsFont, yellowBrush,
-                                        scaledWidth - waypointHeaderSize.Width - rightPadding, y);
-                                    y += lineSpacing;
-
-                                    // Current waypoint information
-                                    if (currentTarget != null)
-                                    {
-                                        int distanceX = Math.Abs(currentTarget.X - currentX);
-                                        int distanceY = Math.Abs(currentTarget.Y - currentY);
-                                        int totalDistance = distanceX + distanceY;
-
-                                        // Current target coordinates
-                                        DrawRightAlignedStat(e, "Current WP:", $"({currentTarget.X}, {currentTarget.Y})",
-                                            statsFont, whiteBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-
-                                        // Distance to current waypoint
-                                        Brush distanceBrush = totalDistance <= 1 ? greenBrush :
-                                                             (totalDistance <= 3 ? orangeBrush : redBrush);
-                                        DrawRightAlignedStat(e, "Distance:", $"{totalDistance} steps",
-                                            statsFont, distanceBrush, scaledWidth - rightPadding, ref y, lineSpacing);
-                                    }
-
-                                    // Path progress with detailed info
-                                    if (totalCoords > 0)
-                                    {
-                                        float progress = (float)(currentCoordIndex + 1) / totalCoords;
-                                        string progressText = $"Waypoint Progress: {currentCoordIndex + 1} / {totalCoords}";
-                                        SizeF progressSize = e.Graphics.MeasureString(progressText, statsFont);
-                                        e.Graphics.DrawString(progressText, statsFont, whiteBrush,
-                                            scaledWidth - progressSize.Width - rightPadding, y);
-                                        y += lineSpacing;
-
-                                        // Percentage display
-                                        string percentageText = $"Path Complete: {(progress * 100):F1}%";
-                                        SizeF percentageSize = e.Graphics.MeasureString(percentageText, statsFont);
-                                        e.Graphics.DrawString(percentageText, statsFont, blueBrush,
-                                            scaledWidth - percentageSize.Width - rightPadding, y);
-                                        y += lineSpacing;
-
-                                        // Enhanced progress bar
-                                        int progressWidth = (int)(scaledWidth - 40 - rightPadding);
-                                        int barHeight = 10;
-                                        int barX = 20;
-                                        int filledWidth = (int)(progressWidth * progress);
-
-                                        // Background bar with border
-                                        e.Graphics.FillRectangle(new SolidBrush(Color.FromArgb(100, Color.DarkGray)),
-                                            barX, y, progressWidth, barHeight);
-                                        e.Graphics.DrawRectangle(new Pen(Color.Gray, 1),
-                                            barX, y, progressWidth, barHeight);
-
-                                        // Foreground progress bar with gradient effect
-                                        if (filledWidth > 0)
-                                        {
-                                            using (LinearGradientBrush gradientBrush = new LinearGradientBrush(
-                                                new Rectangle(barX, y, filledWidth, barHeight),
-                                                Color.LimeGreen, Color.Green, LinearGradientMode.Horizontal))
-                                            {
-                                                e.Graphics.FillRectangle(gradientBrush, barX, y, filledWidth, barHeight);
-                                            }
-                                        }
-
-                                        // Current position marker (vertical line)
-                                        if (filledWidth > 0)
-                                        {
-                                            int markerX = barX + filledWidth - 1;
-                                            e.Graphics.DrawLine(new Pen(Color.Yellow, 2),
-                                                markerX, y - 2, markerX, y + barHeight + 2);
-                                        }
-
-                                        // Add percentage text overlay on the bar
-                                        string barPercentText = $"{(progress * 100):F0}%";
-                                        using (Font barFont = new Font("Arial", 8.0f, FontStyle.Bold))
-                                        {
-                                            SizeF barTextSize = e.Graphics.MeasureString(barPercentText, barFont);
-                                            float barTextX = barX + (progressWidth - barTextSize.Width) / 2;
-                                            float barTextY = y + (barHeight - barTextSize.Height) / 2;
-
-                                            // Draw shadow for better visibility
-                                            e.Graphics.DrawString(barPercentText, barFont, new SolidBrush(Color.Black),
-                                                barTextX + 1, barTextY + 1);
-                                            e.Graphics.DrawString(barPercentText, barFont, new SolidBrush(Color.White),
-                                                barTextX, barTextY);
-                                        }
-
-                                        y += barHeight + 5;
-
-                                        // Add a small legend for the waypoint info
-                                        using (Font legendFont = new Font("Arial", 7.0f, FontStyle.Italic))
-                                        {
-                                            string legend = "(Green: Close | Orange: Medium | Red: Far)";
-                                            SizeF legendSize = e.Graphics.MeasureString(legend, legendFont);
-                                            e.Graphics.DrawString(legend, legendFont, grayBrush,
-                                                scaledWidth - legendSize.Width - rightPadding, y);
-                                            y += 15;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[OVERLAY] Paint error: {ex.Message}");
-                        }
-                    };
-
-                    // Optimized update timer with reduced interval
-                    System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer { Interval = 50 };
-
-                    DateTime lastPositionUpdate = DateTime.MinValue;
-                    DateTime lastStyleCheck = DateTime.MinValue;
-                    DateTime lastRegularRefresh = DateTime.MinValue;
-                    const int REGULAR_REFRESH_INTERVAL = 500; // Half a second
-
-                    updateTimer.Tick += (sender, e) =>
-                    {
-                        try
-                        {
-                            DateTime now = DateTime.Now;
-                            bool shouldUpdatePosition = (now - lastPositionUpdate).TotalMilliseconds >= 200;
-                            bool shouldCheckStyle = (now - lastStyleCheck).TotalMilliseconds >= 1000;
-                            bool shouldRegularRefresh = (now - lastRegularRefresh).TotalMilliseconds >= REGULAR_REFRESH_INTERVAL;
-                            bool shouldEnsureTopmost = (now - lastEnsureTopmost).TotalMilliseconds >= 2000; // Add this line
-
-                            // Check target ID change (do this every tick for responsiveness)
-                            int currentTargetId;
-                            lock (memoryLock)
-                            {
-                                currentTargetId = targetId;
-                            }
-
-                            if (currentTargetId != lastKnownTargetId)
-                            {
-                                lastKnownTargetId = currentTargetId;
-                                needsRedraw = true;
-                                // Force immediate refresh on target change
-                                threadForm.Invalidate();
-                            }
-
-                            // Regular refresh every 500ms (for position updates, etc.)
-                            if (shouldRegularRefresh)
-                            {
-                                lastRegularRefresh = now;
-                                needsRedraw = true;
-                                if (showOverlayDebugInfo)
-                                {
-                                    Console.WriteLine($"[OVERLAY] Regular refresh triggered at {now:HH:mm:ss.fff}");
-                                }
-                            }
-
-                            // Update position and size (less frequently)
-                            if (shouldUpdatePosition)
-                            {
-                                lastPositionUpdate = now;
-
-                                GetWindowRect(targetWindow, out RECT currentGameRect);
-                                if (currentGameRect.Right > currentGameRect.Left &&
-                                    currentGameRect.Bottom > currentGameRect.Top)
-                                {
-                                    // Calculate new size based on content
-                                    int contentLines = 14; // Base lines
-                                    if (showOverlayDebugInfo)
-                                        contentLines += 2; // Debug info lines
-                                    if (threadFlags["playing"])
-                                        contentLines += 8; // Enhanced waypoint info
-                                    if (lastKnownTargetId != 0)
-                                        contentLines += 6; // Enhanced target info
-
-                                    int lineHeight = 18;
-                                    int bottomMargin = 20;
-                                    int newHeight = (int)((contentLines * lineHeight + bottomMargin) * statsOverlaySizeScale);
-
-                                    int baseWidth = 300;
-                                    int newWidth = (int)(baseWidth * statsOverlaySizeScale);
-
-                                    // ALWAYS calculate X position from the right edge
-                                    int newX = Math.Max(0, currentGameRect.Right - newWidth - statsOverlayRightOffset);
-
-                                    // USE CONFIGURABLE TOP OFFSET
-                                    int newY = currentGameRect.Top + overlayTopOffset;
-
-                                    // Only update if position/size actually changed
-                                    if (newX != threadForm.Left || newY != threadForm.Top ||
-                                        newWidth != threadForm.Width || newHeight != threadForm.Height)
-                                    {
-                                        if (showOverlayDebugInfo)
-                                        {
-                                            Console.WriteLine($"[OVERLAY] Position update: X={newX}, Y={newY}, Width={newWidth}, Height={newHeight}");
-                                        }
-
-                                        threadForm.Location = new Point(newX, newY);
-                                        threadForm.Size = new Size(newWidth, newHeight);
-                                        needsRedraw = true;
-                                    }
-                                }
-                            }
-
-                            // Check window styles less frequently
-                            if (shouldCheckStyle && threadForm.IsHandleCreated)
-                            {
-                                lastStyleCheck = now;
-
-                                // Only check styles if we haven't been destroyed/recreated
-                                int currentExStyle = GetWindowLong(threadForm.Handle, GWL_EXSTYLE);
-                                int expectedStyle = WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
-
-                                if ((currentExStyle & expectedStyle) != expectedStyle)
-                                {
-                                    SetWindowLong(threadForm.Handle, GWL_EXSTYLE, currentExStyle | expectedStyle);
-                                }
-
-                                // Ensure topmost less frequently
-                                if (!threadForm.TopMost)
-                                {
-                                    threadForm.TopMost = true;
-                                }
-                            }
-
-                            // ADD THIS NEW SECTION - Ensure window stays on top using SetWindowPos
-                            if (shouldEnsureTopmost && threadForm.IsHandleCreated)
-                            {
-                                lastEnsureTopmost = now;
-                                try
-                                {
-                                    // Use SetWindowPos to force the window to stay on top
-                                    SetWindowPos(threadForm.Handle, HWND_TOPMOST, 0, 0, 0, 0,
-                                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-
-                                    if (showOverlayDebugInfo)
-                                    {
-                                        Console.WriteLine($"[OVERLAY] Enforced topmost status via SetWindowPos");
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Console.WriteLine($"[OVERLAY] Error enforcing topmost: {ex.Message}");
-                                }
-                            }
-
-                            // Invalidate if needed
-                            if (needsRedraw)
-                            {
-                                needsRedraw = false;
-                                threadForm.Invalidate();
-                            }
-
-                            // Check if overlay should be closed
-                            if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
-                                overlayForm != threadForm)
-                            {
-                                updateTimer.Stop();
-                                threadForm.Close();
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[OVERLAY] Update error: {ex.Message}");
-                        }
-                    };
-
-                    overlayForm = threadForm;
-                    updateTimer.Start();
-                    threadForm.Show();
-
-                    // Main event loop with optimized timing
-                    DateTime lastCheckTime = DateTime.MinValue;
-                    const int EVENT_LOOP_SLEEP = 10;
-
-                    while (!threadForm.IsDisposed && programRunning && memoryReadActive &&
-                           threadFlags["overlay"] && overlayForm == threadForm)
-                    {
-                        System.Windows.Forms.Application.DoEvents();
-                        Thread.Sleep(EVENT_LOOP_SLEEP);
-
-                        DateTime now = DateTime.Now;
-                        if ((now - lastCheckTime).TotalSeconds >= 1)
-                        {
-                            lastCheckTime = now;
-
-                            // Ensure we're still topmost
-                            if (!threadForm.TopMost)
-                            {
-                                threadForm.TopMost = true;
-                            }
-
-                            // Final check for exit conditions
-                            if (!programRunning || !memoryReadActive || !threadFlags["overlay"] ||
-                                overlayForm != threadForm)
-                            {
-                                break;
-                            }
-                        }
-                    }
-
-                    updateTimer.Stop();
-                    updateTimer.Dispose();
-
-                    if (overlayForm == threadForm)
-                    {
-                        overlayForm = null;
-                    }
-
-                    if (!threadForm.IsDisposed)
-                    {
-                        threadForm.Close();
-                        threadForm.Dispose();
-                    }
-                }
-                finally
-                {
-                    if (threadForm != null && !threadForm.IsDisposed)
-                    {
-                        try
-                        {
-                            threadForm.Close();
-                            threadForm.Dispose();
-                        }
-                        catch { }
-                    }
-
-                    if (overlayForm == threadForm)
-                    {
-                        overlayForm = null;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[OVERLAY] Overlay thread error: {ex.Message}");
-                overlayForm = null;
-            }
-        });
-
-        overlayThread.IsBackground = true;
-        overlayThread.SetApartmentState(ApartmentState.STA);
-        overlayThread.Start();
-        Sleep(100);
+        Debugger("=======================================\n");
     }
 
-    // Helper function to change overlay position while running
-    static void SetOverlayTopOffset(int newOffset)
-    {
-        if (newOffset >= 0 && newOffset <= 1000) // Reasonable range
-        {
-            overlayTopOffset = newOffset;
-            Console.WriteLine($"[OVERLAY] Top offset changed to {overlayTopOffset}px");
-
-            // Force immediate position update if overlay is active
-            if (overlayForm != null && !overlayForm.IsDisposed)
-            {
-                overlayForm.Invalidate();
-            }
-        }
-        else
-        {
-            Console.WriteLine($"[OVERLAY] Invalid offset: {newOffset}. Must be between 0 and 1000.");
-        }
-    }
-    static void DrawRightAlignedStat(PaintEventArgs e, string label, string value, Font font,
-       Brush brush, float rightEdge, ref int y, int lineSpacing)
-    {
-        string fullText = $"{label} {value}";
-        SizeF textSize = e.Graphics.MeasureString(fullText, font);
-        e.Graphics.DrawString(fullText, font, brush, rightEdge - textSize.Width, y);
-        y += lineSpacing;
-    }
-    static void DrawRightAlignedFeature(PaintEventArgs e, string label, bool enabled, Font font,
-        Brush brush, float rightEdge, ref int y, int lineSpacing)
-    {
-        string status = enabled ? "✅" : "❌";
-        string fullText = $"{label} {status}";
-        SizeF textSize = e.Graphics.MeasureString(fullText, font);
-        e.Graphics.DrawString(fullText, font, brush, rightEdge - textSize.Width, y);
-        y += lineSpacing;
-    }
-    class ClickHighlight
-    {
-        public int GameX { get; set; }
-        public int GameY { get; set; }
-        public int Size { get; set; }
-        public DateTime ExpireTime { get; set; }
-        public required string Label { get; set; }
-        public float GetRemainingTimePercentage()
-        {
-            double msRemaining = (ExpireTime - DateTime.Now).TotalMilliseconds;
-            return Math.Max(0f, Math.Min(1f, (float)(msRemaining / 1000.0)));
-        }
-        public bool IsExpired()
-        {
-            return DateTime.Now >= ExpireTime;
-        }
-    }
-    static void StartOverlay()
-    {
-        if (overlayForm != null && !overlayForm.IsDisposed)
-            return;
-        EnsureOverlayExists();
-    }
-    static void StopOverlay()
-    {
-        if (overlayForm == null || overlayForm.IsDisposed)
-            return;
-        var form = overlayForm;
-        overlayForm = null;
-        try
-        {
-            Thread closeThread = new Thread(() =>
-            {
-                try
-                {
-                    if (!form.IsDisposed)
-                    {
-                        form.Close();
-                        form.Dispose();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[OVERLAY] Error in close thread: {ex.Message}");
-                }
-            });
-            closeThread.IsBackground = true;
-            closeThread.SetApartmentState(ApartmentState.STA);
-            closeThread.Start();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[OVERLAY] Error closing overlay: {ex.Message}");
-        }
-    }
-    [DllImport("user32.dll")]
-    static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-    const int NULL_PEN = 8;
-    [DllImport("gdi32.dll")]
-    static extern bool Rectangle(IntPtr hdc, int left, int top, int right, int bottom);
-    static extern bool Ellipse(IntPtr hdc, int left, int top, int right, int bottom);
-    [DllImport("user32.dll")]
-    static extern bool FillRect(IntPtr hDC, [In] ref RECT lprc, IntPtr hbr);
-    [DllImport("user32.dll")]
-    static extern IntPtr CreateIconIndirect([In] ref ICONINFO piconinfo);
-    [StructLayout(LayoutKind.Sequential)]
-    struct ICONINFO
-    {
-        public bool fIcon;
-        public int xHotspot;
-        public int yHotspot;
-        public IntPtr hbmMask;
-        public IntPtr hbmColor;
-    }
-    const int WHITE_BRUSH = 0;
-    [DllImport("gdi32.dll")]
-    static extern int SetROP2(IntPtr hdc, int fnDrawMode);
-    const int R2_XORPEN = 7;
-    const int PS_SOLID = 0;
-    [DllImport("gdi32.dll")]
-    static extern IntPtr CreatePen(int fnPenStyle, int nWidth, uint crColor);
-    [DllImport("gdi32.dll")]
-    static extern bool MoveToEx(IntPtr hdc, int x, int y, IntPtr lpPoint);
-    [DllImport("gdi32.dll")]
-    static extern bool LineTo(IntPtr hdc, int x, int y);
-    [DllImport("gdi32.dll")]
-    static extern IntPtr CreateSolidBrush(uint colorRef);
-    [DllImport("gdi32.dll")]
-    static extern uint RGB(int r, int g, int b);
-    [DllImport("gdi32.dll")]
-    static extern IntPtr GetStockObject(int fnObject);
-    [DllImport("user32.dll")]
-    static extern bool InvalidateRect(IntPtr hWnd, IntPtr lpRect, bool bErase);
-    const int HOLLOW_BRUSH = 5;
-    [DllImport("user32.dll")]
-    static extern IntPtr GetDC(IntPtr hWnd);
-    [DllImport("user32.dll")]
-    static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-    [DllImport("gdi32.dll")]
-    static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
-    [DllImport("gdi32.dll")]
-    static extern bool DeleteObject(IntPtr hObject);
-    [DllImport("gdi32.dll", EntryPoint = "RGB")]
-    static extern uint RGB(byte r, byte g, byte b);
-    static uint MakeRGB(byte r, byte g, byte b)
-    {
-        return r | (((uint)g) << 8) | (((uint)b) << 16);
-    }
-    static object clickOverlayLock = new object();
-    static List<(int x, int y, Color color, DateTime created, DateTime expires)> clickPositions =
-    new List<(int x, int y, Color color, DateTime created, DateTime expires)>();
-    static Thread? clickOverlayThread = null;
-    static bool clickOverlayActive = false;
-    static Form? clickOverlayForm = null;
-    static readonly Color DEFAULT_LEFT_CLICK_COLOR = Color.FromArgb(180, 0, 255, 0);
-    static readonly Color DEFAULT_RIGHT_CLICK_COLOR = Color.FromArgb(180, 255, 128, 0);
-    static readonly Color WAYPOINT_CLICK_COLOR = Color.FromArgb(180, 255, 0, 255);
-    static void StartClickOverlay()
-    {
-        lock (clickOverlayLock)
-        {
-            if (clickOverlayActive)
-            {
-                return;
-            }
-            clickPositions.Clear();
-            clickOverlayActive = true;
-            clickOverlayThread = new Thread(() =>
-            {
-                try
-                {
-                    RunClickOverlay();
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[CLICK OVERLAY] Thread error: {ex.Message}");
-                }
-                finally
-                {
-                    lock (clickOverlayLock)
-                    {
-                        clickOverlayActive = false;
-                        clickOverlayForm = null;
-                    }
-                }
-            });
-            clickOverlayThread.IsBackground = true;
-            clickOverlayThread.SetApartmentState(ApartmentState.STA);
-            clickOverlayThread.Start();
-        }
-    }
-    static void StopClickOverlay()
-    {
-        lock (clickOverlayLock)
-        {
-            if (!clickOverlayActive)
-                return;
-            clickOverlayActive = false;
-            Form form = clickOverlayForm;
-            if (form != null && !form.IsDisposed)
-            {
-                try
-                {
-                    if (form.InvokeRequired)
-                    {
-                        form.BeginInvoke(new Action(() =>
-                        {
-                            try { form.Close(); } catch { }
-                        }));
-                    }
-                    else
-                    {
-                        form.Close();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[CLICK OVERLAY] Error closing form: {ex.Message}");
-                }
-            }
-        }
-    }
-    static void RunClickOverlay()
-    {
-        Form form = new Form
-        {
-            FormBorderStyle = FormBorderStyle.None,
-            ShowInTaskbar = false,
-            TopMost = true,
-            Opacity = 0.8,
-            TransparencyKey = Color.Black,
-            BackColor = Color.Black
-        };
-        if (targetWindow != IntPtr.Zero)
-        {
-            GetWindowRect(targetWindow, out RECT rect);
-            form.Location = new Point(rect.Left, rect.Top);
-            form.Size = new Size(rect.Right - rect.Left, rect.Bottom - rect.Top);
-        }
-        else
-        {
-            form.Location = new Point(0, 0);
-            form.Size = new Size(800, 600);
-        }
-        int exStyle = GetWindowLong(form.Handle, GWL_EXSTYLE);
-        SetWindowLong(form.Handle, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_LAYERED);
-        form.Paint += (sender, e) =>
-        {
-            try
-            {
-                lock (clickOverlayLock)
-                {
-                    if (targetWindow == IntPtr.Zero || clickPositions.Count == 0)
-                        return;
-                    GetWindowRect(targetWindow, out RECT gameRect);
-                    foreach (var click in clickPositions)
-                    {
-                        if (DateTime.Now > click.expires)
-                            continue;
-                        int relX = click.x - gameRect.Left;
-                        int relY = click.y - gameRect.Top;
-                        if (relX >= 0 && relY >= 0 && relX < form.Width && relY < form.Height)
-                        {
-                            bool isWaypoint = click.color.R > 200 && click.color.G < 100 && click.color.B > 200;
-                            int squareSize = isWaypoint ?
-                                Math.Max(pixelSize, 20) :
-                                Math.Max(pixelSize, 24);
-                            int left = relX - (squareSize / 2);
-                            int top = relY - (squareSize / 2);
-                            int alpha;
-                            if (isWaypoint)
-                            {
-                                alpha = 180;
-                            }
-                            else
-                            {
-                                TimeSpan timeRemaining = click.expires - DateTime.Now;
-                                double remainingPercent = timeRemaining.TotalMilliseconds / CLICK_MARKER_LIFESPAN.TotalMilliseconds;
-                                alpha = (int)(remainingPercent * 180);
-                                alpha = Math.Max(50, Math.Min(255, alpha));
-                            }
-                            Color displayColor = Color.FromArgb(
-                                alpha,
-                                click.color.R,
-                                click.color.G,
-                                click.color.B
-                            );
-                            if (isWaypoint)
-                            {
-                                int diameter = squareSize;
-                                int radius = diameter / 2;
-                                using (SolidBrush brush = new SolidBrush(displayColor))
-                                {
-                                    e.Graphics.FillEllipse(brush, left, top, diameter, diameter);
-                                }
-                                using (Pen crosshairPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1))
-                                {
-                                    e.Graphics.DrawLine(
-                                        crosshairPen,
-                                        left, top + radius,
-                                        left + diameter, top + radius
-                                    );
-                                    e.Graphics.DrawLine(
-                                        crosshairPen,
-                                        left + radius, top,
-                                        left + radius, top + diameter
-                                    );
-                                    e.Graphics.DrawEllipse(
-                                        crosshairPen,
-                                        left, top, diameter, diameter
-                                    );
-                                }
-                            }
-                            else
-                            {
-                                using (SolidBrush brush = new SolidBrush(displayColor))
-                                {
-                                    e.Graphics.FillRectangle(brush, left, top, squareSize, squareSize);
-                                }
-                                using (Pen borderPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1))
-                                {
-                                    e.Graphics.DrawRectangle(borderPen, left, top, squareSize, squareSize);
-                                }
-                            }
-                            TimeSpan remainingTime = click.expires - DateTime.Now;
-                            if (remainingTime.TotalSeconds > 0.3)
-                            {
-                                string timeText = $"{remainingTime.TotalSeconds:F1}s";
-                                using (Font font = new Font("Arial", isWaypoint ? 8 : 8, FontStyle.Bold))
-                                {
-                                    SizeF textSize = e.Graphics.MeasureString(timeText, font);
-                                    float textX = left + (squareSize - textSize.Width) / 2;
-                                    float textY = top + (squareSize - textSize.Height) / 2;
-                                    using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255)))
-                                    {
-                                        e.Graphics.DrawString(timeText, font, textBrush, textX, textY);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[CLICK OVERLAY] Paint error: {ex.Message}");
-            }
-        };
-        System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer
-        {
-            Interval = 100
-        };
-        DateTime lastCleanupTime = DateTime.MinValue;
-        const int CLEANUP_INTERVAL_MS = 500;
-        timer.Tick += (sender, e) =>
-        {
-            try
-            {
-                DateTime now = DateTime.Now;
-                bool shouldUpdatePosition = false;
-                bool shouldRemoveExpired = false;
-                if ((now - lastCleanupTime).TotalMilliseconds >= CLEANUP_INTERVAL_MS)
-                {
-                    shouldUpdatePosition = true;
-                    shouldRemoveExpired = true;
-                    lastCleanupTime = now;
-                }
-                if (shouldUpdatePosition && targetWindow != IntPtr.Zero)
-                {
-                    GetWindowRect(targetWindow, out RECT gameRect);
-                    if (gameRect.Right > gameRect.Left && gameRect.Bottom > gameRect.Top)
-                    {
-                        int newWidth = gameRect.Right - gameRect.Left;
-                        int newHeight = gameRect.Bottom - gameRect.Top;
-                        if (form.Left != gameRect.Left || form.Top != gameRect.Top ||
-                            form.Width != newWidth || form.Height != newHeight)
-                        {
-                            form.Location = new Point(gameRect.Left, gameRect.Top);
-                            form.Size = new Size(newWidth, newHeight);
-                        }
-                    }
-                }
-                if (shouldRemoveExpired)
-                {
-                    lock (clickOverlayLock)
-                    {
-                        int countBefore = clickPositions.Count;
-                        clickPositions.RemoveAll(click => now >= click.expires);
-                        int removed = countBefore - clickPositions.Count;
-                        if (removed > 0)
-                        {
-                        }
-                    }
-                }
-                lock (clickOverlayLock)
-                {
-                    if (clickPositions.Count > 0)
-                    {
-                        form.Invalidate();
-                    }
-                }
-                lock (clickOverlayLock)
-                {
-                    if (!clickOverlayActive || clickOverlayForm != form)
-                    {
-                        timer.Stop();
-                        form.Close();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[CLICK OVERLAY] Timer error: {ex.Message}");
-            }
-        };
-        lock (clickOverlayLock)
-        {
-            clickOverlayForm = form;
-        }
-        timer.Start();
-        form.Show();
-        DateTime lastDoEventsTime = DateTime.MinValue;
-        const int DO_EVENTS_INTERVAL_MS = 25;
-        while (clickOverlayActive && clickOverlayForm == form && !form.IsDisposed)
-        {
-            DateTime now = DateTime.Now;
-            if ((now - lastDoEventsTime).TotalMilliseconds >= DO_EVENTS_INTERVAL_MS)
-            {
-                Application.DoEvents();
-                lastDoEventsTime = now;
-            }
-            else
-            {
-                Thread.Sleep(5);
-            }
-        }
-        timer.Stop();
-        timer.Dispose();
-        if (!form.IsDisposed)
-        {
-            form.Close();
-            form.Dispose();
-        }
-    }
-    static void RecordWaypointClick(int x, int y)
-    {
-        lock (clickOverlayLock)
-        {
-            if (!clickOverlayActive)
-                return;
-            POINT screenPoint = new POINT { X = x, Y = y };
-            ClientToScreen(targetWindow, ref screenPoint);
-            DateTime creationTime = DateTime.Now;
-            DateTime expirationTime = creationTime.Add(TimeSpan.FromSeconds(0.5));
-            clickPositions.Add((
-                screenPoint.X,
-                screenPoint.Y,
-                WAYPOINT_CLICK_COLOR,
-                creationTime,
-                expirationTime
-            ));
-        }
-    }
-    static readonly TimeSpan CLICK_MARKER_LIFESPAN = TimeSpan.FromSeconds(0.8);
-    static void RecordClickPosition(int x, int y, bool isLeftClick)
-    {
-        lock (clickOverlayLock)
-        {
-            if (!clickOverlayActive)
-                return;
-            POINT screenPoint = new POINT { X = x, Y = y };
-            ClientToScreen(targetWindow, ref screenPoint);
-            DateTime creationTime = DateTime.Now;
-            DateTime expirationTime = creationTime.Add(CLICK_MARKER_LIFESPAN);
-            Color clickColor = isLeftClick ? DEFAULT_LEFT_CLICK_COLOR : DEFAULT_RIGHT_CLICK_COLOR;
-            clickPositions.Add((
-                screenPoint.X,
-                screenPoint.Y,
-                clickColor,
-                creationTime,
-                expirationTime
-            ));
-        }
-    }
-    static bool lootRecognizerActive = true;
-    static Thread? lootRecognizerThread = null;
-    static readonly object lootRecognizerLock = new object();
-    static Dictionary<string, Mat> lootTemplates = new Dictionary<string, Mat>();
-    static string dropsDirectoryPath = "drops";
-    static readonly TimeSpan LOOT_SCAN_INTERVAL = TimeSpan.FromSeconds(1);
-    static readonly TimeSpan DRAG_OPERATION_COOLDOWN = TimeSpan.FromSeconds(1);
-    static DateTime lastDragOperationTime = DateTime.MinValue;
-    static double lootMatchThreshold = 0.92;
-    static void LootRecognizerThread()
+    static int firstSlotBpX = 840;
+    static int firstSlotBpY = 250;
+    static int debugScreenshotCounter = 1;
+    static void ScanBackpackForRecognizedItems()
     {
         try
         {
-            if (!Directory.Exists(dropsDirectoryPath))
-            {
-                Directory.CreateDirectory(dropsDirectoryPath);
-            }
-            LoadLootTemplates();
-            if (lootTemplates.Count == 0)
-            {
-                Console.WriteLine($"[LOOT] No loot item templates found in {dropsDirectoryPath}");
-                Console.WriteLine("[LOOT] Add .png or .jpg item images to detect them");
-            }
-            else
-            {
-                Console.WriteLine($"[LOOT] Loaded {lootTemplates.Count} item templates to recognize:");
-                foreach (var template in lootTemplates.Keys)
-                {
-                    Console.WriteLine($"[LOOT] - {template}");
-                }
-            }
-            if (lootTemplates.ContainsKey(PLATINUM_TEMPLATE_NAME))
-            {
-            }
-            else
-            {
-                Console.WriteLine($"[LOOT] WARNING: Platinum template '{PLATINUM_TEMPLATE_NAME}' not found");
-            }
-            DateTime lastScanTime = DateTime.MinValue;
-            while (memoryReadActive && lootRecognizerActive)
-            {
-                try
-                {
-                    DateTime now = DateTime.Now;
-                    if (shouldScanInventoryForPlatinum && now >= lastInventoryScanTime)
-                    {
-                        ScanInventoryForPlatinum();
-                    }
-                    if ((now - lastScanTime) >= LOOT_SCAN_INTERVAL)
-                    {
-                        lastScanTime = now;
-                        if (lootTemplates.Count > 0 && targetWindow != IntPtr.Zero)
-                        {
-                            ScanBackpackForLoot();
-                        }
-                    }
-                    Sleep(200);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[LOOT] Error in loot recognizer: {ex.Message}");
-                    Sleep(1000);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[LOOT] Error initializing loot recognizer: {ex.Message}");
-        }
-    }
-    static void LoadLootTemplates()
-    {
-        try
-        {
-            foreach (var template in lootTemplates.Values)
-            {
-                template.Dispose();
-            }
-            lootTemplates.Clear();
-            string[] imageFiles = Directory.GetFiles(dropsDirectoryPath, "*.*", SearchOption.TopDirectoryOnly)
-                .Where(f => IsImageFile(f))
-                .ToArray();
-            foreach (string filePath in imageFiles)
-            {
-                try
-                {
-                    string fileName = Path.GetFileNameWithoutExtension(filePath);
-                    Mat template = CvInvoke.Imread(filePath, ImreadModes.Color);
-                    if (template.IsEmpty)
-                    {
-                        continue;
-                    }
-                    lootTemplates[fileName] = template;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[LOOT] Error loading template {filePath}: {ex.Message}");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[LOOT] Error loading loot templates: {ex.Message}");
-        }
-    }
-    static bool IsImageFile(string filePath)
-    {
-        string ext = Path.GetExtension(filePath).ToLower();
-        return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp";
-    }
-    private static bool hasDebugImageBeenSaved = false;
-    static void ScanBackpackForLoot()
-    {
-        var debugMode = false;
-        try
-        {
-            UpdateUIPositions();
-            if ((DateTime.Now - lastDragOperationTime) < DRAG_OPERATION_COOLDOWN)
-            {
-                return;
-            }
-            string debugDir = string.Empty;
-            if (debugMode)
-            {
-                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                debugDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug", $"scan_{timestamp}");
-                if (!Directory.Exists(debugDir)) Directory.CreateDirectory(debugDir);
-            }
-            GetClientRect(targetWindow, out RECT windowRect);
-            int windowWidth = windowRect.Right - windowRect.Left;
-            int windowHeight = windowRect.Bottom - windowRect.Top;
-            int backpackScanLeft = firstSlotBpX - (pixelSize / 2);
-            int backpackScanTop = firstSlotBpY - (pixelSize / 2);
-            int backpackScanWidth = pixelSize * 4;
-            int backpackScanHeight = pixelSize * 2;
-            if (backpackScanLeft < 0) backpackScanLeft = 0;
-            if (backpackScanTop < 0) backpackScanTop = 0;
-            if (backpackScanLeft + backpackScanWidth > windowWidth) backpackScanWidth = windowWidth - backpackScanLeft;
-            if (backpackScanTop + backpackScanHeight > windowHeight) backpackScanHeight = windowHeight - backpackScanTop;
-            using (Mat backpackArea = CaptureGameAreaAsMat(targetWindow, backpackScanLeft, backpackScanTop, backpackScanWidth, backpackScanHeight))
+            ReadMemoryValues();
+
+            int scanLeft = 780;
+            int scanTop = 230;
+            int scanWidth = 170;
+            int scanHeight = 200;
+
+            using (Mat backpackArea = CaptureGameAreaAsMat(targetWindow, scanLeft, scanTop, scanWidth, scanHeight))
             {
                 if (backpackArea == null || backpackArea.IsEmpty)
-                {
                     return;
-                }
-                if (debugMode)
+
+                SaveDebugScreenshot(backpackArea, scanLeft, scanTop, scanWidth, scanHeight);
+
+                Point? backpackPosition = FindPurpleBackpack(backpackArea, scanLeft, scanTop);
+                if (backpackPosition.HasValue)
                 {
-                    string scanAreaPath = Path.Combine(debugDir, "backpack_scan_area.png");
-                    CvInvoke.Imwrite(scanAreaPath, backpackArea);
-                    string templatesDir = Path.Combine(debugDir, "templates");
-                    if (!Directory.Exists(templatesDir)) Directory.CreateDirectory(templatesDir);
-                    foreach (var template in lootTemplates)
-                    {
-                        string templatePath = Path.Combine(templatesDir, $"{template.Key}.png");
-                        CvInvoke.Imwrite(templatePath, template.Value);
-                    }
-                }
-                Mat visualizationImage = debugMode ? backpackArea.Clone() : null;
-                try
-                {
-                    foreach (var template in lootTemplates)
-                    {
-                        string itemName = template.Key;
-                        Mat itemTemplate = template.Value;
-                        using (Mat result = new Mat())
-                        {
-                            CvInvoke.MatchTemplate(backpackArea, itemTemplate, result, TemplateMatchingType.CcoeffNormed);
-                            double minVal = 0, maxVal = 0;
-                            Point minLoc = new Point(), maxLoc = new Point();
-                            CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
-                            if (debugMode)
-                            {
-                                using (Mat normalizedResult = new Mat())
-                                {
-                                    CvInvoke.Normalize(result, normalizedResult, 0, 255, NormType.MinMax);
-                                    CvInvoke.ConvertScaleAbs(normalizedResult, normalizedResult, 1.0, 0.0);
-                                    string resultPath = Path.Combine(debugDir, $"match_result_{itemName}.png");
-                                    CvInvoke.Imwrite(resultPath, normalizedResult);
-                                }
-                                Rectangle matchRect = new Rectangle(maxLoc, new Size(itemTemplate.Width, itemTemplate.Height));
-                                MCvScalar color = (maxVal >= lootMatchThreshold) ?
-                                                new MCvScalar(0, 255, 0) :
-                                                new MCvScalar(0, 0, 255);
-                                CvInvoke.Rectangle(visualizationImage, matchRect, color, 2);
-                                string matchText = $"{itemName}: {maxVal:F3}";
-                                Point textPoint = new Point(matchRect.X, Math.Max(0, matchRect.Y - 5));
-                                CvInvoke.PutText(visualizationImage, matchText, textPoint,
-                                                FontFace.HersheyComplex, 0.5, color, 1);
-                                if (maxVal >= 0.5)
-                                {
-                                    using (Mat matchedRegion = new Mat(backpackArea, matchRect))
-                                    {
-                                        string matchedRegionPath = Path.Combine(debugDir, $"matched_region_{itemName}_{maxVal:F3}.png");
-                                        CvInvoke.Imwrite(matchedRegionPath, matchedRegion);
-                                    }
-                                }
-                            }
-                            if (maxVal >= lootMatchThreshold)
-                            {
-                                if (debugMode)
-                                {
-                                    string visualizationPath = Path.Combine(debugDir, "all_matches_visualization.png");
-                                    CvInvoke.Imwrite(visualizationPath, visualizationImage);
-                                    using (Mat fullScreenshot = CaptureGameAreaAsMat(targetWindow, 0, 0, windowWidth, windowHeight))
-                                    {
-                                        if (fullScreenshot != null && !fullScreenshot.IsEmpty)
-                                        {
-                                            int itemX = backpackScanLeft + maxLoc.X + (itemTemplate.Width / 2);
-                                            int itemY = backpackScanTop + maxLoc.Y + (itemTemplate.Height / 2);
-                                            int invX = inventoryX;
-                                            int invY = inventoryY + pixelSize;
-                                            CvInvoke.Circle(fullScreenshot, new Point(itemX, itemY), 10, new MCvScalar(0, 0, 255), 2);
-                                            CvInvoke.Circle(fullScreenshot, new Point(invX, invY), 10, new MCvScalar(0, 255, 0), 2);
-                                            CvInvoke.Line(fullScreenshot, new Point(itemX, itemY), new Point(invX, invY),
-                                                        new MCvScalar(255, 255, 0), 2, LineType.AntiAlias);
-                                            string dragPath = Path.Combine(debugDir, "drag_visualization.png");
-                                            CvInvoke.Imwrite(dragPath, fullScreenshot);
-                                        }
-                                    }
-                                }
-                                Sleep(1);
-                                int lootItemX = backpackScanLeft + maxLoc.X + (itemTemplate.Width / 2);
-                                int lootItemY = backpackScanTop + maxLoc.Y + (itemTemplate.Height / 2);
-                                int inventorySlotX = inventoryX;
-                                int inventorySlotY = inventoryY + pixelSize + 30;
-                                if (itemName.Equals("100gold", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    VirtualRightClick(targetWindow, lootItemX, lootItemY);
-                                    lastDragOperationTime = DateTime.Now;
-                                }
-                                else
-                                {
-                                    int invX = inventoryX;
-                                    int invY = inventoryY + pixelSize + 30;
-                                    if (itemName.Equals("stealthring", StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        invY = inventoryY;
-                                    }
-                                    else if (itemName.Equals("lifering", StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        invY = inventoryY + 3 * pixelSize + 15;
-                                    }
-                                    DragItemToDestination(lootItemX, lootItemY, invX, invY, itemName);
-                                    lastDragOperationTime = DateTime.Now;
-                                }
-                                lastDragOperationTime = DateTime.Now;
-                                break;
-                            }
-                        }
-                    }
-                    if (debugMode && visualizationImage != null)
-                    {
-                        string allMatchesPath = Path.Combine(debugDir, "all_matches_visualization.png");
-                        CvInvoke.Imwrite(allMatchesPath, visualizationImage);
-                    }
-                }
-                finally
-                {
-                    if (visualizationImage != null)
-                    {
-                        visualizationImage.Dispose();
-                    }
+                    // Convert to game window coordinates
+                    int itemX = scanLeft + backpackPosition.Value.X;
+                    int itemY = scanTop + backpackPosition.Value.Y;
+
+                    // Destination coordinates (left backpack)
+                    int leftBackpackX = 730;
+                    int leftBackpackY = 215;
+
+                    // Convert client coordinates to screen coordinates before passing to DragItem
+                    POINT sourcePoint = new POINT { X = itemX, Y = itemY };
+                    POINT destPoint = new POINT { X = leftBackpackX, Y = leftBackpackY };
+
+                    ClientToScreen(targetWindow, ref sourcePoint);
+                    ClientToScreen(targetWindow, ref destPoint);
+
+                    Debugger($"[DROPS] Converting scan coords ({backpackPosition.Value.X}, {backpackPosition.Value.Y}) to game coords ({itemX}, {itemY})");
+                    Debugger($"[DROPS] Converting game coords to screen coords: ({itemX}, {itemY}) -> ({sourcePoint.X}, {sourcePoint.Y})");
+                    Debugger($"[DROPS] Destination screen coords: ({leftBackpackX}, {leftBackpackY}) -> ({destPoint.X}, {destPoint.Y})");
+
+                    // Pass screen coordinates to DragItem
+                    DragItem(sourcePoint.X, sourcePoint.Y, destPoint.X, destPoint.Y);
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[LOOT ERROR] Error scanning backpack: {ex.Message}");
-            Console.WriteLine($"[LOOT ERROR] Stack trace: {ex.StackTrace}");
+            Debugger($"[DROPS] Error scanning backpack: {ex.Message}");
         }
     }
-    [DllImport("gdi32.dll")]
-    static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-    [DllImport("gdi32.dll")]
-    static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
-    [DllImport("gdi32.dll")]
-    static extern bool DeleteDC(IntPtr hdc);
-    [DllImport("gdi32.dll")]
-    static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight,
-    IntPtr hdcSrc, int nXSrc, int nYSrc, uint dwRop);
-    const uint SRCCOPY = 0x00CC0020;
+
+    static void SaveDebugScreenshot(Mat backpackArea, int scanLeft, int scanTop, int scanWidth, int scanHeight)
+    {
+        return;
+        try
+        {
+            string debugDir = "debug_screenshots";
+            if (!Directory.Exists(debugDir))
+            {
+                Directory.CreateDirectory(debugDir);
+            }
+
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string filename = Path.Combine(debugDir, $"backpack_scan_{debugScreenshotCounter:D3}_{timestamp}.png");
+
+            CvInvoke.Imwrite(filename, backpackArea);
+
+            Debugger($"[DEBUG] Screenshot saved: {filename}");
+            Debugger($"[DEBUG] Scan area: Left={scanLeft}, Top={scanTop}, Width={scanWidth}, Height={scanHeight}");
+
+            debugScreenshotCounter++;
+        }
+        catch (Exception ex)
+        {
+            Debugger($"[DEBUG] Error saving screenshot: {ex.Message}");
+        }
+    }
+
     static Mat? CaptureGameAreaAsMat(IntPtr hWnd, int x, int y, int width, int height)
     {
         IntPtr hdcWindow = IntPtr.Zero;
@@ -5575,6 +2658,7 @@ class Program
         IntPtr hBitmap = IntPtr.Zero;
         IntPtr hOld = IntPtr.Zero;
         Mat result = null;
+
         try
         {
             hdcWindow = GetDC(hWnd);
@@ -5582,23 +2666,29 @@ class Program
             {
                 return null;
             }
+
             hdcMemDC = CreateCompatibleDC(hdcWindow);
             if (hdcMemDC == IntPtr.Zero)
             {
                 return null;
             }
+
             hBitmap = CreateCompatibleBitmap(hdcWindow, width, height);
             if (hBitmap == IntPtr.Zero)
             {
                 return null;
             }
+
             hOld = SelectObject(hdcMemDC, hBitmap);
+
             bool success = BitBlt(hdcMemDC, 0, 0, width, height, hdcWindow, x, y, SRCCOPY);
             if (!success)
             {
                 return null;
             }
+
             SelectObject(hdcMemDC, hOld);
+
             using (Bitmap bmp = Bitmap.FromHbitmap(hBitmap))
             {
                 Rectangle rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
@@ -5613,11 +2703,12 @@ class Program
                     bmp.UnlockBits(bmpData);
                 }
             }
+
             return result;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[LOOT] Screenshot error: {ex.Message}");
+            Debugger($"[CAPTURE] Screenshot error: {ex.Message}");
             result?.Dispose();
             return null;
         }
@@ -5628,270 +2719,1984 @@ class Program
             if (hdcWindow != IntPtr.Zero) ReleaseDC(hWnd, hdcWindow);
         }
     }
-    static bool shouldScanInventoryForPlatinum = true;
-    static readonly string PLATINUM_TEMPLATE_NAME = "100platinum";
-    static readonly TimeSpan PLATINUM_SCAN_DELAY = TimeSpan.FromMilliseconds(1500);
-    static DateTime lastInventoryScanTime = DateTime.MinValue;
-    static void DragItemToDestination(int sourceX, int sourceY, int destX, int destY, string itemName)
+
+    static Point? FindPurpleBackpack(Mat scanArea, int scanLeft, int scanTop)
     {
         try
         {
-            IntPtr sourceLParam = MakeLParam(sourceX, sourceY);
-            IntPtr destLParam = MakeLParam(destX, destY);
-            SendMessage(targetWindow, WM_MOUSEMOVE, IntPtr.Zero, sourceLParam);
-            Sleep(1);
-            SendMessage(targetWindow, WM_LBUTTONDOWN, IntPtr.Zero, sourceLParam);
-            Sleep(1);
-            RecordClickPosition(sourceX, sourceY, true);
-            SendMessage(targetWindow, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), destLParam);
-            Sleep(1);
-            SendMessage(targetWindow, WM_LBUTTONUP, IntPtr.Zero, destLParam);
-            Sleep(1);
-            RecordClickPosition(destX, destY, true);
-            Sleep(1);
-            if (itemName.Equals(PLATINUM_TEMPLATE_NAME, StringComparison.OrdinalIgnoreCase))
+            string recognizedItemsPath = "recognizedItems";
+            string purpleBackpackPath = Path.Combine(recognizedItemsPath, "purplebackpack.png");
+
+            if (!File.Exists(purpleBackpackPath))
             {
-                shouldScanInventoryForPlatinum = true;
-                lastInventoryScanTime = DateTime.Now.Add(PLATINUM_SCAN_DELAY);
+                Debugger("[DROPS] purplebackpack.png not found in recognizedItems folder");
+                return null;
             }
+
+            using (Mat purpleBackpackTemplate = CvInvoke.Imread(purpleBackpackPath, ImreadModes.Color))
+            {
+                if (purpleBackpackTemplate.IsEmpty)
+                    return null;
+
+                using (Mat result = new Mat())
+                {
+                    CvInvoke.MatchTemplate(scanArea, purpleBackpackTemplate, result, TemplateMatchingType.CcoeffNormed);
+
+                    double minVal = 0, maxVal = 0;
+                    Point minLoc = new Point(), maxLoc = new Point();
+                    CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
+
+                    if (maxVal >= 0.95)
+                    {
+                        // Create debug image showing found item
+                        Mat debugImage = scanArea.Clone();
+                        Rectangle foundRect = new Rectangle(maxLoc.X, maxLoc.Y, purpleBackpackTemplate.Width, purpleBackpackTemplate.Height);
+                        CvInvoke.Rectangle(debugImage, foundRect, new MCvScalar(0, 255, 0), 2);
+                        string confidenceText = $"Conf: {maxVal:F3}";
+                        CvInvoke.PutText(debugImage, confidenceText, new Point(foundRect.X, foundRect.Y - 10),
+                            FontFace.HersheyComplex, 0.5, new MCvScalar(0, 255, 0), 2);
+                        SaveFoundItemDebugScreenshot(debugImage);
+                        debugImage.Dispose();
+
+                        // Return the center of the found backpack in scan area coordinates
+                        // (NOT game window coordinates)
+                        Point backpackCenter = new Point(
+                            maxLoc.X + purpleBackpackTemplate.Width / 2,
+                            maxLoc.Y + purpleBackpackTemplate.Height / 2
+                        );
+
+                        Debugger($"[DROPS] Found purple backpack at scan area position ({backpackCenter.X}, {backpackCenter.Y}) with confidence {maxVal:F2}");
+                        return backpackCenter;
+                    }
+                }
+            }
+
+            return null;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[LOOT ERROR] Error dragging item: {ex.Message}");
-            Console.WriteLine($"[LOOT ERROR] Stack trace: {ex.StackTrace}");
+            Debugger($"[DROPS] Error finding purple backpack: {ex.Message}");
+            return null;
         }
     }
-    static void ScanInventoryForPlatinum()
+
+    static void SaveFoundItemDebugScreenshot(Mat debugImage)
     {
         try
         {
-            Sleep(1024);
-            UpdateUIPositions();
-            int invScanLeft = inventoryX - (pixelSize / 2);
-            int invScanTop = inventoryY - (pixelSize / 2);
-            int invScanWidth = pixelSize * 4;
-            int invScanHeight = pixelSize * 3;
-            GetClientRect(targetWindow, out RECT windowRect);
-            int windowWidth = windowRect.Right - windowRect.Left;
-            int windowHeight = windowRect.Bottom - windowRect.Top;
-            if (invScanLeft < 0) invScanLeft = 0;
-            if (invScanTop < 0) invScanTop = 0;
-            if (invScanLeft + invScanWidth > windowWidth) invScanWidth = windowWidth - invScanLeft;
-            if (invScanTop + invScanHeight > windowHeight) invScanHeight = windowHeight - invScanTop;
-            using (Mat inventoryArea = CaptureGameAreaAsMat(targetWindow, invScanLeft, invScanTop, invScanWidth, invScanHeight))
+            string debugDir = "debug_screenshots";
+            if (!Directory.Exists(debugDir))
             {
-                if (inventoryArea == null || inventoryArea.IsEmpty)
+                Directory.CreateDirectory(debugDir);
+            }
+
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+            string filename = Path.Combine(debugDir, $"found_item_{timestamp}.png");
+
+            CvInvoke.Imwrite(filename, debugImage);
+
+            Debugger($"[DEBUG] Found item screenshot saved: {filename}");
+        }
+        catch (Exception ex)
+        {
+            Debugger($"[DEBUG] Error saving found item screenshot: {ex.Message}");
+        }
+    }
+
+
+
+
+
+
+
+
+    class Coordinate
+    {
+        public int X { get; set; }
+        public int Y { get; set; }
+        public int Z { get; set; }
+
+    }
+    class CoordinateData
+    {
+        public List<Coordinate> cords { get; set; } = new List<Coordinate>();
+    }
+    public class FightTarantulasAction : Action
+    {
+        private static CoordinateData loadedCoords;
+        private static int currentCoordIndex = 0;
+        private static bool returningToStart = false;
+        private static string cordsFilePath = "cords.json";
+        private static int totalCoords = 0;
+        private static bool boolInit = true;
+        static private int globalLastIndex = -1;
+        private static int maxBacktrackDistance = 10;
+        private static TimeSpan currentTargetEngagementDuration = TimeSpan.Zero;
+        private static DateTime targetEngagementStartTime = DateTime.MinValue;
+        private static int currentTargetEngagementId = 0;
+        private static bool shouldForceTargetChange = false;
+
+        public override string GetDescription()
+        {
+            return "Fight tarantulas";
+        }
+        public FightTarantulasAction()
+        {
+            MaxRetries = 1;
+        }
+
+        public override bool Execute()
+        {
+            PlayCoordinatesIteration();
+            SendKeyPress(VK_ESCAPE);
+            SendKeyPress(VK_ESCAPE);
+            SendKeyPress(VK_ESCAPE);
+            ReturnToFirstWaypoint();
+            return true;
+        }
+
+        private void ReturnToFirstWaypoint()
+        {
+            try
+            {
+                // 1. Recognize where we are by reading current memory values
+                ReadMemoryValues();
+                Debugger($"[RETURN] Current position: ({currentX}, {currentY}, {currentZ})");
+
+                // Make sure coords are loaded
+                if (loadedCoords == null)
                 {
+                    string json = File.ReadAllText(cordsFilePath);
+                    loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
+
+                    if (loadedCoords == null || loadedCoords.cords.Count == 0)
+                    {
+                        Debugger("[RETURN] ERROR: No waypoints loaded");
+                        return;
+                    }
+                }
+
+                List<Coordinate> waypoints = loadedCoords.cords;
+
+                // 3. Get coordinates of [0] waypoint (first waypoint)
+                if (waypoints == null || waypoints.Count == 0)
+                {
+                    Debugger("[RETURN] ERROR: No waypoints available");
                     return;
                 }
-                if (lootTemplates.TryGetValue(PLATINUM_TEMPLATE_NAME, out Mat platinumTemplate))
+
+                Coordinate firstWaypoint = waypoints[0];
+                Debugger($"[RETURN] Target waypoint [0]: ({firstWaypoint.X}, {firstWaypoint.Y}, {firstWaypoint.Z})");
+
+                // Check if we're already at the first waypoint
+                if (IsAtPosition(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z))
                 {
-                    using (Mat result = new Mat())
+                    Debugger("[RETURN] Already at first waypoint [0]");
+                    currentCoordIndex = 0;
+                    globalLastIndex = 0;
+                    return;
+                }
+
+                // 2. Find closest waypoint to current position
+                currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+                Debugger($"[RETURN] Closest waypoint to current position: [{currentCoordIndex}]");
+
+                // Analyze both paths and choose the optimal one
+                PathAnalysisResult pathAnalysis = AnalyzePaths(waypoints, currentCoordIndex);
+                List<int> optimalPath = pathAnalysis.UseReversePath ? pathAnalysis.ReversePath : pathAnalysis.ForwardPath;
+                string direction = pathAnalysis.UseReversePath ? "REVERSE" : "FORWARD";
+
+                Debugger($"[RETURN] Using {direction} path ({optimalPath.Count} waypoints)");
+                Debugger($"[RETURN] Forward path: {pathAnalysis.ForwardPath.Count} waypoints, Reverse path: {pathAnalysis.ReversePath.Count} waypoints");
+
+                // 4. Execute path using furthest reachable waypoint logic
+                DateTime returnStartTime = DateTime.Now;
+                const int RETURN_TIMEOUT_MINUTES = 3;
+                int pathProgress = 0; // Index in our optimal path
+
+                while (!IsAtPosition(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z))
+                {
+                    // Safety timeout check
+                    if ((DateTime.Now - returnStartTime).TotalMinutes > RETURN_TIMEOUT_MINUTES)
                     {
-                        CvInvoke.MatchTemplate(inventoryArea, platinumTemplate, result, TemplateMatchingType.CcoeffNormed);
-                        double minVal = 0, maxVal = 0;
-                        Point minLoc = new Point(), maxLoc = new Point();
-                        CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
-                        if (maxVal >= lootMatchThreshold)
+                        Debugger($"[RETURN] TIMEOUT: Failed to reach first waypoint within {RETURN_TIMEOUT_MINUTES} minutes");
+                        return;
+                    }
+
+                    // Re-read position
+                    ReadMemoryValues();
+
+                    //// Handle invisibility
+                    //if (invisibilityCode == 1)
+                    //{
+                    //    SendKeyPress(VK_F11);
+                    //}
+
+                    double hpPercent = (curHP / maxHP) * 100;
+                    double manaPercent = (curMana / maxMana) * 100;
+                    double mana = curMana;
+
+                    // HP check
+                    if (hpPercent <= HP_THRESHOLD)
+                    {
+                        if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
                         {
-                            int platinumX = invScanLeft + maxLoc.X + (platinumTemplate.Width / 2);
-                            int platinumY = invScanTop + maxLoc.Y + (platinumTemplate.Height / 2);
-                            VirtualRightClick(targetWindow, platinumX, platinumY);
-                            shouldScanInventoryForPlatinum = true;
+                            SendKeyPress(VK_F1);
+                            lastHpAction = DateTime.Now;
+                            Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
+                        }
+                    }
+
+                    // Mana check
+                    if (mana <= MANA_THRESHOLD)
+                    {
+                        if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
+                        {
+                            SendKeyPress(VK_F3);
+                            lastManaAction = DateTime.Now;
+                            Debugger($"Mana low ({mana:F1}) - pressed F3");
+                        }
+                    }
+
+                    // Find furthest reachable waypoint along our optimal path
+                    Coordinate nextTarget = FindFurthestReachableInPath(waypoints, optimalPath, pathProgress, firstWaypoint);
+
+                    if (nextTarget == null)
+                    {
+                        Debugger("[RETURN] ERROR: Could not find next target in path");
+                        break;
+                    }
+
+                    // Skip if we're already at the target
+                    if (IsAtPosition(nextTarget.X, nextTarget.Y, nextTarget.Z))
+                    {
+                        Debugger("[RETURN] Already at target position");
+                        pathProgress++;
+                        continue;
+                    }
+
+                    Debugger($"[RETURN] Moving to: ({nextTarget.X}, {nextTarget.Y}, {nextTarget.Z})");
+
+                    // Check if we need to handle Z-level change
+                    if (nextTarget.Z != currentZ)
+                    {
+                        if (nextTarget.Z > currentZ)
+                        {
+                            Debugger("[RETURN] Need to go UP");
+                            RightClickOnCharacter();
                         }
                         else
                         {
+                            Debugger("[RETURN] Need to go DOWN");
+                            SendKeyPress(VK_DOWN);
                         }
+                    }
+                    else
+                    {
+                        // Same Z level - click on target
+                        ClickWaypoint(nextTarget.X, nextTarget.Y);
+                    }
+
+                    // Update progress in path
+                    pathProgress = UpdatePathProgress(waypoints, optimalPath, pathProgress);
+                }
+
+                Debugger("[RETURN] Successfully reached first waypoint [0]");
+                currentCoordIndex = 0;
+                globalLastIndex = 0;
+            }
+            catch (Exception ex)
+            {
+                Debugger($"[RETURN] ERROR: {ex.Message}");
+                Debugger($"[RETURN] Stack trace: {ex.StackTrace}");
+            }
+        }
+
+        private class PathAnalysisResult
+        {
+            public List<int> ForwardPath { get; set; }
+            public List<int> ReversePath { get; set; }
+            public bool UseReversePath { get; set; }
+        }
+
+        private PathAnalysisResult AnalyzePaths(List<Coordinate> waypoints, int currentIndex)
+        {
+            // Calculate forward path (current -> 0)
+            List<int> forwardPath = new List<int>();
+            if (currentIndex > 0)
+            {
+                for (int i = currentIndex - 1; i >= 0; i--)
+                {
+                    forwardPath.Add(i);
+                }
+            }
+
+            // Calculate reverse path (current -> end -> 0)
+            List<int> reversePath = new List<int>();
+            // First go from current to end
+            for (int i = currentIndex + 1; i < waypoints.Count; i++)
+            {
+                reversePath.Add(i);
+            }
+            // Then wrap around from end to 0
+            for (int i = waypoints.Count - 1; i >= 0; i--)
+            {
+                reversePath.Add(i);
+            }
+
+            // Count unique waypoints (remove duplicates for circular paths)
+            HashSet<int> forwardSet = new HashSet<int>(forwardPath);
+            HashSet<int> reverseSet = new HashSet<int>(reversePath);
+
+            bool useReverse = reverseSet.Count < forwardSet.Count &&
+                              Math.Abs(reverseSet.Count - forwardSet.Count) >= 2;
+
+            Debugger($"[PATH] Forward path: {forwardSet.Count} unique waypoints");
+            Debugger($"[PATH] Reverse path: {reverseSet.Count} unique waypoints");
+
+            return new PathAnalysisResult
+            {
+                ForwardPath = forwardPath,
+                ReversePath = reversePath,
+                UseReversePath = useReverse
+            };
+        }
+
+        private Coordinate FindFurthestReachableInPath(List<Coordinate> waypoints, List<int> path, int currentProgress, Coordinate finalTarget)
+        {
+            const int MAX_DISTANCE = 5;
+            ReadMemoryValues();
+
+            // Check if we can reach the final target directly
+            int distanceToFinal = Math.Abs(finalTarget.X - currentX) + Math.Abs(finalTarget.Y - currentY);
+            if (distanceToFinal <= MAX_DISTANCE && finalTarget.Z == currentZ)
+            {
+                Debugger($"[RETURN] Can reach final target directly (distance: {distanceToFinal})");
+                return finalTarget;
+            }
+
+            // Find furthest reachable waypoint in our path
+            Coordinate furthestReachable = null;
+            int furthestDistance = 0;
+            int furthestProgress = currentProgress;
+
+            // Look ahead in our path
+            for (int i = currentProgress; i < Math.Min(currentProgress + 10, path.Count); i++)
+            {
+                int waypointIndex = path[i];
+                if (waypointIndex < 0 || waypointIndex >= waypoints.Count) continue;
+
+                Coordinate candidate = waypoints[waypointIndex];
+
+                // Skip different Z levels for now
+                if (candidate.Z != currentZ) continue;
+
+                // Check if reachable
+                int distanceX = Math.Abs(candidate.X - currentX);
+                int distanceY = Math.Abs(candidate.Y - currentY);
+                int totalDistance = distanceX + distanceY;
+
+                if (distanceX <= MAX_DISTANCE && distanceY <= MAX_DISTANCE)
+                {
+                    // Prefer further waypoints for efficiency
+                    if (totalDistance >= furthestDistance)
+                    {
+                        furthestReachable = candidate;
+                        furthestDistance = totalDistance;
+                        furthestProgress = i;
+                    }
+                }
+            }
+
+            // If no waypoint in path is reachable, use directional movement
+            if (furthestReachable == null)
+            {
+                Debugger("[RETURN] No waypoint in path reachable, using directional movement");
+                return CalculateDirectionalMove(currentX, currentY, currentZ, finalTarget);
+            }
+
+            Debugger($"[RETURN] Found furthest reachable waypoint at distance {furthestDistance}");
+            return furthestReachable;
+        }
+
+        private int UpdatePathProgress(List<Coordinate> waypoints, List<int> path, int currentProgress)
+        {
+            ReadMemoryValues();
+
+            // Find how far we've progressed in our path
+            for (int i = currentProgress; i < path.Count; i++)
+            {
+                int waypointIndex = path[i];
+                if (waypointIndex < 0 || waypointIndex >= waypoints.Count) continue;
+
+                Coordinate waypoint = waypoints[waypointIndex];
+
+                // Check if we've reached or passed this waypoint
+                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+                if (distance <= 2 && waypoint.Z == currentZ)
+                {
+                    Debugger($"[RETURN] Reached waypoint [{waypointIndex}] in path (progress: {i})");
+                    return i + 1; // Move to next waypoint in path
+                }
+            }
+
+            return currentProgress; // No progress made
+        }
+
+        private Coordinate CalculateDirectionalMove(int currentX, int currentY, int currentZ, Coordinate target)
+        {
+            // Calculate direction to target
+            int deltaX = target.X - currentX;
+            int deltaY = target.Y - currentY;
+
+            // Normalize to maximum 3 squares in each direction
+            int stepX = 0;
+            int stepY = 0;
+
+            if (deltaX != 0)
+            {
+                stepX = Math.Sign(deltaX) * Math.Min(3, Math.Abs(deltaX));
+            }
+
+            if (deltaY != 0)
+            {
+                stepY = Math.Sign(deltaY) * Math.Min(3, Math.Abs(deltaY));
+            }
+
+            return new Coordinate
+            {
+                X = currentX + stepX,
+                Y = currentY + stepY,
+                Z = currentZ
+            };
+        }
+
+        // Add these variables at the class level
+        static DateTime lastMovementTime = DateTime.MinValue;
+        static Coordinate lastRecordedPosition = null;
+        static bool stuckDetectionActive = false;
+        const int STUCK_TIMEOUT_SECONDS = 2;
+
+        // Modified PlayCoordinatesIteration method with stuck detection
+        private void PlayCoordinatesIteration()
+        {
+            if (loadedCoords == null)
+            {
+                string json = File.ReadAllText(cordsFilePath);
+                loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
+
+                if (loadedCoords == null || loadedCoords.cords.Count == 0)
+                {
+                    Debugger("[FIGHT] No waypoints loaded");
+                    return;
+                }
+
+                totalCoords = loadedCoords.cords.Count;
+            }
+
+            List<Coordinate> waypoints = loadedCoords.cords;
+
+            // Initialize stuck detection
+            stuckDetectionActive = true;
+            lastMovementTime = DateTime.Now;
+            ReadMemoryValues();
+            lastRecordedPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
+
+            while (true)
+            {
+                // Check for pause at the beginning of each iteration
+                CheckForPause();
+
+                if (Console.KeyAvailable)
+                {
+                    ConsoleKeyInfo keyInfo = Console.ReadKey(true);
+                    if (keyInfo.Key == ConsoleKey.X)
+                    {
+                        Debugger("\n[STOP] 'X' key pressed. Stopping iteration...");
+                        return;
+                    }
+                }
+
+                ReadMemoryValues();
+
+                // Check if character is stuck
+                if (CheckIfCharacterStuck())
+                {
+                    Debugger("[STUCK] Character detected as stuck! Initiating recovery...");
+
+                    // Check for pause before recovery
+                    CheckForPause();
+
+                    // Use ReturnToFirstWaypoint to recover
+
+                    SendKeyPress(VK_ESCAPE);
+                    SendKeyPress(VK_ESCAPE);
+                    SendKeyPress(VK_ESCAPE);
+                    ReturnToFirstWaypoint();
+
+                    // Reset walking state after recovery
+                    ResetWalkingState();
+
+                    // Update position tracking after recovery
+                    ReadMemoryValues();
+                    lastRecordedPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
+                    lastMovementTime = DateTime.Now;
+
+                    Debugger("[STUCK] Recovery completed, resuming normal walking");
+                    continue; // Continue with normal execution
+                }
+
+                // Update movement tracking
+                UpdateMovementTracking();
+
+                // Rest of your existing code...
+                double hpPercent = (curHP / maxHP) * 100;
+                double manaPercent = (curMana / maxMana) * 100;
+                double mana = curMana;
+
+                // HP check
+                if (hpPercent <= HP_THRESHOLD)
+                {
+                    if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
+                    {
+                        CheckForPause(); // Check pause before healing
+                        SendKeyPress(VK_F1);
+                        lastHpAction = DateTime.Now;
+                        Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
+                    }
+                }
+
+                // Mana check
+                if (mana <= MANA_THRESHOLD)
+                {
+                    if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
+                    {
+                        CheckForPause(); // Check pause before mana potion
+                        SendKeyPress(VK_F3);
+                        lastManaAction = DateTime.Now;
+                        Debugger($"Mana low ({mana:F1}) - pressed F3");
+                    }
+                }
+
+                if (curSoul >= 200)
+                {
+                    return;
+                }
+
+                // Use the improved FindClosestWaypointIndex
+                if (boolInit)
+                {
+                    currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+                    boolInit = false;
+                }
+                else
+                {
+                    currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
+                }
+
+                // Initialize or validate global state
+                if (globalLastIndex < 0 || Math.Abs(globalLastIndex - currentCoordIndex) > maxBacktrackDistance)
+                {
+                    globalLastIndex = currentCoordIndex;
+                    Debugger($"[DEBUG] Initialized global state. Starting at waypoint index: {currentCoordIndex}");
+                }
+
+                ReadMemoryValues();
+
+                if (targetId == 0)
+                {
+                    CheckForPause(); // Check pause before target search
+                    SendKeyPress(VK_F6);
+                    Thread.Sleep(150);
+                }
+
+                ReadMemoryValues();
+                // If combat is active, handle combat
+                if (targetId != 0)
+                {
+                    while (true)
+                    {
+                        // Check for pause at the beginning of combat loop
+                        CheckForPause();
+
+                        if (Console.KeyAvailable)
+                        {
+                            ConsoleKeyInfo keyInfo = Console.ReadKey(true);
+                            if (keyInfo.Key == ConsoleKey.X)
+                            {
+                                Debugger("\n[STOP] 'X' key pressed during combat. Stopping iteration...");
+                                return;
+                            }
+                        }
+
+                        ReadMemoryValues();
+
+                        // Update movement tracking even during combat
+                        UpdateMovementTracking();
+
+                        double hpPercentCombat = (curHP / maxHP) * 100;
+                        double manaPercentCombat = (curMana / maxMana) * 100;
+                        double manaCombat = curMana;
+
+                        // HP check
+                        if (hpPercentCombat <= HP_THRESHOLD)
+                        {
+                            if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
+                            {
+                                CheckForPause(); // Check pause before healing in combat
+                                SendKeyPress(VK_F1);
+                                lastHpAction = DateTime.Now;
+                                Debugger($"HP low ({hpPercentCombat:F1}%) - pressed F1");
+                            }
+                        }
+
+                        // Mana check
+                        if (manaCombat <= MANA_THRESHOLD)
+                        {
+                            if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
+                            {
+                                CheckForPause(); // Check pause before mana potion in combat
+                                SendKeyPress(VK_F3);
+                                lastManaAction = DateTime.Now;
+                                Debugger($"Mana low ({manaCombat:F1}) - pressed F3");
+                            }
+                        }
+
+                        if (targetId != 0)
+                        {
+                            Debugger($"[COMBAT] Fighting target {targetId}...");
+
+                            // Check for pause during combat wait
+                            for (int i = 0; i < 10; i++)
+                            {
+                                CheckForPause();
+                                Thread.Sleep(100);
+                            }
+
+                            ReadMemoryValues();
+
+                            ReadMemoryValues();
+                            if (targetId == 0)
+                            {
+                                Debugger("[COMBAT] Target killed!");
+                                // Reset movement tracking after combat
+                                lastMovementTime = DateTime.Now;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Check for pause before determining navigation action
+                CheckForPause();
+
+                NavigationAction action = DetermineNextAction(waypoints, currentX, currentY, currentZ);
+
+                switch (action.Type)
+                {
+                    case ActionType.ClickWaypoint:
+                        CheckForPause(); // Check pause before clicking waypoint
+                        if (ClickWaypoint(action.TargetX, action.TargetY))
+                        {
+                            WaitForMovementCompletion(action.TargetX, action.TargetY);
+                        }
+                        currentCoordIndex = action.WaypointIndex;
+                        globalLastIndex = currentCoordIndex;
+                        break;
+
+                    case ActionType.KeyboardStep:
+                        CheckForPause(); // Check pause before keyboard movement
+                        Debugger($"[PLAY] Executing keyboard step: {action.Direction}");
+
+                        // Send the appropriate arrow key
+                        switch (action.Direction)
+                        {
+                            case ArrowAction.ArrowDirection.Left:
+                                SendKeyPress(VK_LEFT);
+                                break;
+                            case ArrowAction.ArrowDirection.Right:
+                                SendKeyPress(VK_RIGHT);
+                                break;
+                            case ArrowAction.ArrowDirection.Up:
+                                SendKeyPress(VK_UP);
+                                break;
+                            case ArrowAction.ArrowDirection.Down:
+                                SendKeyPress(VK_DOWN);
+                                break;
+                        }
+
+                        // Wait for movement with pause checks
+                        for (int i = 0; i < 2; i++)
+                        {
+                            CheckForPause();
+                            Thread.Sleep(100);
+                        }
+
+                        // Check if we've made progress
+                        ReadMemoryValues();
+                        int newDistance = Math.Abs(action.TargetX - currentX) + Math.Abs(action.TargetY - currentY);
+
+                        if (newDistance == 0)
+                        {
+                            Debugger("[PLAY] Reached keyboard target!");
+                            currentCoordIndex = action.WaypointIndex;
+                            globalLastIndex = currentCoordIndex;
+                        }
+
+                        // Recovery mode tracking
+                        if (isInRecoveryMode)
+                        {
+                            recoveryAttempts++;
+                            if (recoveryAttempts > 20)
+                            {
+                                Debugger("[PLAY] Too many recovery attempts - forcing exit of recovery mode");
+                                isInRecoveryMode = false;
+                                recoveryAttempts = 0;
+                            }
+                        }
+                        break;
+
+                    case ActionType.WaitForTarget:
+                        CheckForPause(); // Check pause before target wait
+                        SendKeyPress(VK_F6);
+                        CheckForPause(); // Check pause after F6
+                        Thread.Sleep(100);
+                        break;
+                }
+
+                // Check for pause before final sleep
+                CheckForPause();
+                Thread.Sleep(100);
+            }
+        }
+
+        // Method to check if character is stuck
+        static bool CheckIfCharacterStuck()
+        {
+            if (!stuckDetectionActive || lastRecordedPosition == null)
+                return false;
+
+            ReadMemoryValues();
+
+            // Check if position has changed
+            bool positionChanged = lastRecordedPosition.X != currentX ||
+                                  lastRecordedPosition.Y != currentY ||
+                                  lastRecordedPosition.Z != currentZ;
+
+            if (positionChanged)
+            {
+                // Character moved, reset stuck detection
+                return false;
+            }
+
+            // Character hasn't moved, check timeout
+            double timeSinceLastMovement = (DateTime.Now - lastMovementTime).TotalSeconds;
+
+            if (timeSinceLastMovement >= STUCK_TIMEOUT_SECONDS)
+            {
+                Debugger($"[STUCK] Character hasn't moved for {timeSinceLastMovement:F1} seconds at position ({currentX}, {currentY}, {currentZ})");
+                return true;
+            }
+
+            return false;
+        }
+
+        // Method to update movement tracking
+        static void UpdateMovementTracking()
+        {
+            if (lastRecordedPosition == null)
+            {
+                ReadMemoryValues();
+                lastRecordedPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
+                lastMovementTime = DateTime.Now;
+                return;
+            }
+
+            // Check if character has moved
+            if (lastRecordedPosition.X != currentX ||
+                lastRecordedPosition.Y != currentY ||
+                lastRecordedPosition.Z != currentZ)
+            {
+                // Character moved, update tracking
+                lastRecordedPosition.X = currentX;
+                lastRecordedPosition.Y = currentY;
+                lastRecordedPosition.Z = currentZ;
+                lastMovementTime = DateTime.Now;
+            }
+        }
+
+        // Method to reset walking state after recovery
+        static void ResetWalkingState()
+        {
+            Debugger("[RESET] Resetting walking state after stuck recovery");
+
+            // Reset waypoint tracking
+            boolInit = true;
+            globalLastIndex = -1;
+
+            // Reset recovery mode variables
+            isInRecoveryMode = false;
+            recoveryTarget = null;
+            recoveryAttempts = 0;
+
+            // Reset targeted waypoint tracking
+            lastTargetedIndex = -1;
+            lastTargetedWaypoint = null;
+
+            // Find closest waypoint to current position
+
+
+            if (loadedCoords != null && loadedCoords.cords.Count > 0)
+            {
+                ReadMemoryValues();
+                currentCoordIndex = FindClosestWaypointIndex(loadedCoords.cords, currentX, currentY, currentZ);
+                globalLastIndex = currentCoordIndex;
+                Debugger($"[RESET] Reset to waypoint index {currentCoordIndex} at ({currentX}, {currentY}, {currentZ})");
+            }
+
+            // Reset movement tracking
+            lastMovementTime = DateTime.Now;
+            UpdateMovementTracking();
+        }
+
+
+
+
+
+
+
+
+
+
+        static DateTime returnStartTime = DateTime.MinValue;
+ 
+
+        static void WaitForMovementCompletion(int targetX, int targetY)
+        {
+            DateTime startTime = DateTime.Now;
+            const int TIMEOUT_MS = 2000;
+
+            // Movement tracking variables
+            int lastPosX = -1;
+            int lastPosY = -1;
+            int noMovementCount = 0;
+            const int MAX_NO_MOVEMENT_COUNT = 1;
+
+            while ((DateTime.Now - startTime).TotalMilliseconds < TIMEOUT_MS)
+            {
+                Thread.Sleep(500);
+                SendKeyPress(VK_F6);
+
+                ReadMemoryValues();
+                {
+                    // Check if monster appeared
+                    if (targetId != 0)
+                    {
+                        return;
+                    }
+
+                    // Check if character moved
+                    if (lastPosX != -1 && lastPosY != -1)
+                    {
+                        if (currentX == lastPosX && currentY == lastPosY)
+                        {
+                            noMovementCount++;
+                            Debugger($"[MOVE] No movement detected. Count: {noMovementCount}/{MAX_NO_MOVEMENT_COUNT}");
+
+                            if (noMovementCount >= MAX_NO_MOVEMENT_COUNT)
+                            {
+                                Debugger($"[MOVE] Character hasn't moved for {noMovementCount} checks. Returning early.");
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            noMovementCount = 0; // Reset counter if character moved
+                            Debugger($"[MOVE] Character moved from ({lastPosX},{lastPosY}) to ({currentX},{currentY})");
+                        }
+                    }
+
+                    // Update last known position
+                    lastPosX = currentX;
+                    lastPosY = currentY;
+
+                    // Check if we've reached the target
+                    int distanceX = Math.Abs(targetX - currentX);
+                    int distanceY = Math.Abs(targetY - currentY);
+                    if (distanceX <= 1 && distanceY <= 1)
+                    {
+                        Debugger($"[MOVE] Reached target position ({targetX},{targetY})");
+                        Thread.Sleep(400);
+                        return;
+                    }
+                }
+            }
+
+
+            Debugger($"[MOVE] Timeout reached after {TIMEOUT_MS}ms");
+        }
+
+        public class NavigationAction
+        {
+            public ActionType Type { get; set; }
+            public int TargetX { get; set; }
+            public int TargetY { get; set; }
+            public int FromZ { get; set; }
+            public int ToZ { get; set; }
+            public int WaypointIndex { get; set; }
+            public ArrowAction.ArrowDirection Direction { get; set; }  // Add this field
+        }
+
+        public enum ActionType
+        {
+            UseKeyboard,    // Walk with arrow keys
+            ClickWaypoint,  // Click on game screen
+            UseF4,          // Press F4 for stairs
+            WaitAtPosition,
+            WaitForTarget,
+            KeyboardStep    // NEW: Single keyboard step
+        }
+
+        static int FindWaypointIndex(List<Coordinate> waypoints, Coordinate target)
+        {
+            for (int i = 0; i < waypoints.Count; i++)
+            {
+                if (waypoints[i].X == target.X && waypoints[i].Y == target.Y && waypoints[i].Z == target.Z)
+                    return i;
+            }
+            return currentCoordIndex;
+        }
+
+        static Coordinate CreateRecoveryStep(int currentX, int currentY, int currentZ, Coordinate target)
+        {
+            // Calculate direction to target
+            int deltaX = target.X - currentX;
+            int deltaY = target.Y - currentY;
+
+            Debugger($"[RECOVERY] Creating step from ({currentX},{currentY}) toward ({target.X},{target.Y})");
+            Debugger($"[RECOVERY] Delta: X={deltaX}, Y={deltaY}");
+
+            // Always move only 1 square at a time for keyboard navigation
+            int stepX = 0;
+            int stepY = 0;
+
+            // Choose direction based on larger distance, or randomly if equal
+            if (Math.Abs(deltaX) > Math.Abs(deltaY))
+            {
+                // X distance is larger - move in X direction
+                stepX = Math.Sign(deltaX);
+            }
+            else if (Math.Abs(deltaY) > Math.Abs(deltaX))
+            {
+                // Y distance is larger - move in Y direction
+                stepY = Math.Sign(deltaY);
+            }
+            else if (deltaX != 0)
+            {
+                // Equal distances and both non-zero - randomly choose
+                Random rand = new Random();
+                if (rand.Next(2) == 0)
+                {
+                    stepX = Math.Sign(deltaX);
+                }
+                else
+                {
+                    stepY = Math.Sign(deltaY);
+                }
+            }
+            else if (deltaY != 0)
+            {
+                // Only Y movement needed
+                stepY = Math.Sign(deltaY);
+            }
+            else
+            {
+                // Already at target (shouldn't happen)
+                Debugger("[RECOVERY] Already at target!");
+                return new Coordinate { X = currentX, Y = currentY, Z = currentZ };
+            }
+
+            Coordinate recoveryStep = new Coordinate
+            {
+                X = currentX + stepX,
+                Y = currentY + stepY,
+                Z = currentZ
+            };
+
+            Debugger($"[RECOVERY] Created step: ({recoveryStep.X},{recoveryStep.Y},{recoveryStep.Z})");
+            Debugger($"[RECOVERY] Step size: X={stepX}, Y={stepY}");
+
+            return recoveryStep;
+        }
+
+
+        // Add the recovery system variables
+        static bool isInRecoveryMode = false;
+        static Coordinate recoveryTarget = null;
+        static int recoveryAttempts = 0;
+        static DateTime lastRecoveryTime = DateTime.MinValue;
+
+        static int lastTargetedIndex = -1;
+        static Coordinate lastTargetedWaypoint = null;
+
+        // Constants
+        const int LOST_THRESHOLD = 15; // If we're more than 15 squares from any waypoint
+
+        static Coordinate FindFurthestReachableWaypoint(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
+        {
+            const int MAX_DISTANCE = 5;
+            Debugger($"[NAV] Looking for furthest reachable waypoint from ({currentX},{currentY},{currentZ})");
+            Debugger($"[NAV] Current waypoint index: {currentCoordIndex}");
+            Debugger($"[NAV] Global last index: {globalLastIndex}");
+
+            // Sync currentCoordIndex with globalLastIndex if they're out of sync
+            if (globalLastIndex >= 0 && Math.Abs(globalLastIndex - currentCoordIndex) <= maxBacktrackDistance)
+            {
+                if (globalLastIndex != currentCoordIndex)
+                {
+                    Debugger($"[NAV] Syncing currentCoordIndex ({currentCoordIndex}) with globalLastIndex ({globalLastIndex})");
+                    currentCoordIndex = globalLastIndex;
+                }
+            }
+
+            // Check if we've reached our last targeted waypoint
+            if (lastTargetedIndex >= 0 && lastTargetedWaypoint != null)
+            {
+                int distanceToTarget = Math.Abs(lastTargetedWaypoint.X - currentX) + Math.Abs(lastTargetedWaypoint.Y - currentY);
+                if (distanceToTarget <= 2) // Close enough to consider "reached"
+                {
+                    Debugger($"[NAV] Reached targeted waypoint {lastTargetedIndex}. Advancing current index from {currentCoordIndex} to {lastTargetedIndex}");
+                    currentCoordIndex = lastTargetedIndex;
+                    globalLastIndex = lastTargetedIndex; // Update global state too
+                    lastTargetedIndex = -1; // Reset since we've reached it
+                    lastTargetedWaypoint = null;
+                }
+            }
+
+            // Keep track of the best reachable waypoints found (for random selection)
+            List<(Coordinate waypoint, int index, int distance)> reachableWaypoints = new List<(Coordinate, int, int)>();
+
+            // Check for reachable waypoints - look forward through the waypoint list
+            for (int i = 1; i < Math.Min(15, waypoints.Count); i++) // Start from i=1 to skip current waypoint
+            {
+                // Calculate next index, wrapping around if needed
+                int checkIndex = (currentCoordIndex + i) % waypoints.Count;
+                Coordinate check = waypoints[checkIndex];
+                Debugger($"[NAV] Checking waypoint {checkIndex}: ({check.X},{check.Y},{check.Z})");
+
+                // Handle Z-level changes for the very next waypoint (i == 1)
+                if (check.Z != currentZ)
+                {
+                    if (i == 1)
+                    {
+                        // This is the next waypoint and it has a different Z level
+                        Debugger($"[NAV] Next waypoint {checkIndex} requires floor change (Z={check.Z} vs current Z={currentZ})");
+
+                        // Handle the floor change for the next waypoint
+                        Coordinate transitionWaypoint = null;
+                        int transitionIndex = -1;
+                        int minTransitionDistance = int.MaxValue;
+
+                        if (check.Z > currentZ)
+                        {
+                            // Need to go UP - find closest waypoint with higher Z
+                            Debugger($"[NAV] Need to go UP to Z={check.Z}");
+                            for (int j = 0; j < waypoints.Count; j++)
+                            {
+                                var candidate = waypoints[j];
+                                if (candidate.Z == check.Z)
+                                {
+                                    int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
+                                    if (distance < minTransitionDistance)
+                                    {
+                                        minTransitionDistance = distance;
+                                        transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
+                                        transitionIndex = j;
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Need to go DOWN - find closest waypoint with lower Z
+                            Debugger($"[NAV] Need to go DOWN to Z={check.Z}");
+                            for (int j = 0; j < waypoints.Count; j++)
+                            {
+                                var candidate = waypoints[j];
+                                if (candidate.Z == check.Z)
+                                {
+                                    int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
+                                    if (distance < minTransitionDistance)
+                                    {
+                                        minTransitionDistance = distance;
+                                        transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
+                                        transitionIndex = j;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (transitionWaypoint != null)
+                        {
+                            Debugger($"[NAV] Found transition waypoint: index {transitionIndex} at ({transitionWaypoint.X},{transitionWaypoint.Y},{transitionWaypoint.Z})");
+                            lastTargetedIndex = checkIndex;
+                            lastTargetedWaypoint = check;
+                            return transitionWaypoint;
+                        }
+                        else
+                        {
+                            Debugger($"[NAV] No transition waypoint found - returning the next waypoint directly");
+                            lastTargetedIndex = checkIndex;
+                            lastTargetedWaypoint = check;
+                            return check;
+                        }
+                    }
+                    else
+                    {
+                        // This is not the next waypoint and has different Z - skip it entirely
+                        Debugger($"[NAV] Skipping waypoint {checkIndex} - different Z level (Z={check.Z}) and not next waypoint");
+                        continue;
+                    }
+                }
+
+                // Calculate distance to this waypoint (same Z level as current)
+                int distanceX = Math.Abs(check.X - currentX);
+                int distanceY = Math.Abs(check.Y - currentY);
+                int totalDistance = distanceX + distanceY;
+                Debugger($"[NAV] Distance to waypoint {checkIndex}: dx={distanceX}, dy={distanceY}, total={totalDistance}");
+
+                // Check if this waypoint is reachable
+                if (distanceX <= MAX_DISTANCE && distanceY <= MAX_DISTANCE)
+                {
+                    // This waypoint is reachable, add it to our list
+                    reachableWaypoints.Add((check, checkIndex, totalDistance));
+                    Debugger($"[NAV] Reachable waypoint added: {checkIndex} at distance {totalDistance}");
+                }
+            }
+
+            // Process reachable waypoints for random selection
+            Coordinate selectedWaypoint = null;
+            int selectedIndex = -1;
+            int selectedDistance = 0;
+
+            if (reachableWaypoints.Count > 0)
+            {
+                // Sort by distance (descending) to get the furthest waypoints first
+                reachableWaypoints.Sort((a, b) => b.distance.CompareTo(a.distance));
+
+                // Get top 3 (or as many as we have)
+                int topCount = Math.Min(3, reachableWaypoints.Count);
+                var topWaypoints = reachableWaypoints.Take(topCount).ToList();
+
+                // Check if ALL top waypoints have the same Z as current position
+                bool allTopSameZ = topWaypoints.All(wp => wp.waypoint.Z == currentZ);
+
+                // Check if the next 10 waypoints also have the same Z
+                bool next10SameZ = true;
+                for (int i = 1; i <= 10 && i < waypoints.Count; i++)
+                {
+                    int checkIndex = (currentCoordIndex + i) % waypoints.Count;
+                    if (waypoints[checkIndex].Z != currentZ)
+                    {
+                        next10SameZ = false;
+                        break;
+                    }
+                }
+
+                Debugger($"[NAV] Z-level checks: All top waypoints same Z={allTopSameZ}, Next 10 same Z={next10SameZ}");
+
+                if (allTopSameZ && next10SameZ)
+                {
+                    // Randomly select from the top waypoints
+                    Random rand = new Random();
+                    int selectedIdx = rand.Next(topCount);
+                    var selected = topWaypoints[selectedIdx];
+
+                    selectedWaypoint = selected.waypoint;
+                    selectedIndex = selected.index;
+                    selectedDistance = selected.distance;
+
+                    Debugger($"[NAV] Random selection enabled - Selected waypoint {selectedIndex} from top {topCount} reachable waypoints (distance={selectedDistance})");
+                    Debugger($"[NAV] Available top waypoints were:");
+                    for (int i = 0; i < topWaypoints.Count; i++)
+                    {
+                        var wp = topWaypoints[i];
+                        Debugger($"[NAV]   {i}: Index {wp.index}, distance {wp.distance}");
                     }
                 }
                 else
                 {
+                    // Take the furthest waypoint (first in sorted list)
+                    var selected = topWaypoints[0];
+                    selectedWaypoint = selected.waypoint;
+                    selectedIndex = selected.index;
+                    selectedDistance = selected.distance;
+
+                    Debugger($"[NAV] Z-level criteria not met - Selected furthest waypoint {selectedIndex} (distance={selectedDistance})");
+                    if (!allTopSameZ)
+                        Debugger($"[NAV] Reason: Not all top waypoints have same Z-level");
+                    if (!next10SameZ)
+                        Debugger($"[NAV] Reason: Next 10 waypoints don't all have same Z-level");
                 }
             }
+
+            // If still no waypoint found, create a directional step
+            if (selectedWaypoint == null)
+            {
+                Debugger($"[NAV] No reachable waypoint found, calculating direction to next waypoint");
+
+                // Get the next waypoint in sequence
+                int nextIndex = (currentCoordIndex + 1) % waypoints.Count;
+                Coordinate nextWaypoint = waypoints[nextIndex];
+
+                // Calculate direction to the next waypoint
+                int deltaX = nextWaypoint.X - currentX;
+                int deltaY = nextWaypoint.Y - currentY;
+
+                int stepX = 0;
+                int stepY = 0;
+
+                bool canMoveX = deltaX != 0;
+                bool canMoveY = deltaY != 0;
+
+                Random rand = new Random();
+
+                if (canMoveX && canMoveY)
+                {
+                    // Randomly choose one axis to step in
+                    if (rand.Next(2) == 0)
+                    {
+                        stepX = deltaX > 0 ? 1 : -1;
+                    }
+                    else
+                    {
+                        stepY = deltaY > 0 ? 1 : -1;
+                    }
+                }
+                else if (canMoveX)
+                {
+                    stepX = deltaX > 0 ? 1 : -1;
+                }
+                else if (canMoveY)
+                {
+                    stepY = deltaY > 0 ? 1 : -1;
+                }
+
+                // Create coordinate 1 square away in the chosen direction
+                selectedWaypoint = new Coordinate
+                {
+                    X = currentX + stepX,
+                    Y = currentY + stepY,
+                    Z = currentZ
+                };
+
+                selectedIndex = -1;
+                selectedDistance = 1;
+
+                Debugger($"[NAV] Returning directional step: ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) toward waypoint {nextIndex}");
+            }
+
+            // Remember what we're targeting
+            if (selectedIndex != currentCoordIndex)
+            {
+                lastTargetedIndex = selectedIndex;
+                lastTargetedWaypoint = selectedWaypoint;
+                Debugger($"[NAV] Targeting waypoint {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z})");
+            }
+
+            Debugger($"[NAV] Selected reachable waypoint: {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) distance={selectedDistance}");
+            return selectedWaypoint;
         }
-        catch (Exception ex)
+
+        static NavigationAction DetermineNextAction(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
         {
-            Console.WriteLine($"[LOOT ERROR] Error scanning inventory for platinum: {ex.Message}");
-        }
-        finally
-        {
-            shouldScanInventoryForPlatinum = true;
-        }
-    }
-    static readonly TimeSpan RING_OPERATION_COOLDOWN = TimeSpan.FromSeconds(2);
-    static DateTime lastRingOperationTime = DateTime.MinValue;
-    static DateTime lastRingScanTime = DateTime.MinValue;
-    static readonly TimeSpan RING_SCAN_INTERVAL = TimeSpan.FromSeconds(1);
-    static void ScanRingContainersForMisplacedRings()
-    {
-        try
-        {
-            DateTime now = DateTime.Now;
-            if ((now - lastRingScanTime) < RING_SCAN_INTERVAL)
+            Debugger($"[NAV] DetermineNextAction - Current position: ({currentX}, {currentY}, {currentZ})");
+            Debugger($"[NAV] Current waypoint index: {currentCoordIndex}, Global last index: {globalLastIndex}");
+
+            // Check if we're far from any waypoint on the same Z-level (lost condition)
+            int minDistanceToAnyWaypoint = int.MaxValue;
+            Coordinate closestWaypoint = null;
+            int closestWaypointIndex = -1;
+
+            for (int i = 0; i < waypoints.Count; i++)
             {
-                return;
+                var waypoint = waypoints[i];
+
+                // Only consider waypoints on the same Z-level
+                if (waypoint.Z != currentZ) continue;
+
+                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+                if (distance < minDistanceToAnyWaypoint)
+                {
+                    minDistanceToAnyWaypoint = distance;
+                    closestWaypoint = waypoint;
+                    closestWaypointIndex = i;
+                }
             }
-            lastRingScanTime = now;
-            UpdateUIPositions();
-            int stealthRingSlotX = inventoryX;
-            int stealthRingSlotY = inventoryY;
-            int lifeRingSlotX = inventoryX;
-            int lifeRingSlotY = inventoryY + 3 * pixelSize + 15;
-            bool stealthRingInLifeSlot = ScanSlotForItem("stealthring", lifeRingSlotX, lifeRingSlotY);
-            bool lifeRingInStealthSlot = ScanSlotForItem("lifering", stealthRingSlotX, stealthRingSlotY);
-            var stealthRingInBackpack = ScanSlotsForItemWithPosition("stealthring", lifeRingSlotX, lifeRingSlotY, 4);
-            var lifeRingInBackpack = ScanSlotsForItemWithPosition("lifering", stealthRingSlotX, stealthRingSlotY, 4);
-            if (stealthRingInLifeSlot && lifeRingInStealthSlot)
+
+            const int LOST_THRESHOLD = 15; // If we're more than 15 squares from any waypoint
+            bool wasLost = minDistanceToAnyWaypoint > LOST_THRESHOLD;
+
+            Debugger($"[NAV] Min distance to any waypoint: {minDistanceToAnyWaypoint}");
+            Debugger($"[NAV] Was lost: {wasLost}, Is in recovery mode: {isInRecoveryMode}");
+
+            // Handle recovery mode transitions
+            if (wasLost && !isInRecoveryMode)
             {
-                SwapRings(stealthRingSlotX, stealthRingSlotY, lifeRingSlotX, lifeRingSlotY);
+                Debugger($"[NAV] CHARACTER IS LOST - entering recovery mode. Distance to nearest: {minDistanceToAnyWaypoint}");
+                isInRecoveryMode = true;
+                recoveryTarget = closestWaypoint;
+                recoveryAttempts = 0;
+                lastRecoveryTime = DateTime.Now;
             }
-            else if (stealthRingInLifeSlot)
+            else if (!wasLost && isInRecoveryMode)
             {
-                DragItemToDestination(lifeRingSlotX, lifeRingSlotY, stealthRingSlotX, stealthRingSlotY, "stealthring_correction");
-                lastRingOperationTime = DateTime.Now;
+                Debugger("[NAV] Character recovered - exiting recovery mode");
+                isInRecoveryMode = false;
+                recoveryTarget = null;
+                recoveryAttempts = 0;
             }
-            else if (lifeRingInStealthSlot)
+
+            // Find the target waypoint using the existing logic
+            Coordinate target = FindFurthestReachableWaypoint(waypoints, currentX, currentY, currentZ);
+
+            // Check if we're already close enough to the target
+            int distanceX = Math.Abs(target.X - currentX);
+            int distanceY = Math.Abs(target.Y - currentY);
+            int totalDistance = distanceX + distanceY;
+
+            Debugger($"[NAV] Target: ({target.X}, {target.Y}, {target.Z})");
+            Debugger($"[NAV] Distance to target: X={distanceX}, Y={distanceY}, Total={totalDistance}");
+
+            if (distanceX == 0 && distanceY == 0)
             {
-                DragItemToDestination(stealthRingSlotX, stealthRingSlotY, lifeRingSlotX, lifeRingSlotY, "lifering_correction");
-                lastRingOperationTime = DateTime.Now;
+                Debugger($"[NAV] Already at target position");
+                return new NavigationAction
+                {
+                    Type = ActionType.WaitAtPosition,
+                    TargetX = currentX,
+                    TargetY = currentY,
+                    WaypointIndex = currentCoordIndex
+                };
             }
-            else if (stealthRingInBackpack.found)
+
+            // Special handling for recovery mode
+            if (isInRecoveryMode)
             {
-                DragItemToDestination(stealthRingInBackpack.slotX, stealthRingInBackpack.slotY, stealthRingSlotX, stealthRingSlotY, "stealthring_from_backpack");
-                lastRingOperationTime = DateTime.Now;
+                Debugger("[NAV] In recovery mode - analyzing movement options");
+
+                // Check if we can reach any waypoint now
+                bool canReachWaypoint = false;
+                for (int i = 0; i < waypoints.Count; i++)
+                {
+                    var waypoint = waypoints[i];
+                    if (waypoint.Z != currentZ) continue;
+
+                    int dx = Math.Abs(waypoint.X - currentX);
+                    int dy = Math.Abs(waypoint.Y - currentY);
+
+                    if (dx <= 5 && dy <= 5) // Within click range
+                    {
+                        canReachWaypoint = true;
+                        Debugger($"[NAV] Can now reach waypoint {i} - exiting recovery mode early");
+                        isInRecoveryMode = false;
+                        recoveryTarget = null;
+                        recoveryAttempts = 0;
+                        break;
+                    }
+                }
+
+                // If still in recovery mode, create a step toward the recovery target
+                if (isInRecoveryMode && recoveryTarget != null)
+                {
+                    Coordinate stepTarget = CreateRecoveryStep(currentX, currentY, currentZ, recoveryTarget);
+
+                    // Recalculate distance to step target
+                    int stepDistanceX = Math.Abs(stepTarget.X - currentX);
+                    int stepDistanceY = Math.Abs(stepTarget.Y - currentY);
+
+                    Debugger($"[NAV] Recovery step to: ({stepTarget.X}, {stepTarget.Y}, {stepTarget.Z})");
+
+                    // Determine keyboard direction for the step
+                    ArrowAction.ArrowDirection direction;
+
+                    if (stepDistanceX > 0)
+                        direction = ArrowAction.ArrowDirection.Right;
+                    else if (stepDistanceX < 0)
+                        direction = ArrowAction.ArrowDirection.Left;
+                    else if (stepDistanceY > 0)
+                        direction = ArrowAction.ArrowDirection.Down;
+                    else
+                        direction = ArrowAction.ArrowDirection.Up;
+
+                    Debugger($"[NAV] Using keyboard direction: {direction}");
+
+                    recoveryAttempts++;
+
+                    return new NavigationAction
+                    {
+                        Type = ActionType.KeyboardStep,
+                        TargetX = stepTarget.X,
+                        TargetY = stepTarget.Y,
+                        Direction = direction,
+                        WaypointIndex = -1 // No specific waypoint index for recovery steps
+                    };
+                }
             }
-            else if (lifeRingInBackpack.found)
+
+            // Normal navigation logic
+            // Check if we need to handle Z-level changes
+            if (target.Z != currentZ)
             {
-                DragItemToDestination(lifeRingInBackpack.slotX, lifeRingInBackpack.slotY, lifeRingSlotX, lifeRingSlotY, "lifering_from_backpack");
-                lastRingOperationTime = DateTime.Now;
+                Debugger($"[NAV] Z-level change needed: {currentZ} -> {target.Z}");
+
+                if (target.Z > currentZ)
+                {
+                    Debugger("[NAV] Need to go UP - using right-click");
+                    return new NavigationAction
+                    {
+                        Type = ActionType.UseF4,
+                        TargetX = currentX,
+                        TargetY = currentY,
+                        FromZ = currentZ,
+                        ToZ = target.Z,
+                        WaypointIndex = FindWaypointIndex(waypoints, target)
+                    };
+                }
+                else
+                {
+                    Debugger("[NAV] Need to go DOWN - using arrow key");
+                    return new NavigationAction
+                    {
+                        Type = ActionType.KeyboardStep,
+                        TargetX = currentX,
+                        TargetY = currentY,
+                        Direction = ArrowAction.ArrowDirection.Down,
+                        WaypointIndex = FindWaypointIndex(waypoints, target)
+                    };
+                }
+            }
+
+            // Same Z-level movement decisions
+            // Use keyboard for very close targets or when specifically needed
+            if (totalDistance == 1)
+            {
+                Debugger($"[NAV] Very close target - using keyboard (distance={totalDistance})");
+
+                // Determine keyboard direction
+                ArrowAction.ArrowDirection direction;
+
+                if (distanceX > 0)
+                    direction = ArrowAction.ArrowDirection.Right;
+                else if (distanceX < 0)
+                    direction = ArrowAction.ArrowDirection.Left;
+                else if (distanceY > 0)
+                    direction = ArrowAction.ArrowDirection.Down;
+                else
+                    direction = ArrowAction.ArrowDirection.Up;
+
+                Debugger($"[NAV] Using keyboard direction: {direction}");
+
+                return new NavigationAction
+                {
+                    Type = ActionType.KeyboardStep,
+                    TargetX = target.X,
+                    TargetY = target.Y,
+                    Direction = direction,
+                    WaypointIndex = FindWaypointIndex(waypoints, target)
+                };
+            }
+            else if (totalDistance <= 3)
+            {
+                Debugger($"[NAV] Close target - using keyboard (distance={totalDistance})");
+
+                // For targets within 3 squares, use keyboard navigation
+                ArrowAction.ArrowDirection direction;
+
+                // Prioritize larger movement
+                if (Math.Abs(distanceX) > Math.Abs(distanceY))
+                {
+                    direction = distanceX > 0 ? ArrowAction.ArrowDirection.Right : ArrowAction.ArrowDirection.Left;
+                }
+                else
+                {
+                    direction = distanceY > 0 ? ArrowAction.ArrowDirection.Down : ArrowAction.ArrowDirection.Up;
+                }
+
+                Debugger($"[NAV] Using keyboard direction: {direction}");
+
+                return new NavigationAction
+                {
+                    Type = ActionType.KeyboardStep,
+                    TargetX = target.X,
+                    TargetY = target.Y,
+                    Direction = direction,
+                    WaypointIndex = FindWaypointIndex(waypoints, target)
+                };
             }
             else
             {
+                Debugger($"[NAV] Far target - using click (distance={totalDistance})");
+
+                // For distant targets, use click navigation
+                return new NavigationAction
+                {
+                    Type = ActionType.ClickWaypoint,
+                    TargetX = target.X,
+                    TargetY = target.Y,
+                    WaypointIndex = FindWaypointIndex(waypoints, target)
+                };
             }
         }
-        catch (Exception ex)
+
+        static DateTime lastPositionUpdate = DateTime.MinValue;
+        static Coordinate globalLastPosition = null; // Last player position
+        static int FindClosestWaypointIndex(
+        List<Coordinate> waypoints,
+        int currentX,
+        int currentY,
+        int currentZ
+)
         {
-            Console.WriteLine($"[RING CORRECTOR] Error scanning ring containers: {ex.Message}");
-        }
-    }
-    static bool ScanSlotForItem(string itemName, int slotX, int slotY, int numSlotsToScan = 1)
-    {
-        try
-        {
-            for (int slotIndex = 0; slotIndex < numSlotsToScan; slotIndex++)
+            if (waypoints == null || waypoints.Count == 0)
             {
-                int currentSlotX = slotX + (slotIndex * pixelSize);
-                int currentSlotY = slotY;
-                int scanSize = pixelSize / 2;
-                int scanLeft = currentSlotX - scanSize;
-                int scanTop = currentSlotY - scanSize;
-                int scanWidth = pixelSize;
-                int scanHeight = pixelSize;
-                GetClientRect(targetWindow, out RECT windowRect);
-                int windowWidth = windowRect.Right - windowRect.Left;
-                int windowHeight = windowRect.Bottom - windowRect.Top;
-                if (scanLeft < 0) scanLeft = 0;
-                if (scanTop < 0) scanTop = 0;
-                if (scanLeft + scanWidth > windowWidth) scanWidth = windowWidth - scanLeft;
-                if (scanTop + scanHeight > windowHeight) scanHeight = windowHeight - scanTop;
-                using (Mat slotArea = CaptureGameAreaAsMat(targetWindow, scanLeft, scanTop, scanWidth, scanHeight))
-                {
-                    if (slotArea == null || slotArea.IsEmpty)
-                    {
-                        continue;
-                    }
-                    if (lootTemplates.TryGetValue(itemName, out Mat itemTemplate))
-                    {
-                        using (Mat result = new Mat())
-                        {
-                            CvInvoke.MatchTemplate(slotArea, itemTemplate, result, TemplateMatchingType.CcoeffNormed);
-                            double minVal = 0, maxVal = 0;
-                            Point minLoc = new Point(), maxLoc = new Point();
-                            CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
-                            if (maxVal >= lootMatchThreshold)
-                            {
-                                return true;
-                            }
-                        }
-                    }
-                }//hej to ja rysiu to moj kod prosze nie krasc//
+                return 0;
             }
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[RING CORRECTOR] Error scanning slots for {itemName}: {ex.Message}");
-            return false;
-        }
-    }
-    static (bool found, int slotX, int slotY) ScanSlotsForItemWithPosition(string itemName, int startSlotX, int startSlotY, int numSlotsToScan = 1)
-    {
-        try
-        {
-            for (int slotIndex = 0; slotIndex < numSlotsToScan; slotIndex++)
+
+            // Update global last position if we've moved
+            bool positionChanged = false;
+            if (globalLastPosition == null ||
+                globalLastPosition.X != currentX ||
+                globalLastPosition.Y != currentY ||
+                globalLastPosition.Z != currentZ)
             {
-                int currentSlotX = startSlotX + (slotIndex * pixelSize);
-                int currentSlotY = startSlotY;
-                int scanSize = pixelSize / 2;
-                int scanLeft = currentSlotX - scanSize;
-                int scanTop = currentSlotY - scanSize;
-                int scanWidth = pixelSize;
-                int scanHeight = pixelSize;
-                GetClientRect(targetWindow, out RECT windowRect);
-                int windowWidth = windowRect.Right - windowRect.Left;
-                int windowHeight = windowRect.Bottom - windowRect.Top;
-                if (scanLeft < 0) scanLeft = 0;
-                if (scanTop < 0) scanTop = 0;
-                if (scanLeft + scanWidth > windowWidth) scanWidth = windowWidth - scanLeft;
-                if (scanTop + scanHeight > windowHeight) scanHeight = windowHeight - scanTop;
-                using (Mat slotArea = CaptureGameAreaAsMat(targetWindow, scanLeft, scanTop, scanWidth, scanHeight))
+                positionChanged = true;
+                globalLastPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
+                lastPositionUpdate = DateTime.Now;
+            }
+
+            // If we have a valid global last index and haven't moved much, prefer forward progression
+            if (globalLastIndex >= 0 && globalLastIndex < waypoints.Count)
+            {
+                var lastWaypoint = waypoints[globalLastIndex];
+                int distanceToLast = Math.Abs(lastWaypoint.X - currentX) + Math.Abs(lastWaypoint.Y - currentY);
+
+                // If we're still close to our last waypoint and on the same Z level, don't backtrack
+                if (distanceToLast <= 3 && lastWaypoint.Z == currentZ)
                 {
-                    if (slotArea == null || slotArea.IsEmpty)
+                    Debugger($"[WAYPOINT] Still close to last waypoint {globalLastIndex}, maintaining progression");
+                    return globalLastIndex;
+                }
+            }
+
+            // Find closest waypoint with progression awareness
+            int closestIndex = -1;
+            int minDistance = int.MaxValue;
+
+            // Calculate search range around current global last index
+            int searchStart = Math.Max(0, globalLastIndex - maxBacktrackDistance);
+            int searchEnd = Math.Min(waypoints.Count - 1, globalLastIndex + maxBacktrackDistance);
+
+            // If no global last index set, search everything
+            if (globalLastIndex < 0)
+            {
+                searchStart = 0;
+                searchEnd = waypoints.Count - 1;
+            }
+
+            Debugger($"[WAYPOINT] Searching waypoints from {searchStart} to {searchEnd} (current global: {globalLastIndex})");
+
+            // First pass: Look for waypoints on the same Z-level within the search range
+            for (int i = searchStart; i <= searchEnd; i++)
+            {
+                var waypoint = waypoints[i];
+
+                if (waypoint.Z != currentZ)
+                {
+                    continue;
+                }
+
+                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+
+                // Prefer forward progression if distances are similar
+                if (globalLastIndex >= 0 && i > globalLastIndex && distance <= minDistance + 2)
+                {
+                    minDistance = distance;
+                    closestIndex = i;
+                    Debugger($"[WAYPOINT] Preferring forward waypoint {i} (distance {distance})");
+                }
+                else if (distance < minDistance)
+                {
+                    minDistance = distance;
+                    closestIndex = i;
+                }
+            }
+
+            // Second pass: If no suitable waypoint found on same Z-level, expand search
+            if (closestIndex == -1)
+            {
+                Debugger($"[WAYPOINT] No waypoint found on Z-level {currentZ}, expanding search");
+
+                for (int i = searchStart; i <= searchEnd; i++)
+                {
+                    var waypoint = waypoints[i];
+                    int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+
+                    if (distance < minDistance)
                     {
-                        continue;
-                    }
-                    if (lootTemplates.TryGetValue(itemName, out Mat itemTemplate))
-                    {
-                        using (Mat result = new Mat())
-                        {
-                            CvInvoke.MatchTemplate(slotArea, itemTemplate, result, TemplateMatchingType.CcoeffNormed);
-                            double minVal = 0, maxVal = 0;
-                            Point minLoc = new Point(), maxLoc = new Point();
-                            CvInvoke.MinMaxLoc(result, ref minVal, ref maxVal, ref minLoc, ref maxLoc);
-                            if (maxVal >= lootMatchThreshold)
-                            {
-                                return (true, currentSlotX, currentSlotY);
-                            }
-                        }
+                        minDistance = distance;
+                        closestIndex = i;
                     }
                 }
             }
-            return (false, 0, 0);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[RING CORRECTOR] Error scanning slots for {itemName}: {ex.Message}");
-            return (false, 0, 0);
+
+            // Third pass: If still nothing found, fall back to full search
+            if (closestIndex == -1)
+            {
+                Debugger($"[WARNING] No waypoint found in range, doing full search");
+
+                for (int i = 0; i < waypoints.Count; i++)
+                {
+                    var waypoint = waypoints[i];
+
+                    if (waypoint.Z != currentZ)
+                    {
+                        continue;
+                    }
+
+                    int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+                    if (distance < minDistance)
+                    {
+                        minDistance = distance;
+                        closestIndex = i;
+                    }
+                }
+            }
+
+            // Final fallback
+            if (closestIndex == -1)
+            {
+                Debugger("[WARNING] No waypoints found at all, returning index 0");
+                closestIndex = 0;
+            }
+
+            // Update global state if we found a valid waypoint
+            if (closestIndex >= 0)
+            {
+                // Only update global last index if we're moving forward or within reasonable backtrack distance
+                if (globalLastIndex < 0 ||
+                    closestIndex > globalLastIndex ||
+                    Math.Abs(closestIndex - globalLastIndex) <= maxBacktrackDistance)
+                {
+                    Debugger($"[WAYPOINT] Updating global last index from {globalLastIndex} to {closestIndex}");
+                    globalLastIndex = closestIndex;
+                }
+                else
+                {
+                    Debugger($"[WAYPOINT] Not updating global index - would backtrack too far ({Math.Abs(closestIndex - globalLastIndex)} > {maxBacktrackDistance})");
+                }
+            }
+
+            Debugger($"[WAYPOINT] Selected index {closestIndex} at ({waypoints[closestIndex].X}, {waypoints[closestIndex].Y}, {waypoints[closestIndex].Z}) distance {minDistance}");
+            return closestIndex;
         }
     }
-    static void SwapRings(int slot1X, int slot1Y, int slot2X, int slot2Y)
+
+
+    // Add these variables at the top of the Program class
+    static Thread soulPositionMonitorThread;
+    static bool soulPositionMonitorRunning = false;
+    static DateTime lastSoulChangeTime = DateTime.Now;
+    static DateTime lastPositionChangeTime = DateTime.Now;
+    static double lastSoulCount = 0;
+    static Coordinate lastMonitoredPosition = null;
+    static readonly object monitorLock = new object();
+
+    const int MONITOR_INTERVAL_MS = 1000; // Check every second
+    const int MAX_UNCHANGED_SECONDS = 45; // Stop program if no change for 5 seconds
+
+    // Add this method to start the monitoring thread
+    static void StartSoulPositionMonitorThread()
+    {
+        ReadMemoryValues();
+        if (soulPositionMonitorThread != null && soulPositionMonitorThread.IsAlive)
+        {
+            Debugger("[MONITOR] Soul and position monitor thread already running");
+            return;
+        }
+
+        soulPositionMonitorRunning = true;
+        lastSoulCount = curSoul;
+        lastMonitoredPosition = new Coordinate
+        {
+            X = currentX,
+            Y = currentY,
+            Z = currentZ
+        };
+        lastSoulChangeTime = DateTime.Now;
+        lastPositionChangeTime = DateTime.Now;
+
+        soulPositionMonitorThread = new Thread(SoulPositionMonitorWorker)
+        {
+            IsBackground = true,
+            Name = "SoulPositionMonitorThread"
+        };
+        soulPositionMonitorThread.Start();
+        Debugger("[MONITOR] Soul and position monitor thread started");
+    }
+
+    // Add this method to stop the monitoring thread
+    static void StopSoulPositionMonitorThread()
+    {
+        soulPositionMonitorRunning = false;
+        if (soulPositionMonitorThread != null && soulPositionMonitorThread.IsAlive)
+        {
+            soulPositionMonitorThread.Join(2000);
+            Debugger("[MONITOR] Soul and position monitor thread stopped");
+        }
+    }
+
+    // Add these additional P/Invoke declarations at the top with your other imports
+    [DllImport("user32.dll")]
+    static extern bool CloseWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+
+    // Add this function to your Program class
+    const int PROCESS_TERMINATE = 0x0001;
+
+    // Add this function to your Program class
+    static void ForceCloseGameProcessAndWindow()
     {
         try
         {
-            int tempX = firstSlotBpX;
-            int tempY = firstSlotBpY;
-            DragItemToDestination(slot1X, slot1Y, tempX, tempY, "ring_to_temp");
-            Sleep(1);
-            DragItemToDestination(slot2X, slot2Y, slot1X, slot1Y, "ring_to_slot1");
-            Sleep(1);
-            DragItemToDestination(tempX, tempY, slot2X, slot2Y, "ring_to_slot2");
-            lastRingOperationTime = DateTime.Now;
+            Debugger("[CLOSE] Starting FORCEFUL game closure process...");
+
+            // Step 1: Close the process handle if it exists
+            if (processHandle != IntPtr.Zero)
+            {
+                Debugger("[CLOSE] Closing process handle...");
+                CloseHandle(processHandle);
+                processHandle = IntPtr.Zero;
+            }
+
+            // Step 2: Find and FORCE KILL all game processes immediately
+            var processes = Process.GetProcesses()
+                .Where(p => p.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
+            foreach (var process in processes)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        Debugger($"[CLOSE] FORCE KILLING process: {process.ProcessName} (ID: {process.Id})");
+
+                        // Method 1: Try using Windows API TerminateProcess
+                        try
+                        {
+                            IntPtr hProcess = OpenProcess(PROCESS_TERMINATE, false, process.Id);
+
+                            if (hProcess != IntPtr.Zero)
+                            {
+                                bool terminated = TerminateProcess(hProcess, 1);
+                                CloseHandle(hProcess);
+
+                                if (terminated)
+                                {
+                                    Debugger($"[CLOSE] Process {process.Id} terminated via WinAPI");
+                                    continue;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debugger($"[CLOSE] WinAPI termination failed: {ex.Message}");
+                        }
+
+                        // Method 2: Fallback to Process.Kill()
+                        try
+                        {
+                            process.Kill();
+                            Debugger($"[CLOSE] Process {process.Id} killed via Process.Kill()");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debugger($"[CLOSE] Process.Kill() failed: {ex.Message}");
+                        }
+
+                        // Method 3: Alternative kill using command line (last resort)
+                        try
+                        {
+                            ProcessStartInfo psi = new ProcessStartInfo();
+                            psi.FileName = "taskkill";
+                            psi.Arguments = $"/F /PID {process.Id}";
+                            psi.WindowStyle = ProcessWindowStyle.Hidden;
+                            psi.UseShellExecute = false;
+
+                            Process killProcess = Process.Start(psi);
+                            killProcess.WaitForExit(2000);
+
+                            Debugger($"[CLOSE] Process {process.Id} killed via taskkill command");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debugger($"[CLOSE] Taskkill failed: {ex.Message}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debugger($"[CLOSE] Error force killing process {process.Id}: {ex.Message}");
+                }
+                finally
+                {
+                    try
+                    {
+                        process.Dispose();
+                    }
+                    catch { }
+                }
+            }
+
+            // Step 3: Force close any remaining windows
+            if (targetWindow != IntPtr.Zero && IsWindow(targetWindow))
+            {
+                Debugger("[CLOSE] Force closing game window...");
+
+                // Send WM_DESTROY to bypass confirmation dialogs
+                SendMessage(targetWindow, 0x0002, IntPtr.Zero, IntPtr.Zero); // WM_DESTROY
+
+                // Also try close window
+                CloseWindow(targetWindow);
+            }
+
+            Debugger("[CLOSE] FORCEFUL game closure process completed");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[RING CORRECTOR] Error swapping rings: {ex.Message}");
+            Debugger($"[CLOSE] Error during forceful game closure: {ex.Message}");
+        }
+    }
+
+    static void SoulPositionMonitorWorker()
+    {
+        Debugger("[MONITOR] Soul and position monitor worker started");
+
+        try
+        {
+            while (soulPositionMonitorRunning && programRunning)
+            {
+                try
+                {
+                    ReadMemoryValues();
+                    DateTime now = DateTime.Now;
+                    bool shouldShutdown = false;
+                    string shutdownReason = "";
+
+                    lock (monitorLock)
+                    {
+                        // Check if soul has changed
+                        if (Math.Abs(curSoul - lastSoulCount) > 0.1) // Allow small floating point differences
+                        {
+                            lastSoulCount = curSoul;
+                            lastSoulChangeTime = now;
+                            //Debugger($"[MONITOR] Soul changed to {curSoul:F1}");
+                        }
+
+                        // Check if position has changed
+                        bool positionChanged = lastMonitoredPosition == null ||
+                                               lastMonitoredPosition.X != currentX ||
+                                               lastMonitoredPosition.Y != currentY ||
+                                               lastMonitoredPosition.Z != currentZ;
+
+                        if (positionChanged)
+                        {
+                            if (lastMonitoredPosition != null)
+                            {
+                                //Debugger($"[MONITOR] Position changed from ({lastMonitoredPosition.X}, {lastMonitoredPosition.Y}, {lastMonitoredPosition.Z}) to ({currentX}, {currentY}, {currentZ})");
+                            }
+
+                            lastMonitoredPosition = new Coordinate
+                            {
+                                X = currentX,
+                                Y = currentY,
+                                Z = currentZ
+                            };
+                            lastPositionChangeTime = now;
+                        }
+
+                        // Check if too much time has passed without changes
+                        double timeSinceLastSoulChange = (now - lastSoulChangeTime).TotalSeconds;
+                        double timeSinceLastPositionChange = (now - lastPositionChangeTime).TotalSeconds;
+
+                        // Only shut down if BOTH soul AND position haven't changed
+                        if (timeSinceLastSoulChange >= MAX_UNCHANGED_SECONDS &&
+                            timeSinceLastPositionChange >= MAX_UNCHANGED_SECONDS)
+                        {
+                            shouldShutdown = true;
+                            shutdownReason = $"Both soul count and position haven't changed for {Math.Min(timeSinceLastSoulChange, timeSinceLastPositionChange):F1} seconds";
+                        }
+
+                        // Log status every 2 seconds
+                        if ((DateTime.Now.Second % 2) == 0)
+                        {
+                            //Debugger($"[MONITOR] Status - Soul: {curSoul:F1} (unchanged for {timeSinceLastSoulChange:F1} sec), " +
+                                            //$"Position: ({currentX}, {currentY}, {currentZ}) (unchanged for {timeSinceLastPositionChange:F1} sec)");
+                        }
+                    }
+
+                    if (shouldShutdown)
+                    {
+                        Debugger($"\n[MONITOR] SHUTTING DOWN PROGRAM - {shutdownReason}");
+                        Debugger("[MONITOR] This usually indicates the program is stuck or not functioning properly");
+
+                        // FORCEFULLY close the game process and window before exiting
+                        ForceCloseGameProcessAndWindow();
+
+                        // Set the global flag to stop the program
+                        programRunning = false;
+                        cancellationTokenSource.Cancel();
+
+                        // Stop other threads
+                        StopMotionDetectionThread();
+                        StopSoulPositionMonitorThread();
+
+                        // Minimal delay before exit
+                        Thread.Sleep(500);
+                        Environment.Exit(0);
+                    }
+
+                    Thread.Sleep(MONITOR_INTERVAL_MS);
+                }
+                catch (Exception ex)
+                {
+                    Debugger($"[MONITOR] Error in monitoring loop: {ex.Message}");
+                    Thread.Sleep(1000);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debugger($"[MONITOR] Fatal error in monitor thread: {ex.Message}");
+        }
+        finally
+        {
+            Debugger("[MONITOR] Soul and position monitor worker stopped");
         }
     }
 
 
+    static void Debugger(string text)
+    {
+        Console.WriteLine($"[{DateTime.Now}] - (==SD BOT==)          {text}");
+    }
 }
