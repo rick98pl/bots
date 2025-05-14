@@ -2067,10 +2067,8 @@ class Program
                     {
                         InitializeMiddleSequence();
                         ExecuteActionSequence();
-                        SendKeyPress(VK_F2);
                         lastManaAction = DateTime.Now;
                         Debugger($"Mana>900 ({curMana:F0}), Soul>{SOUL_THRESHOLD} ({curSoul:F1}) - pressed F2");
-                        SendKeyPress(VK_F2);
                         lastManaAction = DateTime.Now;
                         f2ClickCount = 0;
                     }
