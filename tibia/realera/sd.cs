@@ -1217,6 +1217,9 @@ class Program
 
             for (currentActionIndex = 0; currentActionIndex < actionSequence.Count; currentActionIndex++)
             {
+                // Check for pause before executing each action
+                CheckForPause();
+
                 if (cancellationTokenSource.Token.IsCancellationRequested || !programRunning)
                 {
                     Debugger("Action sequence cancelled.");
@@ -1232,6 +1235,9 @@ class Program
                 // Retry logic
                 while (!success && retryCount < action.MaxRetries)
                 {
+                    // Check for pause during retry loops
+                    CheckForPause();
+
                     if (retryCount > 0)
                     {
                         Debugger($"Retry attempt {retryCount}/{action.MaxRetries} for action: {action.GetDescription()}");
@@ -1285,8 +1291,12 @@ class Program
                         retryCount++;
                         if (retryCount < action.MaxRetries)
                         {
-                            // Wait before retrying
-                            Thread.Sleep(1000);
+                            // Wait before retrying, but check for pause during the wait
+                            for (int i = 0; i < 10; i++)
+                            {
+                                CheckForPause();
+                                Thread.Sleep(100);
+                            }
                         }
                     }
                 }
@@ -1302,8 +1312,12 @@ class Program
                 ReadMemoryValues();
                 //Debugger($"Current coordinates: ({currentX}, {currentY}, {currentZ})");
 
-                // Small delay between actions
-                Thread.Sleep(200);
+                // Small delay between actions, but check for pause
+                for (int i = 0; i < 2; i++)
+                {
+                    CheckForPause();
+                    Thread.Sleep(100);
+                }
             }
 
             if (currentActionIndex >= actionSequence.Count && programRunning)
@@ -1721,9 +1735,11 @@ class Program
         Debugger("[Q-KEY] Q key listener thread started - press Q at any time to quit");
     }
 
+    static bool isPaused = false;
+    static readonly object pauseLock = new object();
     static void QKeyListenerWorker()
     {
-        Debugger("[Q-KEY] Q key listener worker started");
+        Debugger("[Q-KEY] Q key listener worker started (Q=Quit, P=Pause/Resume)");
 
         try
         {
@@ -1752,6 +1768,21 @@ class Program
                             Debugger("[Q-KEY] Cleanup completed - exiting...");
                             Environment.Exit(0);
                         }
+                        else if (key == ConsoleKey.P)
+                        {
+                            lock (pauseLock)
+                            {
+                                isPaused = !isPaused;
+                                if (isPaused)
+                                {
+                                    Debugger("\n[PAUSE] Program PAUSED - press P again to resume");
+                                }
+                                else
+                                {
+                                    Debugger("\n[PAUSE] Program RESUMED");
+                                }
+                            }
+                        }
                     }
 
                     // Check every 100ms for better responsiveness
@@ -1771,6 +1802,15 @@ class Program
         finally
         {
             Debugger("[Q-KEY] Q key listener worker stopped");
+        }
+    }
+
+    // Add this helper method to check for pause state
+    static void CheckForPause()
+    {
+        while (isPaused && programRunning)
+        {
+            Thread.Sleep(100);
         }
     }
 
@@ -1836,6 +1876,8 @@ class Program
 
         while (programRunning)
         {
+
+            CheckForPause();
             ReadMemoryValues();
             try
             {
@@ -1843,17 +1885,7 @@ class Program
                 if (Console.KeyAvailable)
                 {
                     var key = Console.ReadKey(true).Key;
-
-                    if (key == ConsoleKey.Q)
-                    {
-                        Debugger("\nQuitting...");
-                        programRunning = false;
-                        cancellationTokenSource.Cancel();
-                        StopMotionDetectionThread(); // Add this line
-                        StopSoulPositionMonitorThread();  // Add this line
-                        Environment.Exit(0);
-                    }
-                    else if (key == ConsoleKey.E)
+                    if (key == ConsoleKey.E)
                     {
                         if (!itemDragInProgress)
                         {
@@ -1878,37 +1910,6 @@ class Program
                         {
                             Debugger("Item dragging already in progress...");
                         }
-                    }
-                    else if (key == ConsoleKey.P)
-                    {
-                        if (!actionSequenceRunning)
-                        {
-                            Debugger("Starting action sequence...");
-                            Task.Run(() => ExecuteActionSequence());
-                        }
-                        else
-                        {
-                            Debugger("Action sequence already in progress...");
-                        }
-                    }
-                    else if (key == ConsoleKey.S)
-                    {
-                        PrintSpellStatus();
-                    }
-                    else if (key == ConsoleKey.M)
-                    {
-                        Debugger("Resetting motion detection...");
-                        ResetMotionDetection();
-                    }
-                    else if (key == ConsoleKey.N)
-                    {
-                        bool moving = IsCharacterMoving();
-                        Debugger($"Character is currently moving: {moving}");
-                    }
-                    else if (key == ConsoleKey.T)
-                    {
-                        Debugger("Resetting spell timers...");
-                        ResetSpellTimers();
                     }
                 }
 
@@ -3003,6 +3004,9 @@ class Program
 
             while (true)
             {
+                // Check for pause at the beginning of each iteration
+                CheckForPause();
+
                 if (Console.KeyAvailable)
                 {
                     ConsoleKeyInfo keyInfo = Console.ReadKey(true);
@@ -3019,6 +3023,9 @@ class Program
                 if (CheckIfCharacterStuck())
                 {
                     Debugger("[STUCK] Character detected as stuck! Initiating recovery...");
+
+                    // Check for pause before recovery
+                    CheckForPause();
 
                     // Use ReturnToFirstWaypoint to recover
                     ReturnToFirstWaypoint();
@@ -3048,6 +3055,7 @@ class Program
                 {
                     if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
                     {
+                        CheckForPause(); // Check pause before healing
                         SendKeyPress(VK_F1);
                         lastHpAction = DateTime.Now;
                         Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
@@ -3059,6 +3067,7 @@ class Program
                 {
                     if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
                     {
+                        CheckForPause(); // Check pause before mana potion
                         SendKeyPress(VK_F3);
                         lastManaAction = DateTime.Now;
                         Debugger($"Mana low ({mana:F1}) - pressed F3");
@@ -3092,6 +3101,7 @@ class Program
 
                 if (targetId == 0)
                 {
+                    CheckForPause(); // Check pause before target search
                     SendKeyPress(VK_F6);
                     Thread.Sleep(150);
                 }
@@ -3102,6 +3112,9 @@ class Program
                 {
                     while (true)
                     {
+                        // Check for pause at the beginning of combat loop
+                        CheckForPause();
+
                         if (Console.KeyAvailable)
                         {
                             ConsoleKeyInfo keyInfo = Console.ReadKey(true);
@@ -3126,6 +3139,7 @@ class Program
                         {
                             if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
                             {
+                                CheckForPause(); // Check pause before healing in combat
                                 SendKeyPress(VK_F1);
                                 lastHpAction = DateTime.Now;
                                 Debugger($"HP low ({hpPercentCombat:F1}%) - pressed F1");
@@ -3137,6 +3151,7 @@ class Program
                         {
                             if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
                             {
+                                CheckForPause(); // Check pause before mana potion in combat
                                 SendKeyPress(VK_F3);
                                 lastManaAction = DateTime.Now;
                                 Debugger($"Mana low ({manaCombat:F1}) - pressed F3");
@@ -3146,7 +3161,14 @@ class Program
                         if (targetId != 0)
                         {
                             Debugger($"[COMBAT] Fighting target {targetId}...");
-                            Thread.Sleep(1000);
+
+                            // Check for pause during combat wait
+                            for (int i = 0; i < 10; i++)
+                            {
+                                CheckForPause();
+                                Thread.Sleep(100);
+                            }
+
                             ReadMemoryValues();
 
                             ReadMemoryValues();
@@ -3161,11 +3183,15 @@ class Program
                     }
                 }
 
+                // Check for pause before determining navigation action
+                CheckForPause();
+
                 NavigationAction action = DetermineNextAction(waypoints, currentX, currentY, currentZ);
 
                 switch (action.Type)
                 {
                     case ActionType.ClickWaypoint:
+                        CheckForPause(); // Check pause before clicking waypoint
                         if (ClickWaypoint(action.TargetX, action.TargetY))
                         {
                             WaitForMovementCompletion(action.TargetX, action.TargetY);
@@ -3175,6 +3201,7 @@ class Program
                         break;
 
                     case ActionType.KeyboardStep:
+                        CheckForPause(); // Check pause before keyboard movement
                         Debugger($"[PLAY] Executing keyboard step: {action.Direction}");
 
                         // Send the appropriate arrow key
@@ -3194,8 +3221,12 @@ class Program
                                 break;
                         }
 
-                        // Wait for movement
-                        Thread.Sleep(200);
+                        // Wait for movement with pause checks
+                        for (int i = 0; i < 2; i++)
+                        {
+                            CheckForPause();
+                            Thread.Sleep(100);
+                        }
 
                         // Check if we've made progress
                         ReadMemoryValues();
@@ -3222,11 +3253,15 @@ class Program
                         break;
 
                     case ActionType.WaitForTarget:
+                        CheckForPause(); // Check pause before target wait
                         SendKeyPress(VK_F6);
+                        CheckForPause(); // Check pause after F6
                         Thread.Sleep(100);
                         break;
                 }
 
+                // Check for pause before final sleep
+                CheckForPause();
                 Thread.Sleep(100);
             }
         }
