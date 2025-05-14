@@ -1627,6 +1627,7 @@ class Program
         return latest;
     }
 
+    static bool utaniGranHurException = false;
     static void MotionDetectionWorker()
     {
         Debugger("[MOTION] Motion detection worker started");
@@ -1752,9 +1753,13 @@ class Program
                             Debugger("[MOTION] Retrying utani gran hur (previous attempt failed)");
                         }
 
-                        if (currentZ != 8 && shouldCastUtaniGranHur && curMana > 100)
+                        if ( (currentZ != 8 ||  utaniGranHurException) && shouldCastUtaniGranHur && curMana > 100)
                         {
                             lastUtaniGranHurAttemptTime = now;
+                            if (utaniGranHurException)
+                            {
+                                utaniGranHurException = false;
+                            }
 
                             if (TryCastSpell(BACKSLASH, "utani gran hur", ref lastUtaniGranHurTime, 0))
                             {
@@ -3251,6 +3256,7 @@ class Program
 
         private void ReturnToFirstWaypoint()
         {
+            utaniGranHurException = true;
             if (loadedCoords == null || loadedCoords.cords.Count == 0)
             {
                 Debugger("[RETURN] No waypoints loaded");
