@@ -3225,7 +3225,7 @@ class Program
                     Debugger("[COMBAT] Target killed!");
                 }
 
-                Thread.Sleep(800);
+                Thread.Sleep(200);
                 ReadMemoryValues();
                 if (targetId == 0)
                 {
@@ -3234,7 +3234,7 @@ class Program
                     ReadMemoryValues();
                 }
 
-                Thread.Sleep(800);
+                Thread.Sleep(200);
                 ReadMemoryValues();
 
                 if (targetId == 0)
@@ -3540,7 +3540,7 @@ class Program
 
                 // Check for combat interruption
                 ReadMemoryValues();
-                Thread.Sleep(800);
+                Thread.Sleep(200);
                 if (targetId == 0)
                 {
                     SendKeyPress(VK_F6);
@@ -3548,7 +3548,7 @@ class Program
                     ReadMemoryValues();
                 }
                 ReadMemoryValues();
-                Thread.Sleep(800);
+                Thread.Sleep(200);
                 if (targetId != 0)
                 {
                     return false; // Combat started, exit movement attempt
