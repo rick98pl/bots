@@ -3160,7 +3160,7 @@ class Program
         // Blocked waypoint tracking
         private static Dictionary<int, int> waypointFailureCount = new Dictionary<int, int>();
         private static HashSet<int> blockedWaypoints = new HashSet<int>();
-        private const int MAX_WAYPOINT_FAILURES = 5;
+        private const int MAX_WAYPOINT_FAILURES = 1;
         private const int BACKTRACK_ATTEMPTS = 3;
 
         public override string GetDescription()
