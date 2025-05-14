@@ -564,34 +564,135 @@ class Program
     {
         public int KeyCode { get; set; }
         public int DelayMs { get; set; }
+        public bool ExpectZChange { get; set; } = false; // New property for Z-level verification
+        public bool ExpectUpMovement { get; set; } = false; // Expect to go up (like stairs/ladders) = LOWER Z value
 
-        public HotkeyAction(int keyCode, int delayMs = 100)
+        public HotkeyAction(int keyCode, int delayMs = 100, bool expectZChange = false, bool expectUpMovement = false)
         {
             KeyCode = keyCode;
             DelayMs = delayMs;
+            ExpectZChange = expectZChange;
+            ExpectUpMovement = expectUpMovement;
+
+            // Automatically set Z-level verification for F12 key
+            if (keyCode == VK_F12)
+            {
+                ExpectZChange = true;
+                ExpectUpMovement = true; // F12 (exani tera) typically moves up
+                MaxRetries = 10; // Set higher retry count for Z-level changes
+            }
         }
 
         public override bool Execute()
         {
             string keyName = GetKeyName(KeyCode);
-            Debugger($"Pressing {keyName}");
 
-            SendKeyPress(KeyCode);
-            return true;
+            if (!ExpectZChange || KeyCode != VK_F12)
+            {
+                // Normal hotkey press without Z-level verification
+                Debugger($"Pressing {keyName}");
+                SendKeyPress(KeyCode);
+                return true;
+            }
+
+            // F12 with Z-level change verification logic
+            Debugger($"{keyName} (exani tera) with Z-level change verification");
+
+            // Store original position
+            ReadMemoryValues();
+            int originalX = currentX;
+            int originalY = currentY;
+            int originalZ = currentZ;
+            Debugger($"Original position: ({originalX}, {originalY}, {originalZ})");
+
+            int maxAttempts = MaxRetries;
+            int attempt = 1;
+
+            while (attempt <= maxAttempts)
+            {
+                Debugger($"Attempt {attempt}/{maxAttempts} - F12 with Z-level change");
+
+                // Execute the F12 key press
+                SendKeyPress(KeyCode);
+
+                // Wait for the action to complete
+                Thread.Sleep(Math.Max(DelayMs, 500)); // Minimum 500ms for Z-level changes
+
+                // Check if Z-level changed
+                ReadMemoryValues();
+                bool zChanged = currentZ != originalZ;
+                bool correctDirection = ExpectUpMovement ? currentZ < originalZ : currentZ > originalZ; // UP = LOWER Z
+
+                // Check if both X and Y changed by more than 100 (teleportation-like movement)
+                int xChange = Math.Abs(currentX - originalX);
+                int yChange = Math.Abs(currentY - originalY);
+                bool significantMovement = xChange > 100 && yChange > 100;
+
+                if (significantMovement)
+                {
+                    Debugger($"Both X and Y changed by more than 100 - bypassing Z-level check");
+                    Debugger($"X change: {xChange}, Y change: {yChange}");
+                    return true;
+                }
+
+                Debugger($"After F12: ({currentX}, {currentY}, {currentZ}) - Z changed: {zChanged}, Correct direction: {correctDirection}");
+                Debugger($"Expected direction: {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")}, Actual Z change: {originalZ} -> {currentZ}");
+
+                if (zChanged && correctDirection)
+                {
+                    Debugger($"Success! Z-level changed from {originalZ} to {currentZ} in the expected direction");
+                    return true;
+                }
+                else if (zChanged && !correctDirection)
+                {
+                    Debugger($"Z-level changed but in wrong direction. Expected {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")} but went {(currentZ < originalZ ? "UP (lower Z)" : "DOWN (higher Z)")}");
+                    // For exani tera, we usually don't need to return to original position
+                }
+
+                // Z didn't change or changed in wrong direction
+                if (!zChanged)
+                {
+                    Debugger($"Z-level didn't change. Expected to go {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")}");
+                }
+
+                attempt++;
+
+                // Wait before next attempt
+                if (attempt <= maxAttempts)
+                {
+                    Thread.Sleep(500);
+                }
+            }
+
+            Debugger($"Failed to achieve Z-level change after {maxAttempts} attempts");
+            return false;
         }
 
         public override bool VerifySuccess()
         {
-            if (DelayMs > 0)
+            if (!ExpectZChange || KeyCode != VK_F12)
             {
-                Thread.Sleep(DelayMs);
+                // For normal hotkey actions, just wait the delay
+                if (DelayMs > 0)
+                {
+                    Thread.Sleep(DelayMs);
+                }
+                return true;
             }
+
+            // For Z-level changes, the verification is already done in Execute()
+            // so we just return true here
             return true;
         }
 
         public override string GetDescription()
         {
-            return $"Press {GetKeyName(KeyCode)}";
+            string baseDescription = $"Press {GetKeyName(KeyCode)}";
+            if (ExpectZChange && KeyCode == VK_F12)
+            {
+                baseDescription += $" (with Z-level verification - expect {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")})";
+            }
+            return baseDescription;
         }
 
         private string GetKeyName(int keyCode)
@@ -779,12 +880,10 @@ class Program
 
 
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
-        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
 
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200)); //down the hole
 
-        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
 
@@ -1005,13 +1104,12 @@ class Program
 
 
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
-        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
 
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200)); //down the hole
 
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
-        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
+                                                       
 
 
         actionSequence.Add(new MoveAction(32817, 32809, 7));
