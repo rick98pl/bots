@@ -1913,6 +1913,13 @@ class Program
                     }
                 }
 
+
+                if (currentZ == 8)
+                {
+                    tarantulaSeqeunce();
+                    ExecuteActionSequence();
+                }
+
                 double hpPercent = (curHP / maxHP) * 100;
                 double manaPercent = (curMana / maxMana) * 100;
                 double mana = curMana;
@@ -1954,12 +1961,6 @@ class Program
                 Debugger($"==========");
 
                 Thread.Sleep(1000);
-
-                if (currentZ == 8)
-                {
-                    tarantulaSeqeunce();
-                    ExecuteActionSequence();
-                }
 
                 if (f2ClickCount >= MAX_F2_CLICKS || curSoul <= 4 || (attempts >= 3 && curMana >= MANA_THRESHOLD)) {
                     attempts = 0;
@@ -4493,6 +4494,6 @@ class Program
 
     static void Debugger(string text)
     {
-        Console.WriteLine($"[{DateTime.Now}] {text}");
+        Console.WriteLine($"[{DateTime.Now}] - (==SD BOT==)          {text}");
     }
 }
