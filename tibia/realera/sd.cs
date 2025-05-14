@@ -631,7 +631,7 @@ class Program
         public int DelayMs { get; set; }
         public bool ExpectZChange { get; set; } = true; // New property to indicate if this arrow action should change Z
 
-        public ArrowAction(ArrowDirection direction, int delayMs = 100, bool expectZChange = true)
+        public ArrowAction(ArrowDirection direction, int delayMs = 1000, bool expectZChange = true)
         {
             Direction = direction;
             DelayMs = delayMs;
@@ -1819,6 +1819,7 @@ class Program
     static DateTime lastF2AttemptTime = DateTime.MinValue;
     static double lastManaBeforeF2 = 0;
     static bool hasExecutedSequencesAfterF2Limit = false; // Flag to track if we've executed sequences after F2 limit
+
 
 
     static void Main()
@@ -3029,6 +3030,10 @@ class Program
                     CheckForPause();
 
                     // Use ReturnToFirstWaypoint to recover
+
+                    SendKeyPress(VK_ESCAPE);
+                    SendKeyPress(VK_ESCAPE);
+                    SendKeyPress(VK_ESCAPE);
                     ReturnToFirstWaypoint();
 
                     // Reset walking state after recovery
