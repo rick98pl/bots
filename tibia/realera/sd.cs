@@ -979,7 +979,7 @@ class Program
 
 
         actionSequence.Add(new FightTarantulasAction());
-
+        actionSequence.Add(new MoveAction(32758, 32791, 8));
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
         actionSequence.Add(new MoveAction(32758, 32793, 7));
@@ -1184,7 +1184,7 @@ class Program
         actionSequence.Add(new FightTarantulasAction());
 
 
-
+        actionSequence.Add(new MoveAction(32758, 32791, 8));
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
 
@@ -3193,8 +3193,12 @@ class Program
                 }
             }
             List<Coordinate> waypoints = loadedCoords.cords;
+
+            // ALWAYS find the closest waypoint index first
             ReadMemoryValues();
             currentCoordIndex = FindClosestWaypointIndex(waypoints);
+            Debugger($"[FIGHT] Starting fight from closest waypoint: {currentCoordIndex}");
+
             while (true)
             {
                 CheckForPause();
@@ -3254,8 +3258,14 @@ class Program
             }
             List<Coordinate> waypoints = loadedCoords.cords;
             Coordinate firstWaypoint = waypoints[0];
+
+            // ALWAYS find the closest waypoint index first
             ReadMemoryValues();
-            currentCoordIndex = FindClosestWaypointIndex(waypoints);
+            int actualCurrentIndex = FindClosestWaypointIndex(waypoints);
+            Debugger($"[RETURN] Current position: ({currentX}, {currentY}, {currentZ})");
+            Debugger($"[RETURN] Previous currentCoordIndex: {currentCoordIndex}, Actual closest waypoint: {actualCurrentIndex}");
+            currentCoordIndex = actualCurrentIndex;
+
             if (IsAtPosition(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z))
             {
                 Debugger("[RETURN] Already at first waypoint");
@@ -3292,11 +3302,26 @@ class Program
 
         private void ReturnViaForwardPath(List<Coordinate> waypoints)
         {
+            // ALWAYS re-find current position at the start
+            ReadMemoryValues();
+            currentCoordIndex = FindClosestWaypointIndex(waypoints);
+            Debugger($"[RETURN-FORWARD] Starting from actual closest waypoint: {currentCoordIndex}");
+
             while (currentCoordIndex > 0)
             {
                 CheckForPause();
                 ReadMemoryValues();
                 DoHealthManaChecks();
+
+                // Re-find closest waypoint if we might have moved
+                int actualCurrentIndex = FindClosestWaypointIndex(waypoints);
+                if (actualCurrentIndex != currentCoordIndex)
+                {
+                    Debugger($"[RETURN-FORWARD] Position adjusted: {currentCoordIndex} -> {actualCurrentIndex}");
+                    currentCoordIndex = actualCurrentIndex;
+                    if (currentCoordIndex == 0) break; // Already at destination
+                }
+
                 Coordinate targetWaypoint = null;
                 int targetIndex = currentCoordIndex - 1;
                 int maxJump = 0;
@@ -3325,18 +3350,38 @@ class Program
                 if (moveSuccessful)
                 {
                     currentCoordIndex = targetIndex;
-                    Debugger($"[RETURN] Forward jump: {maxJump} waypoints to waypoint {targetIndex}");
+                    Debugger($"[RETURN-FORWARD] Forward jump: {maxJump} waypoints to waypoint {targetIndex}");
+                }
+                else
+                {
+                    // If move failed, re-find closest waypoint
+                    currentCoordIndex = FindClosestWaypointIndex(waypoints);
+                    Debugger($"[RETURN-FORWARD] Move failed, updated to closest waypoint: {currentCoordIndex}");
                 }
             }
         }
 
         private void ReturnViaBackwardPath(List<Coordinate> waypoints)
         {
+            // ALWAYS re-find current position at the start
+            ReadMemoryValues();
+            currentCoordIndex = FindClosestWaypointIndex(waypoints);
+            Debugger($"[RETURN-BACKWARD] Starting from actual closest waypoint: {currentCoordIndex}");
+
             while (currentCoordIndex < waypoints.Count - 1)
             {
                 CheckForPause();
                 ReadMemoryValues();
                 DoHealthManaChecks();
+
+                // Re-find closest waypoint if we might have moved
+                int actualCurrentIndex = FindClosestWaypointIndex(waypoints);
+                if (actualCurrentIndex != currentCoordIndex)
+                {
+                    Debugger($"[RETURN-BACKWARD] Position adjusted: {currentCoordIndex} -> {actualCurrentIndex}");
+                    currentCoordIndex = actualCurrentIndex;
+                }
+
                 Coordinate targetWaypoint = null;
                 int targetIndex = currentCoordIndex + 1;
                 int maxJump = 0;
@@ -3366,9 +3411,17 @@ class Program
                 if (moveSuccessful)
                 {
                     currentCoordIndex = targetIndex;
-                    Debugger($"[RETURN] Backward jump: {maxJump} waypoints to waypoint {targetIndex}");
+                    Debugger($"[RETURN-BACKWARD] Backward jump: {maxJump} waypoints to waypoint {targetIndex}");
+                }
+                else
+                {
+                    // If move failed, re-find closest waypoint
+                    currentCoordIndex = FindClosestWaypointIndex(waypoints);
+                    Debugger($"[RETURN-BACKWARD] Move failed, updated to closest waypoint: {currentCoordIndex}");
                 }
             }
+
+            // Final jump to waypoint 0
             CheckForPause();
             ReadMemoryValues();
             DoHealthManaChecks();
@@ -3382,17 +3435,21 @@ class Program
                 if (moveSuccessful)
                 {
                     currentCoordIndex = 0;
-                    Debugger("[RETURN] Direct jump from end to waypoint 0 (exact position)");
+                    Debugger("[RETURN-BACKWARD] Direct jump from end to waypoint 0 (exact position)");
                 }
                 else
                 {
-                    Debugger("[RETURN] Failed direct jump to waypoint 0, using step-by-step approach");
+                    Debugger("[RETURN-BACKWARD] Failed direct jump to waypoint 0, using step-by-step approach");
+                    // Re-find closest and use forward path
+                    currentCoordIndex = FindClosestWaypointIndex(waypoints);
                     ReturnViaForwardPath(waypoints);
                 }
             }
             else
             {
-                Debugger($"[RETURN] Waypoint 0 too far from end (X:{distanceX}, Y:{distanceY}), using step-by-step approach");
+                Debugger($"[RETURN-BACKWARD] Waypoint 0 too far from end (X:{distanceX}, Y:{distanceY}), using step-by-step approach");
+                // Re-find closest and use forward path
+                currentCoordIndex = FindClosestWaypointIndex(waypoints);
                 ReturnViaForwardPath(waypoints);
             }
         }
@@ -3424,6 +3481,15 @@ class Program
         private void MoveToNextWaypoint(List<Coordinate> waypoints)
         {
             ReadMemoryValues();
+
+            // ALWAYS find the closest waypoint index first, regardless of currentCoordIndex
+            int actualCurrentIndex = FindClosestWaypointIndex(waypoints);
+            Debugger($"[MOVE] Current position: ({currentX}, {currentY}, {currentZ})");
+            Debugger($"[MOVE] Previous currentCoordIndex: {currentCoordIndex}, Actual closest waypoint: {actualCurrentIndex}");
+
+            // Update currentCoordIndex to the actual closest waypoint
+            currentCoordIndex = actualCurrentIndex;
+
             int nextIndex = (currentCoordIndex + 1) % waypoints.Count;
             Coordinate bestTarget = null;
             int bestIndex = nextIndex;
@@ -3485,8 +3551,7 @@ class Program
 
             if (bestTarget == null)
             {
-                Debugger("[MOVE] No reachable waypoint in either direction, finding closest");
-                currentCoordIndex = FindClosestWaypointIndex(waypoints);
+                Debugger("[MOVE] No reachable waypoint in either direction, using next sequential waypoint");
                 nextIndex = (currentCoordIndex + 1) % waypoints.Count;
                 bestTarget = waypoints[nextIndex];
                 bestIndex = nextIndex;
@@ -3502,7 +3567,9 @@ class Program
             else
             {
                 Debugger($"[MOVE] Failed to move to waypoint {bestIndex} after all attempts");
+                // Re-find closest waypoint after failed move
                 currentCoordIndex = FindClosestWaypointIndex(waypoints);
+                Debugger($"[MOVE] Updated currentCoordIndex to closest waypoint: {currentCoordIndex}");
             }
         }
 
@@ -3535,23 +3602,7 @@ class Program
 
                 if (attempt < moveAction.MaxRetries)
                 {
-                    Thread.Sleep(500);
-                }
-
-                // Check for combat interruption
-                ReadMemoryValues();
-                Thread.Sleep(200);
-                if (targetId == 0)
-                {
-                    SendKeyPress(VK_F6);
-                    Thread.Sleep(150);
-                    ReadMemoryValues();
-                }
-                ReadMemoryValues();
-                Thread.Sleep(200);
-                if (targetId != 0)
-                {
-                    return false; // Combat started, exit movement attempt
+                    Thread.Sleep(128);
                 }
             }
 
@@ -3589,6 +3640,15 @@ class Program
         private bool HandleBlockedWaypoint(List<Coordinate> waypoints, int blockedIndex)
         {
             Debugger($"[BLOCKING] Handling blocked waypoint {blockedIndex}, attempting backtrack");
+
+            // ALWAYS re-find current position before backtracking
+            ReadMemoryValues();
+            int actualCurrentIndex = FindClosestWaypointIndex(waypoints);
+            if (actualCurrentIndex != currentCoordIndex)
+            {
+                Debugger($"[BLOCKING] Position adjusted before backtrack: {currentCoordIndex} -> {actualCurrentIndex}");
+                currentCoordIndex = actualCurrentIndex;
+            }
 
             // Find previous non-blocked waypoint
             int backtrackIndex = currentCoordIndex;
@@ -3636,8 +3696,11 @@ class Program
         private int FindClosestWaypointIndex(List<Coordinate> waypoints)
         {
             ReadMemoryValues();
-            int closestIndex = 0;
+            int closestIndex = -1;
             int minDistance = int.MaxValue;
+            bool foundOnSameZ = false;
+
+            // First pass: Find closest waypoint on the same Z level
             for (int i = 0; i < waypoints.Count; i++)
             {
                 // Skip blocked waypoints when finding closest
@@ -3647,19 +3710,69 @@ class Program
                 }
 
                 var waypoint = waypoints[i];
-                if (waypoint.Z != currentZ) continue;
+
+                // Calculate Manhattan distance (X + Y distance)
                 int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-                if (i >= currentCoordIndex && distance <= minDistance + 2)
+
+                // Prioritize waypoints on the same Z level
+                if (waypoint.Z == currentZ)
                 {
-                    minDistance = distance;
-                    closestIndex = i;
+                    if (!foundOnSameZ || distance < minDistance)
+                    {
+                        minDistance = distance;
+                        closestIndex = i;
+                        foundOnSameZ = true;
+                    }
                 }
-                else if (distance < minDistance)
+                // Only consider different Z levels if no same-Z waypoint found yet
+                else if (!foundOnSameZ && distance < minDistance)
                 {
                     minDistance = distance;
                     closestIndex = i;
                 }
             }
+
+            // Fallback: If all waypoints are blocked, find closest regardless of blocking
+            if (closestIndex == -1)
+            {
+                Debugger("[FIND_CLOSEST] All waypoints blocked, finding closest regardless of blocking status");
+                minDistance = int.MaxValue;
+                foundOnSameZ = false;
+
+                for (int i = 0; i < waypoints.Count; i++)
+                {
+                    var waypoint = waypoints[i];
+                    int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+
+                    // Prioritize waypoints on the same Z level
+                    if (waypoint.Z == currentZ)
+                    {
+                        if (!foundOnSameZ || distance < minDistance)
+                        {
+                            minDistance = distance;
+                            closestIndex = i;
+                            foundOnSameZ = true;
+                        }
+                    }
+                    // Only consider different Z levels if no same-Z waypoint found yet
+                    else if (!foundOnSameZ && distance < minDistance)
+                    {
+                        minDistance = distance;
+                        closestIndex = i;
+                    }
+                }
+            }
+
+            // Final fallback: If still no waypoint found, return 0
+            if (closestIndex == -1)
+            {
+                Debugger("[FIND_CLOSEST] No valid waypoint found, defaulting to waypoint 0");
+                closestIndex = 0;
+            }
+
+            var selectedWaypoint = waypoints[closestIndex];
+            Debugger($"[FIND_CLOSEST] Character at ({currentX}, {currentY}, {currentZ}) -> Closest waypoint {closestIndex} at ({selectedWaypoint.X}, {selectedWaypoint.Y}, {selectedWaypoint.Z}) - Distance: {minDistance}");
+
             return closestIndex;
         }
 
