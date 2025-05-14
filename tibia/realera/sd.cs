@@ -1726,11 +1726,11 @@ class Program
 
                                 if (CheckUtanaVidSuccess())
                                 {
-                                    Debugger("[MOTION] Utana vid successful - invisibility removed");
+                                    Debugger("[MOTION] Utana vid successful - invisibility given");
                                 }
                                 else
                                 {
-                                    Debugger("[MOTION] Utana vid failed - still invisible, will retry");
+                                    Debugger("[MOTION] Utana vid failed - still visible, will retry");
                                     lastUtanaVidTime = lastUtanaVidAttemptTime - TimeSpan.FromSeconds(UTANA_VID_INTERVAL_SECONDS);
                                 }
                             }
@@ -3225,7 +3225,7 @@ class Program
                     Debugger("[COMBAT] Target killed!");
                 }
 
-                Thread.Sleep(200);
+                Thread.Sleep(800);
                 ReadMemoryValues();
                 if (targetId == 0)
                 {
@@ -3533,6 +3533,8 @@ class Program
                 }
 
                 // Check for combat interruption
+                ReadMemoryValues();
+                Thread.Sleep(800);
                 if (targetId == 0)
                 {
                     SendKeyPress(VK_F6);
