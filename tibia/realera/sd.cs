@@ -1001,6 +1001,8 @@ class Program
         actionSequence.Add(new MoveAction(32697, 32777, 7));
         actionSequence.Add(new MoveAction(32691, 32777, 7));
         actionSequence.Add(new MoveAction(32685, 32775, 7));
+        actionSequence.Add(new MoveAction(32681, 32776, 7));
+
 
 
         actionSequence.Add(new HotkeyAction(VK_F8, 800)); //bring me to centre
@@ -1205,6 +1207,7 @@ class Program
         actionSequence.Add(new MoveAction(32697, 32777, 7));
         actionSequence.Add(new MoveAction(32691, 32777, 7));
         actionSequence.Add(new MoveAction(32685, 32775, 7));
+        actionSequence.Add(new MoveAction(32681, 32776, 7));
 
 
 
