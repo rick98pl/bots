@@ -160,7 +160,7 @@ class Program
     static IntPtr processHandle = IntPtr.Zero;
     static IntPtr moduleBase = IntPtr.Zero;
     static int HP_THRESHOLD = 70;
-    static int MANA_THRESHOLD = 1000;
+    static int MANA_THRESHOLD = 880;
     static double SOUL_THRESHOLD = 5;
     static IntPtr BASE_ADDRESS = 0x009432D0;
     static int HP_OFFSET = 1184;
@@ -293,17 +293,22 @@ class Program
     }
 
     // Right-click action with verification
+    // Improved Right-click action with verification similar to ArrowAction
+    // Improved Right-click action with verification similar to ArrowAction
     public class RightClickAction : Action
     {
         public int DelayAfterMs { get; set; }
-        public int MaxRetries { get; set; }
         public bool ExpectSpecificOutcome { get; set; }
+        public bool ExpectZChange { get; set; } = true; // New property similar to ArrowAction
+        public bool ExpectUpMovement { get; set; } = true; // Expect to go up (like stairs/ladders) = LOWER Z value
 
-        public RightClickAction(int delayAfterMs = 100, int maxRetries = 10, bool expectSpecificOutcome = true)
+        public RightClickAction(int delayAfterMs = 100, bool expectSpecificOutcome = true, bool expectZChange = true, bool expectUpMovement = true)
         {
             DelayAfterMs = delayAfterMs;
-            MaxRetries = maxRetries;
             ExpectSpecificOutcome = expectSpecificOutcome;
+            ExpectZChange = expectZChange;
+            ExpectUpMovement = expectUpMovement;
+            MaxRetries = 10; // Set higher retry count for Z-level changes
         }
 
         public override bool Execute()
@@ -316,84 +321,132 @@ class Program
                 return true;
             }
 
-            // Right-click with retry logic
-            Debugger($"Right-click with outcome verification (max {MaxRetries} attempts)");
+            // Right-click with retry logic similar to ArrowAction
+            if (!ExpectZChange)
+            {
+                // Normal right-click without Z-level verification
+                Debugger("Right-click without Z-level change verification");
+                RightClickOnCharacter();
+                return true;
+            }
 
-            // Store original state before right-clicking
+            // Z-level change verification logic (similar to ArrowAction)
+            Debugger("Right-click with Z-level change verification");
+
+            // Store original position
             ReadMemoryValues();
             int originalX = currentX;
             int originalY = currentY;
             int originalZ = currentZ;
+            Debugger($"Original position: ({originalX}, {originalY}, {originalZ})");
 
+            int maxAttempts = MaxRetries;
             int attempt = 1;
-            while (attempt <= MaxRetries)
+
+            while (attempt <= maxAttempts)
             {
-                Debugger($"Attempt {attempt}/{MaxRetries} - Right-click execution");
+                Debugger($"Attempt {attempt}/{maxAttempts} - Right-click with Z-level change");
 
                 // Execute the right-click
                 RightClickOnCharacter();
 
                 // Wait for the action to complete
-                Thread.Sleep(Math.Max(DelayAfterMs, 200)); // Minimum 200ms for right-click processing
+                Thread.Sleep(Math.Max(DelayAfterMs, 500)); // Minimum 500ms for Z-level changes
 
-                // Verify if the expected outcome occurred
-                if (VerifyExpectedOutcome())
+                // Check if Z-level changed
+                ReadMemoryValues();
+                bool zChanged = currentZ != originalZ;
+                bool correctDirection = ExpectUpMovement ? currentZ < originalZ : currentZ > originalZ; // UP = LOWER Z
+
+                // Check if both X and Y changed by more than 100 (teleportation-like movement)
+                int xChange = Math.Abs(currentX - originalX);
+                int yChange = Math.Abs(currentY - originalY);
+                bool significantMovement = xChange > 100 && yChange > 100;
+
+                if (significantMovement)
                 {
-                    Debugger($"Success! Right-click outcome achieved on attempt {attempt}");
+                    Debugger($"Both X and Y changed by more than 100 - bypassing Z-level check");
+                    Debugger($"X change: {xChange}, Y change: {yChange}");
                     return true;
                 }
 
-                Debugger($"Right-click outcome not achieved on attempt {attempt}");
+                Debugger($"After right-click: ({currentX}, {currentY}, {currentZ}) - Z changed: {zChanged}, Correct direction: {correctDirection}");
+                Debugger($"Expected direction: {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")}, Actual Z change: {originalZ} -> {currentZ}");
 
-                // Optional: Reset to original state if needed
-                // This is commented out as right-clicks typically don't move the character
-                // if (currentX != originalX || currentY != originalY || currentZ != originalZ)
-                // {
-                //     var returnAction = new MoveAction(originalX, originalY, originalZ, 2000);
-                //     returnAction.Execute();
-                // }
+                if (zChanged && correctDirection)
+                {
+                    Debugger($"Success! Z-level changed from {originalZ} to {currentZ} in the expected direction");
+                    return true;
+                }
+                else if (zChanged && !correctDirection)
+                {
+                    Debugger($"Z-level changed but in wrong direction. Expected {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")} but went {(currentZ < originalZ ? "UP (lower Z)" : "DOWN (higher Z)")}");
+                    // You might want to return to original position here, but for right-clicks this is usually not needed
+                }
+
+                // Z didn't change or changed in wrong direction - return to original position if we moved
+                if (currentX != originalX || currentY != originalY)
+                {
+                    Debugger($"Z didn't change correctly but position moved. Returning to original position...");
+                    // Create and execute a MoveAction to return to original position
+                    var returnAction = new MoveAction(originalX, originalY, originalZ, 2000);
+
+                    // Execute the return move
+                    if (!returnAction.Execute())
+                    {
+                        Debugger($"Failed to execute return movement on attempt {attempt}");
+                    }
+
+                    // Verify the return move
+                    if (!returnAction.VerifySuccess())
+                    {
+                        Debugger($"Failed to verify return movement on attempt {attempt}");
+                        // Continue to next attempt even if return failed
+                    }
+                    else
+                    {
+                        Debugger($"Successfully returned to original position");
+                    }
+                }
 
                 attempt++;
 
                 // Wait before next attempt
-                if (attempt <= MaxRetries)
+                if (attempt <= maxAttempts)
                 {
-                    Thread.Sleep(300);
+                    Thread.Sleep(500);
                 }
             }
 
-            Debugger($"Failed to achieve right-click outcome after {MaxRetries} attempts");
+            Debugger($"Failed to achieve Z-level change after {maxAttempts} attempts");
             return false;
-        }
-
-        private bool VerifyExpectedOutcome()
-        {
-            // This method should be implemented based on what specific outcome you expect
-            // Examples could include:
-            // - A menu appearing
-            // - A dialog box opening
-            // - Character state change
-            // - UI element becoming visible/clickable
-
-            // For now, returning true as placeholder
-            // You should implement the specific verification logic here
-            Debugger("Verifying right-click outcome...");
-            return true; // Replace with actual verification logic
         }
 
         public override bool VerifySuccess()
         {
-            // For standard verification, just wait the specified delay
-            if (DelayAfterMs > 0)
+            if (!ExpectZChange)
             {
-                Thread.Sleep(DelayAfterMs);
+                // For normal right-click actions, just wait the delay
+                if (DelayAfterMs > 0)
+                {
+                    Thread.Sleep(DelayAfterMs);
+                }
+                return true;
             }
+
+            // For Z-level changes, the verification is already done in Execute()
+            // so we just return true here
             return true;
         }
 
         public override string GetDescription()
         {
-            return "Right-click on character";
+            string baseDescription = "Right-click on character";
+            if (ExpectZChange)
+            {
+                baseDescription += $" (with Z-level verification - expect {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")})";
+            }
+            return baseDescription;
         }
     }
 
@@ -439,7 +492,7 @@ class Program
                 int groundYLocal = groundY;
                 if (directionName == "backpack to ground" && Backpack == DragBackpack.MANAS)
                 {
-                    groundYLocal = groundY + 4 * WAYPOINT_SIZE + 5;
+                    groundYLocal = groundY + 4*WAYPOINT_SIZE;
                 }
 
                 int localX = backpackX;
@@ -725,7 +778,6 @@ class Program
         actionSequence.Add(new FightTarantulasAction());
 
 
-
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
@@ -819,20 +871,16 @@ class Program
 
     static void InitializeActionSequence()
     {
-        // Clear any existing actions
         actionSequence.Clear();
 
-        //// Base coordinates
         int baseX = 32597, baseY = 32747, baseZ = 7;
 
-        // Inside InitializeActionSequence()
         for (int i = 0; i < 20; i++)
         {
             actionSequence.Add(new ScanBackpackAction());
         }
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
 
-        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
         actionSequence.Add(new MoveAction(baseX + 0, baseY + 0, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 0, baseY + 5, baseZ + 0));
@@ -841,17 +889,13 @@ class Program
         actionSequence.Add(new MoveAction(baseX + 15, baseY + 15, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 22, baseY + 15, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 24, baseY + 20, baseZ + 0));
-        //actionSequence.Add(new MoveAction(baseX + 23, baseY + 24, baseZ + 0));
-        //actionSequence.Add(new MoveAction(baseX + 21, baseY + 24, baseZ + 0));
 
 
         actionSequence.Add(new MoveAction(32624, 32769, 7));
         actionSequence.Add(new MoveAction(32631, 32769, 7));
         actionSequence.Add(new MoveAction(32638, 32769, 7));
 
-        actionSequence.Add(new RightClickAction(200)); //up the ladder 
-        actionSequence.Add(new RightClickAction(200)); //up the ladder 
-        actionSequence.Add(new RightClickAction(200)); //up the ladder 
+        actionSequence.Add(new RightClickAction(200));
 
         actionSequence.Add(new MoveAction(32635, 32773, 6));
         actionSequence.Add(new MoveAction(32630, 32773, 6));
@@ -877,7 +921,6 @@ class Program
         actionSequence.Add(new MoveAction(32638, 32770, 6));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Up, 200)); //down the ladder
 
-        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
         actionSequence.Add(new MoveAction(32631, 32768, 7));
         actionSequence.Add(new MoveAction(32624, 32769, 7));
@@ -906,8 +949,6 @@ class Program
             actionSequence.Add(new ScanBackpackAction());
         }
 
-        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
-
         actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
         actionSequence.Add(new MoveAction(baseX + 33, baseY + 0, baseZ - 1));
@@ -924,12 +965,9 @@ class Program
 
         actionSequence.Add(new HotkeyAction(VK_F7, 800)); //bring me to east
 
-        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
 
         actionSequence.Add(new MoveAction(32685, 32781, 7));
-
-        //actionSequence.Add(new HotkeyAction(VK_F11, 800)); //utana vid
 
         actionSequence.Add(new MoveAction(32692, 32783, 7));
         actionSequence.Add(new MoveAction(32699, 32784, 7));
@@ -943,8 +981,6 @@ class Program
         actionSequence.Add(new MoveAction(32735, 32803, 7));
         actionSequence.Add(new MoveAction(32741, 32807, 7));
 
-        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
-
         actionSequence.Add(new MoveAction(32748, 32811, 7));
         actionSequence.Add(new MoveAction(32755, 32807, 7));
         actionSequence.Add(new MoveAction(32762, 32807, 7));
@@ -953,8 +989,6 @@ class Program
         actionSequence.Add(new MoveAction(32782, 32803, 7));
         actionSequence.Add(new MoveAction(32789, 32807, 7));
         actionSequence.Add(new MoveAction(32795, 32809, 7));
-
-        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
 
         actionSequence.Add(new MoveAction(32801, 32811, 7));
         actionSequence.Add(new MoveAction(32807, 32810, 7));
@@ -979,11 +1013,10 @@ class Program
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
-        //actionSequence.Add(new HotkeyAction(VK_F11, 800)); //utana vid
 
         actionSequence.Add(new MoveAction(32817, 32809, 7));
 
-        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
+
 
         actionSequence.Add(new MoveAction(32814, 32809, 7));
         actionSequence.Add(new MoveAction(32807, 32810, 7));
@@ -1079,8 +1112,6 @@ class Program
         }
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
 
-        //actionSequence.Add(new HotkeyAction(BACKSLASH, 800)); //utanigranhur
-
         actionSequence.Add(new MoveAction(baseX + 0, baseY + 0, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 0, baseY + 5, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 7, baseY + 6, baseZ + 0));
@@ -1088,16 +1119,12 @@ class Program
         actionSequence.Add(new MoveAction(baseX + 15, baseY + 15, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 22, baseY + 15, baseZ + 0));
         actionSequence.Add(new MoveAction(baseX + 24, baseY + 20, baseZ + 0));
-        //actionSequence.Add(new MoveAction(baseX + 23, baseY + 24, baseZ + 0));
-        //actionSequence.Add(new MoveAction(baseX + 21, baseY + 24, baseZ + 0));
 
 
         actionSequence.Add(new MoveAction(32624, 32769, 7));
         actionSequence.Add(new MoveAction(32631, 32769, 7));
         actionSequence.Add(new MoveAction(32638, 32769, 7));
 
-        actionSequence.Add(new RightClickAction(200)); //up the ladder 
-        actionSequence.Add(new RightClickAction(200)); //up the ladder 
         actionSequence.Add(new RightClickAction(200)); //up the ladder 
 
         actionSequence.Add(new MoveAction(32635, 32773, 6));
@@ -1917,9 +1944,13 @@ class Program
                     {
                         PressF2WithValidation();
                         Debugger($"Mana>900 ({curMana:F0}), Soul: ({curSoul:F1}) - attempted F2");
-                        Debugger($"f2ClickCount {f2ClickCount}");
                     }
                 }
+
+                Debugger($"==========");
+                Debugger($"f2ClickCount {f2ClickCount}");
+                Debugger($"attempts: {attempts}");
+                Debugger($"==========");
 
                 if (currentZ == 8)
                 {
@@ -1927,7 +1958,7 @@ class Program
                     ExecuteActionSequence();
                 }
 
-                if (f2ClickCount >= MAX_F2_CLICKS || curSoul <= 4 || (attempts >= 3 && curMana >= 880)) {
+                if (f2ClickCount >= MAX_F2_CLICKS || curSoul <= 4 || (attempts >= 3 && curMana >= MANA_THRESHOLD)) {
                     attempts = 0;
                     if (curSoul >= 100)
                     {
