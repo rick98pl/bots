@@ -1990,7 +1990,8 @@ class Program
     static bool hasExecutedSequencesAfterF2Limit = false; // Flag to track if we've executed sequences after F2 limit
 
 
-
+    static Process selectedProcess = null;
+    static int selectedProcessId = -1;
     static void Main()
     {
         Debugger("Starting RealeraDX Auto-Potions...");
@@ -2007,9 +2008,16 @@ class Program
             return;
         }
 
+
+        selectedProcess = process;
+        selectedProcessId = process.Id;
+        Debugger($"Selected process: {process.ProcessName} (ID: {selectedProcessId})");
+
         // Get process handle
         processHandle = OpenProcess(PROCESS_ALL_ACCESS, false, process.Id);
         moduleBase = process.MainModule.BaseAddress;
+
+        
 
         // Find window handle
         FindRealeraWindow(process);
@@ -2790,1586 +2798,6 @@ class Program
     {
         public List<Coordinate> cords { get; set; } = new List<Coordinate>();
     }
-    public class FightTarantulasAction : Action
-    {
-        private static CoordinateData loadedCoords;
-        private static int currentCoordIndex = 0;
-        private static bool returningToStart = false;
-        private static string cordsFilePath = "cords.json";
-        private static int totalCoords = 0;
-        private static bool boolInit = true;
-        static private int globalLastIndex = -1;
-        private static int maxBacktrackDistance = 10;
-        private static TimeSpan currentTargetEngagementDuration = TimeSpan.Zero;
-        private static DateTime targetEngagementStartTime = DateTime.MinValue;
-        private static int currentTargetEngagementId = 0;
-        private static bool shouldForceTargetChange = false;
-
-        public override string GetDescription()
-        {
-            return "Fight tarantulas";
-        }
-        public FightTarantulasAction()
-        {
-            MaxRetries = 1;
-        }
-
-        public override bool Execute()
-        {
-            PlayCoordinatesIteration();
-            SendKeyPress(VK_ESCAPE);
-            SendKeyPress(VK_ESCAPE);
-            SendKeyPress(VK_ESCAPE);
-            ReturnToFirstWaypoint();
-            return true;
-        }
-
-        private void ReturnToFirstWaypoint()
-        {
-            try
-            {
-                // 1. Recognize where we are by reading current memory values
-                ReadMemoryValues();
-                Debugger($"[RETURN] Current position: ({currentX}, {currentY}, {currentZ})");
-
-                // Make sure coords are loaded
-                if (loadedCoords == null)
-                {
-                    string json = File.ReadAllText(cordsFilePath);
-                    loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
-
-                    if (loadedCoords == null || loadedCoords.cords.Count == 0)
-                    {
-                        Debugger("[RETURN] ERROR: No waypoints loaded");
-                        return;
-                    }
-                }
-
-                List<Coordinate> waypoints = loadedCoords.cords;
-
-                // 3. Get coordinates of [0] waypoint (first waypoint)
-                if (waypoints == null || waypoints.Count == 0)
-                {
-                    Debugger("[RETURN] ERROR: No waypoints available");
-                    return;
-                }
-
-                Coordinate firstWaypoint = waypoints[0];
-                Debugger($"[RETURN] Target waypoint [0]: ({firstWaypoint.X}, {firstWaypoint.Y}, {firstWaypoint.Z})");
-
-                // Check if we're already at the first waypoint
-                if (IsAtPosition(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z))
-                {
-                    Debugger("[RETURN] Already at first waypoint [0]");
-                    currentCoordIndex = 0;
-                    globalLastIndex = 0;
-                    return;
-                }
-
-                // 2. Find closest waypoint to current position
-                currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                Debugger($"[RETURN] Closest waypoint to current position: [{currentCoordIndex}]");
-
-                // Analyze both paths and choose the optimal one
-                PathAnalysisResult pathAnalysis = AnalyzePaths(waypoints, currentCoordIndex);
-                List<int> optimalPath = pathAnalysis.UseReversePath ? pathAnalysis.ReversePath : pathAnalysis.ForwardPath;
-                string direction = pathAnalysis.UseReversePath ? "REVERSE" : "FORWARD";
-
-                Debugger($"[RETURN] Using {direction} path ({optimalPath.Count} waypoints)");
-                Debugger($"[RETURN] Forward path: {pathAnalysis.ForwardPath.Count} waypoints, Reverse path: {pathAnalysis.ReversePath.Count} waypoints");
-
-                // 4. Execute path using furthest reachable waypoint logic
-                DateTime returnStartTime = DateTime.Now;
-                const int RETURN_TIMEOUT_MINUTES = 3;
-                int pathProgress = 0; // Index in our optimal path
-
-                while (!IsAtPosition(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z))
-                {
-                    // Safety timeout check
-                    if ((DateTime.Now - returnStartTime).TotalMinutes > RETURN_TIMEOUT_MINUTES)
-                    {
-                        Debugger($"[RETURN] TIMEOUT: Failed to reach first waypoint within {RETURN_TIMEOUT_MINUTES} minutes");
-                        return;
-                    }
-
-                    // Re-read position
-                    ReadMemoryValues();
-
-                    //// Handle invisibility
-                    //if (invisibilityCode == 1)
-                    //{
-                    //    SendKeyPress(VK_F11);
-                    //}
-
-                    double hpPercent = (curHP / maxHP) * 100;
-                    double manaPercent = (curMana / maxMana) * 100;
-                    double mana = curMana;
-
-                    // HP check
-                    if (hpPercent <= HP_THRESHOLD)
-                    {
-                        if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
-                        {
-                            SendKeyPress(VK_F1);
-                            lastHpAction = DateTime.Now;
-                            Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
-                        }
-                    }
-
-                    // Mana check
-                    if (mana <= MANA_THRESHOLD)
-                    {
-                        if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
-                        {
-                            SendKeyPress(VK_F3);
-                            lastManaAction = DateTime.Now;
-                            Debugger($"Mana low ({mana:F1}) - pressed F3");
-                        }
-                    }
-
-                    // Find furthest reachable waypoint along our optimal path
-                    Coordinate nextTarget = FindFurthestReachableInPath(waypoints, optimalPath, pathProgress, firstWaypoint);
-
-                    if (nextTarget == null)
-                    {
-                        Debugger("[RETURN] ERROR: Could not find next target in path");
-                        break;
-                    }
-
-                    // Skip if we're already at the target
-                    if (IsAtPosition(nextTarget.X, nextTarget.Y, nextTarget.Z))
-                    {
-                        Debugger("[RETURN] Already at target position");
-                        pathProgress++;
-                        continue;
-                    }
-
-                    Debugger($"[RETURN] Moving to: ({nextTarget.X}, {nextTarget.Y}, {nextTarget.Z})");
-
-                    // Check if we need to handle Z-level change
-                    if (nextTarget.Z != currentZ)
-                    {
-                        if (nextTarget.Z > currentZ)
-                        {
-                            Debugger("[RETURN] Need to go UP");
-                            RightClickOnCharacter();
-                        }
-                        else
-                        {
-                            Debugger("[RETURN] Need to go DOWN");
-                            SendKeyPress(VK_DOWN);
-                        }
-                    }
-                    else
-                    {
-                        // Same Z level - click on target
-                        ClickWaypoint(nextTarget.X, nextTarget.Y);
-                    }
-
-                    // Update progress in path
-                    pathProgress = UpdatePathProgress(waypoints, optimalPath, pathProgress);
-                }
-
-                Debugger("[RETURN] Successfully reached first waypoint [0]");
-                currentCoordIndex = 0;
-                globalLastIndex = 0;
-            }
-            catch (Exception ex)
-            {
-                Debugger($"[RETURN] ERROR: {ex.Message}");
-                Debugger($"[RETURN] Stack trace: {ex.StackTrace}");
-            }
-        }
-
-        private class PathAnalysisResult
-        {
-            public List<int> ForwardPath { get; set; }
-            public List<int> ReversePath { get; set; }
-            public bool UseReversePath { get; set; }
-        }
-
-        private PathAnalysisResult AnalyzePaths(List<Coordinate> waypoints, int currentIndex)
-        {
-            // Calculate forward path (current -> 0)
-            List<int> forwardPath = new List<int>();
-            if (currentIndex > 0)
-            {
-                for (int i = currentIndex - 1; i >= 0; i--)
-                {
-                    forwardPath.Add(i);
-                }
-            }
-
-            // Calculate reverse path (current -> end -> 0)
-            List<int> reversePath = new List<int>();
-            // First go from current to end
-            for (int i = currentIndex + 1; i < waypoints.Count; i++)
-            {
-                reversePath.Add(i);
-            }
-            // Then wrap around from end to 0
-            for (int i = waypoints.Count - 1; i >= 0; i--)
-            {
-                reversePath.Add(i);
-            }
-
-            // Count unique waypoints (remove duplicates for circular paths)
-            HashSet<int> forwardSet = new HashSet<int>(forwardPath);
-            HashSet<int> reverseSet = new HashSet<int>(reversePath);
-
-            bool useReverse = reverseSet.Count < forwardSet.Count &&
-                              Math.Abs(reverseSet.Count - forwardSet.Count) >= 2;
-
-            Debugger($"[PATH] Forward path: {forwardSet.Count} unique waypoints");
-            Debugger($"[PATH] Reverse path: {reverseSet.Count} unique waypoints");
-
-            return new PathAnalysisResult
-            {
-                ForwardPath = forwardPath,
-                ReversePath = reversePath,
-                UseReversePath = useReverse
-            };
-        }
-
-        private Coordinate FindFurthestReachableInPath(List<Coordinate> waypoints, List<int> path, int currentProgress, Coordinate finalTarget)
-        {
-            const int MAX_DISTANCE = 5;
-            ReadMemoryValues();
-
-            // Check if we can reach the final target directly
-            int distanceToFinal = Math.Abs(finalTarget.X - currentX) + Math.Abs(finalTarget.Y - currentY);
-            if (distanceToFinal <= MAX_DISTANCE && finalTarget.Z == currentZ)
-            {
-                Debugger($"[RETURN] Can reach final target directly (distance: {distanceToFinal})");
-                return finalTarget;
-            }
-
-            // Find furthest reachable waypoint in our path
-            Coordinate furthestReachable = null;
-            int furthestDistance = 0;
-            int furthestProgress = currentProgress;
-
-            // Look ahead in our path
-            for (int i = currentProgress; i < Math.Min(currentProgress + 10, path.Count); i++)
-            {
-                int waypointIndex = path[i];
-                if (waypointIndex < 0 || waypointIndex >= waypoints.Count) continue;
-
-                Coordinate candidate = waypoints[waypointIndex];
-
-                // Skip different Z levels for now
-                if (candidate.Z != currentZ) continue;
-
-                // Check if reachable
-                int distanceX = Math.Abs(candidate.X - currentX);
-                int distanceY = Math.Abs(candidate.Y - currentY);
-                int totalDistance = distanceX + distanceY;
-
-                if (distanceX <= MAX_DISTANCE && distanceY <= MAX_DISTANCE)
-                {
-                    // Prefer further waypoints for efficiency
-                    if (totalDistance >= furthestDistance)
-                    {
-                        furthestReachable = candidate;
-                        furthestDistance = totalDistance;
-                        furthestProgress = i;
-                    }
-                }
-            }
-
-            // If no waypoint in path is reachable, use directional movement
-            if (furthestReachable == null)
-            {
-                Debugger("[RETURN] No waypoint in path reachable, using directional movement");
-                return CalculateDirectionalMove(currentX, currentY, currentZ, finalTarget);
-            }
-
-            Debugger($"[RETURN] Found furthest reachable waypoint at distance {furthestDistance}");
-            return furthestReachable;
-        }
-
-        private int UpdatePathProgress(List<Coordinate> waypoints, List<int> path, int currentProgress)
-        {
-            ReadMemoryValues();
-
-            // Find how far we've progressed in our path
-            for (int i = currentProgress; i < path.Count; i++)
-            {
-                int waypointIndex = path[i];
-                if (waypointIndex < 0 || waypointIndex >= waypoints.Count) continue;
-
-                Coordinate waypoint = waypoints[waypointIndex];
-
-                // Check if we've reached or passed this waypoint
-                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-                if (distance <= 2 && waypoint.Z == currentZ)
-                {
-                    Debugger($"[RETURN] Reached waypoint [{waypointIndex}] in path (progress: {i})");
-                    return i + 1; // Move to next waypoint in path
-                }
-            }
-
-            return currentProgress; // No progress made
-        }
-
-        private Coordinate CalculateDirectionalMove(int currentX, int currentY, int currentZ, Coordinate target)
-        {
-            // Calculate direction to target
-            int deltaX = target.X - currentX;
-            int deltaY = target.Y - currentY;
-
-            // Normalize to maximum 3 squares in each direction
-            int stepX = 0;
-            int stepY = 0;
-
-            if (deltaX != 0)
-            {
-                stepX = Math.Sign(deltaX) * Math.Min(3, Math.Abs(deltaX));
-            }
-
-            if (deltaY != 0)
-            {
-                stepY = Math.Sign(deltaY) * Math.Min(3, Math.Abs(deltaY));
-            }
-
-            return new Coordinate
-            {
-                X = currentX + stepX,
-                Y = currentY + stepY,
-                Z = currentZ
-            };
-        }
-
-        // Add these variables at the class level
-        static DateTime lastMovementTime = DateTime.MinValue;
-        static Coordinate lastRecordedPosition = null;
-        static bool stuckDetectionActive = false;
-        const int STUCK_TIMEOUT_SECONDS = 2;
-
-        // Modified PlayCoordinatesIteration method with stuck detection
-        private void PlayCoordinatesIteration()
-        {
-            if (loadedCoords == null)
-            {
-                string json = File.ReadAllText(cordsFilePath);
-                loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
-
-                if (loadedCoords == null || loadedCoords.cords.Count == 0)
-                {
-                    Debugger("[FIGHT] No waypoints loaded");
-                    return;
-                }
-
-                totalCoords = loadedCoords.cords.Count;
-            }
-
-            List<Coordinate> waypoints = loadedCoords.cords;
-
-            // Initialize stuck detection
-            stuckDetectionActive = true;
-            lastMovementTime = DateTime.Now;
-            ReadMemoryValues();
-            lastRecordedPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
-
-            while (true)
-            {
-                // Check for pause at the beginning of each iteration
-                CheckForPause();
-
-                if (Console.KeyAvailable)
-                {
-                    ConsoleKeyInfo keyInfo = Console.ReadKey(true);
-                    if (keyInfo.Key == ConsoleKey.X)
-                    {
-                        Debugger("\n[STOP] 'X' key pressed. Stopping iteration...");
-                        return;
-                    }
-                }
-
-                ReadMemoryValues();
-
-                // Check if character is stuck
-                if (CheckIfCharacterStuck())
-                {
-                    Debugger("[STUCK] Character detected as stuck! Initiating recovery...");
-
-                    // Check for pause before recovery
-                    CheckForPause();
-
-                    // Use ReturnToFirstWaypoint to recover
-
-                    SendKeyPress(VK_ESCAPE);
-                    SendKeyPress(VK_ESCAPE);
-                    SendKeyPress(VK_ESCAPE);
-                    ReturnToFirstWaypoint();
-
-                    // Reset walking state after recovery
-                    ResetWalkingState();
-
-                    // Update position tracking after recovery
-                    ReadMemoryValues();
-                    lastRecordedPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
-                    lastMovementTime = DateTime.Now;
-
-                    Debugger("[STUCK] Recovery completed, resuming normal walking");
-                    continue; // Continue with normal execution
-                }
-
-                // Update movement tracking
-                UpdateMovementTracking();
-
-                // Rest of your existing code...
-                double hpPercent = (curHP / maxHP) * 100;
-                double manaPercent = (curMana / maxMana) * 100;
-                double mana = curMana;
-
-                // HP check
-                if (hpPercent <= HP_THRESHOLD)
-                {
-                    if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
-                    {
-                        CheckForPause(); // Check pause before healing
-                        SendKeyPress(VK_F1);
-                        lastHpAction = DateTime.Now;
-                        Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
-                    }
-                }
-
-                // Mana check
-                if (mana <= MANA_THRESHOLD)
-                {
-                    if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
-                    {
-                        CheckForPause(); // Check pause before mana potion
-                        SendKeyPress(VK_F3);
-                        lastManaAction = DateTime.Now;
-                        Debugger($"Mana low ({mana:F1}) - pressed F3");
-                    }
-                }
-
-                if (curSoul >= 190)
-                {
-                    return;
-                }
-
-                // Use the improved FindClosestWaypointIndex
-                if (boolInit)
-                {
-                    currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                    boolInit = false;
-                }
-                else
-                {
-                    currentCoordIndex = FindClosestWaypointIndex(waypoints, currentX, currentY, currentZ);
-                }
-
-                // Initialize or validate global state
-                if (globalLastIndex < 0 || Math.Abs(globalLastIndex - currentCoordIndex) > maxBacktrackDistance)
-                {
-                    globalLastIndex = currentCoordIndex;
-                    Debugger($"[DEBUG] Initialized global state. Starting at waypoint index: {currentCoordIndex}");
-                }
-
-                ReadMemoryValues();
-
-                if (targetId == 0)
-                {
-                    CheckForPause(); // Check pause before target search
-                    SendKeyPress(VK_F6);
-                    Thread.Sleep(150);
-                }
-
-                ReadMemoryValues();
-                // If combat is active, handle combat
-                if (targetId != 0)
-                {
-                    while (true)
-                    {
-                        // Check for pause at the beginning of combat loop
-                        CheckForPause();
-
-                        if (Console.KeyAvailable)
-                        {
-                            ConsoleKeyInfo keyInfo = Console.ReadKey(true);
-                            if (keyInfo.Key == ConsoleKey.X)
-                            {
-                                Debugger("\n[STOP] 'X' key pressed during combat. Stopping iteration...");
-                                return;
-                            }
-                        }
-
-                        ReadMemoryValues();
-
-                        // Update movement tracking even during combat
-                        UpdateMovementTracking();
-
-                        double hpPercentCombat = (curHP / maxHP) * 100;
-                        double manaPercentCombat = (curMana / maxMana) * 100;
-                        double manaCombat = curMana;
-
-                        // HP check
-                        if (hpPercentCombat <= HP_THRESHOLD)
-                        {
-                            if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
-                            {
-                                CheckForPause(); // Check pause before healing in combat
-                                SendKeyPress(VK_F1);
-                                lastHpAction = DateTime.Now;
-                                Debugger($"HP low ({hpPercentCombat:F1}%) - pressed F1");
-                            }
-                        }
-
-                        // Mana check
-                        if (manaCombat <= MANA_THRESHOLD)
-                        {
-                            if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
-                            {
-                                CheckForPause(); // Check pause before mana potion in combat
-                                SendKeyPress(VK_F3);
-                                lastManaAction = DateTime.Now;
-                                Debugger($"Mana low ({manaCombat:F1}) - pressed F3");
-                            }
-                        }
-
-                        if (targetId != 0)
-                        {
-                            Debugger($"[COMBAT] Fighting target {targetId}...");
-
-                            // Check for pause during combat wait
-                            for (int i = 0; i < 10; i++)
-                            {
-                                CheckForPause();
-                                Thread.Sleep(100);
-                            }
-
-                            ReadMemoryValues();
-
-                            ReadMemoryValues();
-                            if (targetId == 0)
-                            {
-                                Debugger("[COMBAT] Target killed!");
-                                // Reset movement tracking after combat
-                                lastMovementTime = DateTime.Now;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // Check for pause before determining navigation action
-                CheckForPause();
-
-                NavigationAction action = DetermineNextAction(waypoints, currentX, currentY, currentZ);
-
-                switch (action.Type)
-                {
-                    case ActionType.ClickWaypoint:
-                        CheckForPause(); // Check pause before clicking waypoint
-                        if (ClickWaypoint(action.TargetX, action.TargetY))
-                        {
-                            WaitForMovementCompletion(action.TargetX, action.TargetY);
-                        }
-                        currentCoordIndex = action.WaypointIndex;
-                        globalLastIndex = currentCoordIndex;
-                        break;
-
-                    case ActionType.KeyboardStep:
-                        CheckForPause(); // Check pause before keyboard movement
-                        Debugger($"[PLAY] Executing keyboard step: {action.Direction}");
-
-                        // Send the appropriate arrow key
-                        switch (action.Direction)
-                        {
-                            case ArrowAction.ArrowDirection.Left:
-                                SendKeyPress(VK_LEFT);
-                                break;
-                            case ArrowAction.ArrowDirection.Right:
-                                SendKeyPress(VK_RIGHT);
-                                break;
-                            case ArrowAction.ArrowDirection.Up:
-                                SendKeyPress(VK_UP);
-                                break;
-                            case ArrowAction.ArrowDirection.Down:
-                                SendKeyPress(VK_DOWN);
-                                break;
-                        }
-
-                        // Wait for movement with pause checks
-                        for (int i = 0; i < 2; i++)
-                        {
-                            CheckForPause();
-                            Thread.Sleep(100);
-                        }
-
-                        // Check if we've made progress
-                        ReadMemoryValues();
-                        int newDistance = Math.Abs(action.TargetX - currentX) + Math.Abs(action.TargetY - currentY);
-
-                        if (newDistance == 0)
-                        {
-                            Debugger("[PLAY] Reached keyboard target!");
-                            currentCoordIndex = action.WaypointIndex;
-                            globalLastIndex = currentCoordIndex;
-                        }
-
-                        // Recovery mode tracking
-                        if (isInRecoveryMode)
-                        {
-                            recoveryAttempts++;
-                            if (recoveryAttempts > 20)
-                            {
-                                Debugger("[PLAY] Too many recovery attempts - forcing exit of recovery mode");
-                                isInRecoveryMode = false;
-                                recoveryAttempts = 0;
-                            }
-                        }
-                        break;
-
-                    case ActionType.WaitForTarget:
-                        CheckForPause(); // Check pause before target wait
-                        SendKeyPress(VK_F6);
-                        CheckForPause(); // Check pause after F6
-                        Thread.Sleep(100);
-                        break;
-                }
-
-                // Check for pause before final sleep
-                CheckForPause();
-                Thread.Sleep(100);
-            }
-        }
-
-        // Method to check if character is stuck
-        static bool CheckIfCharacterStuck()
-        {
-            if (!stuckDetectionActive || lastRecordedPosition == null)
-                return false;
-
-            ReadMemoryValues();
-
-            // Check if position has changed
-            bool positionChanged = lastRecordedPosition.X != currentX ||
-                                  lastRecordedPosition.Y != currentY ||
-                                  lastRecordedPosition.Z != currentZ;
-
-            if (positionChanged)
-            {
-                // Character moved, reset stuck detection
-                return false;
-            }
-
-            // Character hasn't moved, check timeout
-            double timeSinceLastMovement = (DateTime.Now - lastMovementTime).TotalSeconds;
-
-            if (timeSinceLastMovement >= STUCK_TIMEOUT_SECONDS)
-            {
-                Debugger($"[STUCK] Character hasn't moved for {timeSinceLastMovement:F1} seconds at position ({currentX}, {currentY}, {currentZ})");
-                return true;
-            }
-
-            return false;
-        }
-
-        // Method to update movement tracking
-        static void UpdateMovementTracking()
-        {
-            if (lastRecordedPosition == null)
-            {
-                ReadMemoryValues();
-                lastRecordedPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
-                lastMovementTime = DateTime.Now;
-                return;
-            }
-
-            // Check if character has moved
-            if (lastRecordedPosition.X != currentX ||
-                lastRecordedPosition.Y != currentY ||
-                lastRecordedPosition.Z != currentZ)
-            {
-                // Character moved, update tracking
-                lastRecordedPosition.X = currentX;
-                lastRecordedPosition.Y = currentY;
-                lastRecordedPosition.Z = currentZ;
-                lastMovementTime = DateTime.Now;
-            }
-        }
-
-        // Method to reset walking state after recovery
-        static void ResetWalkingState()
-        {
-            Debugger("[RESET] Resetting walking state after stuck recovery");
-
-            // Reset waypoint tracking
-            boolInit = true;
-            globalLastIndex = -1;
-
-            // Reset recovery mode variables
-            isInRecoveryMode = false;
-            recoveryTarget = null;
-            recoveryAttempts = 0;
-
-            // Reset targeted waypoint tracking
-            lastTargetedIndex = -1;
-            lastTargetedWaypoint = null;
-
-            // Find closest waypoint to current position
-
-
-            if (loadedCoords != null && loadedCoords.cords.Count > 0)
-            {
-                ReadMemoryValues();
-                currentCoordIndex = FindClosestWaypointIndex(loadedCoords.cords, currentX, currentY, currentZ);
-                globalLastIndex = currentCoordIndex;
-                Debugger($"[RESET] Reset to waypoint index {currentCoordIndex} at ({currentX}, {currentY}, {currentZ})");
-            }
-
-            // Reset movement tracking
-            lastMovementTime = DateTime.Now;
-            UpdateMovementTracking();
-        }
-
-
-
-
-
-
-
-
-
-
-        static DateTime returnStartTime = DateTime.MinValue;
- 
-
-        static void WaitForMovementCompletion(int targetX, int targetY)
-        {
-            DateTime startTime = DateTime.Now;
-            const int TIMEOUT_MS = 2000;
-
-            // Movement tracking variables
-            int lastPosX = -1;
-            int lastPosY = -1;
-            int noMovementCount = 0;
-            const int MAX_NO_MOVEMENT_COUNT = 1;
-
-            while ((DateTime.Now - startTime).TotalMilliseconds < TIMEOUT_MS)
-            {
-                Thread.Sleep(500);
-                SendKeyPress(VK_F6);
-
-                ReadMemoryValues();
-                {
-                    // Check if monster appeared
-                    if (targetId != 0)
-                    {
-                        return;
-                    }
-
-                    // Check if character moved
-                    if (lastPosX != -1 && lastPosY != -1)
-                    {
-                        if (currentX == lastPosX && currentY == lastPosY)
-                        {
-                            noMovementCount++;
-                            Debugger($"[MOVE] No movement detected. Count: {noMovementCount}/{MAX_NO_MOVEMENT_COUNT}");
-
-                            if (noMovementCount >= MAX_NO_MOVEMENT_COUNT)
-                            {
-                                Debugger($"[MOVE] Character hasn't moved for {noMovementCount} checks. Returning early.");
-                                return;
-                            }
-                        }
-                        else
-                        {
-                            noMovementCount = 0; // Reset counter if character moved
-                            Debugger($"[MOVE] Character moved from ({lastPosX},{lastPosY}) to ({currentX},{currentY})");
-                        }
-                    }
-
-                    // Update last known position
-                    lastPosX = currentX;
-                    lastPosY = currentY;
-
-                    // Check if we've reached the target
-                    int distanceX = Math.Abs(targetX - currentX);
-                    int distanceY = Math.Abs(targetY - currentY);
-                    if (distanceX <= 1 && distanceY <= 1)
-                    {
-                        Debugger($"[MOVE] Reached target position ({targetX},{targetY})");
-                        Thread.Sleep(400);
-                        return;
-                    }
-                }
-            }
-
-
-            Debugger($"[MOVE] Timeout reached after {TIMEOUT_MS}ms");
-        }
-
-        public class NavigationAction
-        {
-            public ActionType Type { get; set; }
-            public int TargetX { get; set; }
-            public int TargetY { get; set; }
-            public int FromZ { get; set; }
-            public int ToZ { get; set; }
-            public int WaypointIndex { get; set; }
-            public ArrowAction.ArrowDirection Direction { get; set; }  // Add this field
-        }
-
-        public enum ActionType
-        {
-            UseKeyboard,    // Walk with arrow keys
-            ClickWaypoint,  // Click on game screen
-            UseF4,          // Press F4 for stairs
-            WaitAtPosition,
-            WaitForTarget,
-            KeyboardStep    // NEW: Single keyboard step
-        }
-
-        static int FindWaypointIndex(List<Coordinate> waypoints, Coordinate target)
-        {
-            for (int i = 0; i < waypoints.Count; i++)
-            {
-                if (waypoints[i].X == target.X && waypoints[i].Y == target.Y && waypoints[i].Z == target.Z)
-                    return i;
-            }
-            return currentCoordIndex;
-        }
-
-        static Coordinate CreateRecoveryStep(int currentX, int currentY, int currentZ, Coordinate target)
-        {
-            // Calculate direction to target
-            int deltaX = target.X - currentX;
-            int deltaY = target.Y - currentY;
-
-            Debugger($"[RECOVERY] Creating step from ({currentX},{currentY}) toward ({target.X},{target.Y})");
-            Debugger($"[RECOVERY] Delta: X={deltaX}, Y={deltaY}");
-
-            // Always move only 1 square at a time for keyboard navigation
-            int stepX = 0;
-            int stepY = 0;
-
-            // Choose direction based on larger distance, or randomly if equal
-            if (Math.Abs(deltaX) > Math.Abs(deltaY))
-            {
-                // X distance is larger - move in X direction
-                stepX = Math.Sign(deltaX);
-            }
-            else if (Math.Abs(deltaY) > Math.Abs(deltaX))
-            {
-                // Y distance is larger - move in Y direction
-                stepY = Math.Sign(deltaY);
-            }
-            else if (deltaX != 0)
-            {
-                // Equal distances and both non-zero - randomly choose
-                Random rand = new Random();
-                if (rand.Next(2) == 0)
-                {
-                    stepX = Math.Sign(deltaX);
-                }
-                else
-                {
-                    stepY = Math.Sign(deltaY);
-                }
-            }
-            else if (deltaY != 0)
-            {
-                // Only Y movement needed
-                stepY = Math.Sign(deltaY);
-            }
-            else
-            {
-                // Already at target (shouldn't happen)
-                Debugger("[RECOVERY] Already at target!");
-                return new Coordinate { X = currentX, Y = currentY, Z = currentZ };
-            }
-
-            Coordinate recoveryStep = new Coordinate
-            {
-                X = currentX + stepX,
-                Y = currentY + stepY,
-                Z = currentZ
-            };
-
-            Debugger($"[RECOVERY] Created step: ({recoveryStep.X},{recoveryStep.Y},{recoveryStep.Z})");
-            Debugger($"[RECOVERY] Step size: X={stepX}, Y={stepY}");
-
-            return recoveryStep;
-        }
-
-
-        // Add the recovery system variables
-        static bool isInRecoveryMode = false;
-        static Coordinate recoveryTarget = null;
-        static int recoveryAttempts = 0;
-        static DateTime lastRecoveryTime = DateTime.MinValue;
-
-        static int lastTargetedIndex = -1;
-        static Coordinate lastTargetedWaypoint = null;
-
-        // Constants
-        const int LOST_THRESHOLD = 15; // If we're more than 15 squares from any waypoint
-
-        static Coordinate FindFurthestReachableWaypoint(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
-        {
-            const int MAX_DISTANCE = 5;
-            Debugger($"[NAV] Looking for furthest reachable waypoint from ({currentX},{currentY},{currentZ})");
-            Debugger($"[NAV] Current waypoint index: {currentCoordIndex}");
-            Debugger($"[NAV] Global last index: {globalLastIndex}");
-
-            // Sync currentCoordIndex with globalLastIndex if they're out of sync
-            if (globalLastIndex >= 0 && Math.Abs(globalLastIndex - currentCoordIndex) <= maxBacktrackDistance)
-            {
-                if (globalLastIndex != currentCoordIndex)
-                {
-                    Debugger($"[NAV] Syncing currentCoordIndex ({currentCoordIndex}) with globalLastIndex ({globalLastIndex})");
-                    currentCoordIndex = globalLastIndex;
-                }
-            }
-
-            // Check if we've reached our last targeted waypoint
-            if (lastTargetedIndex >= 0 && lastTargetedWaypoint != null)
-            {
-                int distanceToTarget = Math.Abs(lastTargetedWaypoint.X - currentX) + Math.Abs(lastTargetedWaypoint.Y - currentY);
-                if (distanceToTarget <= 2) // Close enough to consider "reached"
-                {
-                    Debugger($"[NAV] Reached targeted waypoint {lastTargetedIndex}. Advancing current index from {currentCoordIndex} to {lastTargetedIndex}");
-                    currentCoordIndex = lastTargetedIndex;
-                    globalLastIndex = lastTargetedIndex; // Update global state too
-                    lastTargetedIndex = -1; // Reset since we've reached it
-                    lastTargetedWaypoint = null;
-                }
-            }
-
-            // Keep track of the best reachable waypoints found (for random selection)
-            List<(Coordinate waypoint, int index, int distance)> reachableWaypoints = new List<(Coordinate, int, int)>();
-
-            // Check for reachable waypoints - look forward through the waypoint list
-            for (int i = 1; i < Math.Min(15, waypoints.Count); i++) // Start from i=1 to skip current waypoint
-            {
-                // Calculate next index, wrapping around if needed
-                int checkIndex = (currentCoordIndex + i) % waypoints.Count;
-                Coordinate check = waypoints[checkIndex];
-                Debugger($"[NAV] Checking waypoint {checkIndex}: ({check.X},{check.Y},{check.Z})");
-
-                // Handle Z-level changes for the very next waypoint (i == 1)
-                if (check.Z != currentZ)
-                {
-                    if (i == 1)
-                    {
-                        // This is the next waypoint and it has a different Z level
-                        Debugger($"[NAV] Next waypoint {checkIndex} requires floor change (Z={check.Z} vs current Z={currentZ})");
-
-                        // Handle the floor change for the next waypoint
-                        Coordinate transitionWaypoint = null;
-                        int transitionIndex = -1;
-                        int minTransitionDistance = int.MaxValue;
-
-                        if (check.Z > currentZ)
-                        {
-                            // Need to go UP - find closest waypoint with higher Z
-                            Debugger($"[NAV] Need to go UP to Z={check.Z}");
-                            for (int j = 0; j < waypoints.Count; j++)
-                            {
-                                var candidate = waypoints[j];
-                                if (candidate.Z == check.Z)
-                                {
-                                    int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
-                                    if (distance < minTransitionDistance)
-                                    {
-                                        minTransitionDistance = distance;
-                                        transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
-                                        transitionIndex = j;
-                                    }
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // Need to go DOWN - find closest waypoint with lower Z
-                            Debugger($"[NAV] Need to go DOWN to Z={check.Z}");
-                            for (int j = 0; j < waypoints.Count; j++)
-                            {
-                                var candidate = waypoints[j];
-                                if (candidate.Z == check.Z)
-                                {
-                                    int distance = Math.Abs(candidate.X - currentX) + Math.Abs(candidate.Y - currentY);
-                                    if (distance < minTransitionDistance)
-                                    {
-                                        minTransitionDistance = distance;
-                                        transitionWaypoint = new Coordinate { X = candidate.X, Y = candidate.Y, Z = candidate.Z };
-                                        transitionIndex = j;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (transitionWaypoint != null)
-                        {
-                            Debugger($"[NAV] Found transition waypoint: index {transitionIndex} at ({transitionWaypoint.X},{transitionWaypoint.Y},{transitionWaypoint.Z})");
-                            lastTargetedIndex = checkIndex;
-                            lastTargetedWaypoint = check;
-                            return transitionWaypoint;
-                        }
-                        else
-                        {
-                            Debugger($"[NAV] No transition waypoint found - returning the next waypoint directly");
-                            lastTargetedIndex = checkIndex;
-                            lastTargetedWaypoint = check;
-                            return check;
-                        }
-                    }
-                    else
-                    {
-                        // This is not the next waypoint and has different Z - skip it entirely
-                        Debugger($"[NAV] Skipping waypoint {checkIndex} - different Z level (Z={check.Z}) and not next waypoint");
-                        continue;
-                    }
-                }
-
-                // Calculate distance to this waypoint (same Z level as current)
-                int distanceX = Math.Abs(check.X - currentX);
-                int distanceY = Math.Abs(check.Y - currentY);
-                int totalDistance = distanceX + distanceY;
-                Debugger($"[NAV] Distance to waypoint {checkIndex}: dx={distanceX}, dy={distanceY}, total={totalDistance}");
-
-                // Check if this waypoint is reachable
-                if (distanceX <= MAX_DISTANCE && distanceY <= MAX_DISTANCE)
-                {
-                    // This waypoint is reachable, add it to our list
-                    reachableWaypoints.Add((check, checkIndex, totalDistance));
-                    Debugger($"[NAV] Reachable waypoint added: {checkIndex} at distance {totalDistance}");
-                }
-            }
-
-            // Process reachable waypoints for random selection
-            Coordinate selectedWaypoint = null;
-            int selectedIndex = -1;
-            int selectedDistance = 0;
-
-            if (reachableWaypoints.Count > 0)
-            {
-                // Sort by distance (descending) to get the furthest waypoints first
-                reachableWaypoints.Sort((a, b) => b.distance.CompareTo(a.distance));
-
-                // Get top 3 (or as many as we have)
-                int topCount = Math.Min(3, reachableWaypoints.Count);
-                var topWaypoints = reachableWaypoints.Take(topCount).ToList();
-
-                // Check if ALL top waypoints have the same Z as current position
-                bool allTopSameZ = topWaypoints.All(wp => wp.waypoint.Z == currentZ);
-
-                // Check if the next 10 waypoints also have the same Z
-                bool next10SameZ = true;
-                for (int i = 1; i <= 10 && i < waypoints.Count; i++)
-                {
-                    int checkIndex = (currentCoordIndex + i) % waypoints.Count;
-                    if (waypoints[checkIndex].Z != currentZ)
-                    {
-                        next10SameZ = false;
-                        break;
-                    }
-                }
-
-                Debugger($"[NAV] Z-level checks: All top waypoints same Z={allTopSameZ}, Next 10 same Z={next10SameZ}");
-
-                if (allTopSameZ && next10SameZ)
-                {
-                    // Randomly select from the top waypoints
-                    Random rand = new Random();
-                    int selectedIdx = rand.Next(topCount);
-                    var selected = topWaypoints[selectedIdx];
-
-                    selectedWaypoint = selected.waypoint;
-                    selectedIndex = selected.index;
-                    selectedDistance = selected.distance;
-
-                    Debugger($"[NAV] Random selection enabled - Selected waypoint {selectedIndex} from top {topCount} reachable waypoints (distance={selectedDistance})");
-                    Debugger($"[NAV] Available top waypoints were:");
-                    for (int i = 0; i < topWaypoints.Count; i++)
-                    {
-                        var wp = topWaypoints[i];
-                        Debugger($"[NAV]   {i}: Index {wp.index}, distance {wp.distance}");
-                    }
-                }
-                else
-                {
-                    // Take the furthest waypoint (first in sorted list)
-                    var selected = topWaypoints[0];
-                    selectedWaypoint = selected.waypoint;
-                    selectedIndex = selected.index;
-                    selectedDistance = selected.distance;
-
-                    Debugger($"[NAV] Z-level criteria not met - Selected furthest waypoint {selectedIndex} (distance={selectedDistance})");
-                    if (!allTopSameZ)
-                        Debugger($"[NAV] Reason: Not all top waypoints have same Z-level");
-                    if (!next10SameZ)
-                        Debugger($"[NAV] Reason: Next 10 waypoints don't all have same Z-level");
-                }
-            }
-
-            // If still no waypoint found, create a directional step
-            if (selectedWaypoint == null)
-            {
-                Debugger($"[NAV] No reachable waypoint found, calculating direction to next waypoint");
-
-                // Get the next waypoint in sequence
-                int nextIndex = (currentCoordIndex + 1) % waypoints.Count;
-                Coordinate nextWaypoint = waypoints[nextIndex];
-
-                // Calculate direction to the next waypoint
-                int deltaX = nextWaypoint.X - currentX;
-                int deltaY = nextWaypoint.Y - currentY;
-
-                int stepX = 0;
-                int stepY = 0;
-
-                bool canMoveX = deltaX != 0;
-                bool canMoveY = deltaY != 0;
-
-                Random rand = new Random();
-
-                if (canMoveX && canMoveY)
-                {
-                    // Randomly choose one axis to step in
-                    if (rand.Next(2) == 0)
-                    {
-                        stepX = deltaX > 0 ? 1 : -1;
-                    }
-                    else
-                    {
-                        stepY = deltaY > 0 ? 1 : -1;
-                    }
-                }
-                else if (canMoveX)
-                {
-                    stepX = deltaX > 0 ? 1 : -1;
-                }
-                else if (canMoveY)
-                {
-                    stepY = deltaY > 0 ? 1 : -1;
-                }
-
-                // Create coordinate 1 square away in the chosen direction
-                selectedWaypoint = new Coordinate
-                {
-                    X = currentX + stepX,
-                    Y = currentY + stepY,
-                    Z = currentZ
-                };
-
-                selectedIndex = -1;
-                selectedDistance = 1;
-
-                Debugger($"[NAV] Returning directional step: ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) toward waypoint {nextIndex}");
-            }
-
-            // Remember what we're targeting
-            if (selectedIndex != currentCoordIndex)
-            {
-                lastTargetedIndex = selectedIndex;
-                lastTargetedWaypoint = selectedWaypoint;
-                Debugger($"[NAV] Targeting waypoint {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z})");
-            }
-
-            Debugger($"[NAV] Selected reachable waypoint: {selectedIndex} at ({selectedWaypoint.X},{selectedWaypoint.Y},{selectedWaypoint.Z}) distance={selectedDistance}");
-            return selectedWaypoint;
-        }
-
-        static NavigationAction DetermineNextAction(List<Coordinate> waypoints, int currentX, int currentY, int currentZ)
-        {
-            Debugger($"[NAV] DetermineNextAction - Current position: ({currentX}, {currentY}, {currentZ})");
-            Debugger($"[NAV] Current waypoint index: {currentCoordIndex}, Global last index: {globalLastIndex}");
-
-            // Check if we're far from any waypoint on the same Z-level (lost condition)
-            int minDistanceToAnyWaypoint = int.MaxValue;
-            Coordinate closestWaypoint = null;
-            int closestWaypointIndex = -1;
-
-            for (int i = 0; i < waypoints.Count; i++)
-            {
-                var waypoint = waypoints[i];
-
-                // Only consider waypoints on the same Z-level
-                if (waypoint.Z != currentZ) continue;
-
-                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-                if (distance < minDistanceToAnyWaypoint)
-                {
-                    minDistanceToAnyWaypoint = distance;
-                    closestWaypoint = waypoint;
-                    closestWaypointIndex = i;
-                }
-            }
-
-            const int LOST_THRESHOLD = 15; // If we're more than 15 squares from any waypoint
-            bool wasLost = minDistanceToAnyWaypoint > LOST_THRESHOLD;
-
-            Debugger($"[NAV] Min distance to any waypoint: {minDistanceToAnyWaypoint}");
-            Debugger($"[NAV] Was lost: {wasLost}, Is in recovery mode: {isInRecoveryMode}");
-
-            // Handle recovery mode transitions
-            if (wasLost && !isInRecoveryMode)
-            {
-                Debugger($"[NAV] CHARACTER IS LOST - entering recovery mode. Distance to nearest: {minDistanceToAnyWaypoint}");
-                isInRecoveryMode = true;
-                recoveryTarget = closestWaypoint;
-                recoveryAttempts = 0;
-                lastRecoveryTime = DateTime.Now;
-            }
-            else if (!wasLost && isInRecoveryMode)
-            {
-                Debugger("[NAV] Character recovered - exiting recovery mode");
-                isInRecoveryMode = false;
-                recoveryTarget = null;
-                recoveryAttempts = 0;
-            }
-
-            // Find the target waypoint using the existing logic
-            Coordinate target = FindFurthestReachableWaypoint(waypoints, currentX, currentY, currentZ);
-
-            // Check if we're already close enough to the target
-            int distanceX = Math.Abs(target.X - currentX);
-            int distanceY = Math.Abs(target.Y - currentY);
-            int totalDistance = distanceX + distanceY;
-
-            Debugger($"[NAV] Target: ({target.X}, {target.Y}, {target.Z})");
-            Debugger($"[NAV] Distance to target: X={distanceX}, Y={distanceY}, Total={totalDistance}");
-
-            if (distanceX == 0 && distanceY == 0)
-            {
-                Debugger($"[NAV] Already at target position");
-                return new NavigationAction
-                {
-                    Type = ActionType.WaitAtPosition,
-                    TargetX = currentX,
-                    TargetY = currentY,
-                    WaypointIndex = currentCoordIndex
-                };
-            }
-
-            // Special handling for recovery mode
-            if (isInRecoveryMode)
-            {
-                Debugger("[NAV] In recovery mode - analyzing movement options");
-
-                // Check if we can reach any waypoint now
-                bool canReachWaypoint = false;
-                for (int i = 0; i < waypoints.Count; i++)
-                {
-                    var waypoint = waypoints[i];
-                    if (waypoint.Z != currentZ) continue;
-
-                    int dx = Math.Abs(waypoint.X - currentX);
-                    int dy = Math.Abs(waypoint.Y - currentY);
-
-                    if (dx <= 5 && dy <= 5) // Within click range
-                    {
-                        canReachWaypoint = true;
-                        Debugger($"[NAV] Can now reach waypoint {i} - exiting recovery mode early");
-                        isInRecoveryMode = false;
-                        recoveryTarget = null;
-                        recoveryAttempts = 0;
-                        break;
-                    }
-                }
-
-                // If still in recovery mode, create a step toward the recovery target
-                if (isInRecoveryMode && recoveryTarget != null)
-                {
-                    Coordinate stepTarget = CreateRecoveryStep(currentX, currentY, currentZ, recoveryTarget);
-
-                    // Recalculate distance to step target
-                    int stepDistanceX = Math.Abs(stepTarget.X - currentX);
-                    int stepDistanceY = Math.Abs(stepTarget.Y - currentY);
-
-                    Debugger($"[NAV] Recovery step to: ({stepTarget.X}, {stepTarget.Y}, {stepTarget.Z})");
-
-                    // Determine keyboard direction for the step
-                    ArrowAction.ArrowDirection direction;
-
-                    if (stepDistanceX > 0)
-                        direction = ArrowAction.ArrowDirection.Right;
-                    else if (stepDistanceX < 0)
-                        direction = ArrowAction.ArrowDirection.Left;
-                    else if (stepDistanceY > 0)
-                        direction = ArrowAction.ArrowDirection.Down;
-                    else
-                        direction = ArrowAction.ArrowDirection.Up;
-
-                    Debugger($"[NAV] Using keyboard direction: {direction}");
-
-                    recoveryAttempts++;
-
-                    return new NavigationAction
-                    {
-                        Type = ActionType.KeyboardStep,
-                        TargetX = stepTarget.X,
-                        TargetY = stepTarget.Y,
-                        Direction = direction,
-                        WaypointIndex = -1 // No specific waypoint index for recovery steps
-                    };
-                }
-            }
-
-            // Normal navigation logic
-            // Check if we need to handle Z-level changes
-            if (target.Z != currentZ)
-            {
-                Debugger($"[NAV] Z-level change needed: {currentZ} -> {target.Z}");
-
-                if (target.Z > currentZ)
-                {
-                    Debugger("[NAV] Need to go UP - using right-click");
-                    return new NavigationAction
-                    {
-                        Type = ActionType.UseF4,
-                        TargetX = currentX,
-                        TargetY = currentY,
-                        FromZ = currentZ,
-                        ToZ = target.Z,
-                        WaypointIndex = FindWaypointIndex(waypoints, target)
-                    };
-                }
-                else
-                {
-                    Debugger("[NAV] Need to go DOWN - using arrow key");
-                    return new NavigationAction
-                    {
-                        Type = ActionType.KeyboardStep,
-                        TargetX = currentX,
-                        TargetY = currentY,
-                        Direction = ArrowAction.ArrowDirection.Down,
-                        WaypointIndex = FindWaypointIndex(waypoints, target)
-                    };
-                }
-            }
-
-            // Same Z-level movement decisions
-            // Use keyboard for very close targets or when specifically needed
-            if (totalDistance == 1)
-            {
-                Debugger($"[NAV] Very close target - using keyboard (distance={totalDistance})");
-
-                // Determine keyboard direction
-                ArrowAction.ArrowDirection direction;
-
-                if (distanceX > 0)
-                    direction = ArrowAction.ArrowDirection.Right;
-                else if (distanceX < 0)
-                    direction = ArrowAction.ArrowDirection.Left;
-                else if (distanceY > 0)
-                    direction = ArrowAction.ArrowDirection.Down;
-                else
-                    direction = ArrowAction.ArrowDirection.Up;
-
-                Debugger($"[NAV] Using keyboard direction: {direction}");
-
-                return new NavigationAction
-                {
-                    Type = ActionType.KeyboardStep,
-                    TargetX = target.X,
-                    TargetY = target.Y,
-                    Direction = direction,
-                    WaypointIndex = FindWaypointIndex(waypoints, target)
-                };
-            }
-            else if (totalDistance <= 3)
-            {
-                Debugger($"[NAV] Close target - using keyboard (distance={totalDistance})");
-
-                // For targets within 3 squares, use keyboard navigation
-                ArrowAction.ArrowDirection direction;
-
-                // Prioritize larger movement
-                if (Math.Abs(distanceX) > Math.Abs(distanceY))
-                {
-                    direction = distanceX > 0 ? ArrowAction.ArrowDirection.Right : ArrowAction.ArrowDirection.Left;
-                }
-                else
-                {
-                    direction = distanceY > 0 ? ArrowAction.ArrowDirection.Down : ArrowAction.ArrowDirection.Up;
-                }
-
-                Debugger($"[NAV] Using keyboard direction: {direction}");
-
-                return new NavigationAction
-                {
-                    Type = ActionType.KeyboardStep,
-                    TargetX = target.X,
-                    TargetY = target.Y,
-                    Direction = direction,
-                    WaypointIndex = FindWaypointIndex(waypoints, target)
-                };
-            }
-            else
-            {
-                Debugger($"[NAV] Far target - using click (distance={totalDistance})");
-
-                // For distant targets, use click navigation
-                return new NavigationAction
-                {
-                    Type = ActionType.ClickWaypoint,
-                    TargetX = target.X,
-                    TargetY = target.Y,
-                    WaypointIndex = FindWaypointIndex(waypoints, target)
-                };
-            }
-        }
-
-        static DateTime lastPositionUpdate = DateTime.MinValue;
-        static Coordinate globalLastPosition = null; // Last player position
-        static int FindClosestWaypointIndex(
-        List<Coordinate> waypoints,
-        int currentX,
-        int currentY,
-        int currentZ
-)
-        {
-            if (waypoints == null || waypoints.Count == 0)
-            {
-                return 0;
-            }
-
-            // Update global last position if we've moved
-            bool positionChanged = false;
-            if (globalLastPosition == null ||
-                globalLastPosition.X != currentX ||
-                globalLastPosition.Y != currentY ||
-                globalLastPosition.Z != currentZ)
-            {
-                positionChanged = true;
-                globalLastPosition = new Coordinate { X = currentX, Y = currentY, Z = currentZ };
-                lastPositionUpdate = DateTime.Now;
-            }
-
-            // If we have a valid global last index and haven't moved much, prefer forward progression
-            if (globalLastIndex >= 0 && globalLastIndex < waypoints.Count)
-            {
-                var lastWaypoint = waypoints[globalLastIndex];
-                int distanceToLast = Math.Abs(lastWaypoint.X - currentX) + Math.Abs(lastWaypoint.Y - currentY);
-
-                // If we're still close to our last waypoint and on the same Z level, don't backtrack
-                if (distanceToLast <= 3 && lastWaypoint.Z == currentZ)
-                {
-                    Debugger($"[WAYPOINT] Still close to last waypoint {globalLastIndex}, maintaining progression");
-                    return globalLastIndex;
-                }
-            }
-
-            // Find closest waypoint with progression awareness
-            int closestIndex = -1;
-            int minDistance = int.MaxValue;
-
-            // Calculate search range around current global last index
-            int searchStart = Math.Max(0, globalLastIndex - maxBacktrackDistance);
-            int searchEnd = Math.Min(waypoints.Count - 1, globalLastIndex + maxBacktrackDistance);
-
-            // If no global last index set, search everything
-            if (globalLastIndex < 0)
-            {
-                searchStart = 0;
-                searchEnd = waypoints.Count - 1;
-            }
-
-            Debugger($"[WAYPOINT] Searching waypoints from {searchStart} to {searchEnd} (current global: {globalLastIndex})");
-
-            // First pass: Look for waypoints on the same Z-level within the search range
-            for (int i = searchStart; i <= searchEnd; i++)
-            {
-                var waypoint = waypoints[i];
-
-                if (waypoint.Z != currentZ)
-                {
-                    continue;
-                }
-
-                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-
-                // Prefer forward progression if distances are similar
-                if (globalLastIndex >= 0 && i > globalLastIndex && distance <= minDistance + 2)
-                {
-                    minDistance = distance;
-                    closestIndex = i;
-                    Debugger($"[WAYPOINT] Preferring forward waypoint {i} (distance {distance})");
-                }
-                else if (distance < minDistance)
-                {
-                    minDistance = distance;
-                    closestIndex = i;
-                }
-            }
-
-            // Second pass: If no suitable waypoint found on same Z-level, expand search
-            if (closestIndex == -1)
-            {
-                Debugger($"[WAYPOINT] No waypoint found on Z-level {currentZ}, expanding search");
-
-                for (int i = searchStart; i <= searchEnd; i++)
-                {
-                    var waypoint = waypoints[i];
-                    int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-
-                    if (distance < minDistance)
-                    {
-                        minDistance = distance;
-                        closestIndex = i;
-                    }
-                }
-            }
-
-            // Third pass: If still nothing found, fall back to full search
-            if (closestIndex == -1)
-            {
-                Debugger($"[WARNING] No waypoint found in range, doing full search");
-
-                for (int i = 0; i < waypoints.Count; i++)
-                {
-                    var waypoint = waypoints[i];
-
-                    if (waypoint.Z != currentZ)
-                    {
-                        continue;
-                    }
-
-                    int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
-                    if (distance < minDistance)
-                    {
-                        minDistance = distance;
-                        closestIndex = i;
-                    }
-                }
-            }
-
-            // Final fallback
-            if (closestIndex == -1)
-            {
-                Debugger("[WARNING] No waypoints found at all, returning index 0");
-                closestIndex = 0;
-            }
-
-            // Update global state if we found a valid waypoint
-            if (closestIndex >= 0)
-            {
-                // Only update global last index if we're moving forward or within reasonable backtrack distance
-                if (globalLastIndex < 0 ||
-                    closestIndex > globalLastIndex ||
-                    Math.Abs(closestIndex - globalLastIndex) <= maxBacktrackDistance)
-                {
-                    Debugger($"[WAYPOINT] Updating global last index from {globalLastIndex} to {closestIndex}");
-                    globalLastIndex = closestIndex;
-                }
-                else
-                {
-                    Debugger($"[WAYPOINT] Not updating global index - would backtrack too far ({Math.Abs(closestIndex - globalLastIndex)} > {maxBacktrackDistance})");
-                }
-            }
-
-            Debugger($"[WAYPOINT] Selected index {closestIndex} at ({waypoints[closestIndex].X}, {waypoints[closestIndex].Y}, {waypoints[closestIndex].Z}) distance {minDistance}");
-            return closestIndex;
-        }
-    }
 
 
     // Add these variables at the top of the Program class
@@ -4446,7 +2874,7 @@ class Program
     {
         try
         {
-            Debugger("[CLOSE] Starting FORCEFUL game closure process...");
+            Debugger("[CLOSE] Starting TARGETED game closure process...");
 
             // Step 1: Close the process handle if it exists
             if (processHandle != IntPtr.Zero)
@@ -4456,23 +2884,31 @@ class Program
                 processHandle = IntPtr.Zero;
             }
 
-            // Step 2: Find and FORCE KILL all game processes immediately
-            var processes = Process.GetProcesses()
-                .Where(p => p.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-
-            foreach (var process in processes)
+            // Step 2: Only terminate the SELECTED process
+            if (selectedProcess != null && selectedProcessId > 0)
             {
                 try
                 {
-                    if (!process.HasExited)
+                    // Check if the process still exists and matches our selection
+                    Process currentProcess = null;
+                    try
                     {
-                        Debugger($"[CLOSE] FORCE KILLING process: {process.ProcessName} (ID: {process.Id})");
+                        currentProcess = Process.GetProcessById(selectedProcessId);
+                    }
+                    catch (ArgumentException)
+                    {
+                        Debugger($"[CLOSE] Selected process {selectedProcessId} no longer exists");
+                        return;
+                    }
+
+                    if (currentProcess != null && !currentProcess.HasExited)
+                    {
+                        Debugger($"[CLOSE] FORCE KILLING SELECTED process: {currentProcess.ProcessName} (ID: {selectedProcessId})");
 
                         // Method 1: Try using Windows API TerminateProcess
                         try
                         {
-                            IntPtr hProcess = OpenProcess(PROCESS_TERMINATE, false, process.Id);
+                            IntPtr hProcess = OpenProcess(PROCESS_TERMINATE, false, selectedProcessId);
 
                             if (hProcess != IntPtr.Zero)
                             {
@@ -4481,65 +2917,80 @@ class Program
 
                                 if (terminated)
                                 {
-                                    Debugger($"[CLOSE] Process {process.Id} terminated via WinAPI");
-                                    continue;
+                                    Debugger($"[CLOSE] Selected process {selectedProcessId} terminated via WinAPI");
                                 }
+                                else
+                                {
+                                    throw new Exception("TerminateProcess returned false");
+                                }
+                            }
+                            else
+                            {
+                                throw new Exception("Failed to open process for termination");
                             }
                         }
                         catch (Exception ex)
                         {
                             Debugger($"[CLOSE] WinAPI termination failed: {ex.Message}");
-                        }
 
-                        // Method 2: Fallback to Process.Kill()
-                        try
-                        {
-                            process.Kill();
-                            Debugger($"[CLOSE] Process {process.Id} killed via Process.Kill()");
-                        }
-                        catch (Exception ex)
-                        {
-                            Debugger($"[CLOSE] Process.Kill() failed: {ex.Message}");
-                        }
+                            // Method 2: Fallback to Process.Kill()
+                            try
+                            {
+                                currentProcess.Kill();
+                                Debugger($"[CLOSE] Selected process {selectedProcessId} killed via Process.Kill()");
+                            }
+                            catch (Exception ex2)
+                            {
+                                Debugger($"[CLOSE] Process.Kill() failed: {ex2.Message}");
 
-                        // Method 3: Alternative kill using command line (last resort)
-                        try
-                        {
-                            ProcessStartInfo psi = new ProcessStartInfo();
-                            psi.FileName = "taskkill";
-                            psi.Arguments = $"/F /PID {process.Id}";
-                            psi.WindowStyle = ProcessWindowStyle.Hidden;
-                            psi.UseShellExecute = false;
+                                // Method 3: Alternative kill using command line (last resort)
+                                try
+                                {
+                                    ProcessStartInfo psi = new ProcessStartInfo();
+                                    psi.FileName = "taskkill";
+                                    psi.Arguments = $"/F /PID {selectedProcessId}";
+                                    psi.WindowStyle = ProcessWindowStyle.Hidden;
+                                    psi.UseShellExecute = false;
 
-                            Process killProcess = Process.Start(psi);
-                            killProcess.WaitForExit(2000);
+                                    Process killProcess = Process.Start(psi);
+                                    killProcess.WaitForExit(2000);
 
-                            Debugger($"[CLOSE] Process {process.Id} killed via taskkill command");
+                                    Debugger($"[CLOSE] Selected process {selectedProcessId} killed via taskkill command");
+                                }
+                                catch (Exception ex3)
+                                {
+                                    Debugger($"[CLOSE] Taskkill failed: {ex3.Message}");
+                                }
+                            }
                         }
-                        catch (Exception ex)
-                        {
-                            Debugger($"[CLOSE] Taskkill failed: {ex.Message}");
-                        }
+                    }
+                    else
+                    {
+                        Debugger($"[CLOSE] Selected process {selectedProcessId} has already exited");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debugger($"[CLOSE] Error force killing process {process.Id}: {ex.Message}");
+                    Debugger($"[CLOSE] Error force killing selected process {selectedProcessId}: {ex.Message}");
                 }
                 finally
                 {
                     try
                     {
-                        process.Dispose();
+                        selectedProcess?.Dispose();
                     }
                     catch { }
                 }
             }
+            else
+            {
+                Debugger("[CLOSE] No selected process to terminate");
+            }
 
-            // Step 3: Force close any remaining windows
+            // Step 3: Force close the associated window (if it exists)
             if (targetWindow != IntPtr.Zero && IsWindow(targetWindow))
             {
-                Debugger("[CLOSE] Force closing game window...");
+                Debugger("[CLOSE] Force closing associated game window...");
 
                 // Send WM_DESTROY to bypass confirmation dialogs
                 SendMessage(targetWindow, 0x0002, IntPtr.Zero, IntPtr.Zero); // WM_DESTROY
@@ -4548,13 +2999,38 @@ class Program
                 CloseWindow(targetWindow);
             }
 
-            Debugger("[CLOSE] FORCEFUL game closure process completed");
+            Debugger("[CLOSE] TARGETED game closure process completed");
         }
         catch (Exception ex)
         {
-            Debugger($"[CLOSE] Error during forceful game closure: {ex.Message}");
+            Debugger($"[CLOSE] Error during targeted game closure: {ex.Message}");
         }
     }
+
+    // Optional: Add a method to safely dispose of the selected process reference
+    static void DisposeSelectedProcess()
+    {
+        if (selectedProcess != null)
+        {
+            try
+            {
+                selectedProcess.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Debugger($"[DISPOSE] Error disposing selected process: {ex.Message}");
+            }
+            finally
+            {
+                selectedProcess = null;
+                selectedProcessId = -1;
+            }
+        }
+    }
+
+
+
+
 
     static void SoulPositionMonitorWorker()
     {
@@ -4668,4 +3144,424 @@ class Program
     {
         Console.WriteLine($"[{DateTime.Now}] - (==SD BOT==)          {text}");
     }
+
+
+
+
+
+
+
+    public class FightTarantulasAction : Action
+    {
+        private static CoordinateData loadedCoords;
+        private static int currentCoordIndex = 0;
+        private static string cordsFilePath = "cords.json";
+
+        public override string GetDescription()
+        {
+            return "Fight tarantulas";
+        }
+
+        public FightTarantulasAction()
+        {
+            MaxRetries = 1;
+        }
+
+        public override bool Execute()
+        {
+            PlayCoordinatesIteration();
+            ReturnToFirstWaypoint();
+            return true;
+        }
+
+        private void PlayCoordinatesIteration()
+        {
+            if (loadedCoords == null)
+            {
+                string json = File.ReadAllText(cordsFilePath);
+                loadedCoords = JsonSerializer.Deserialize<CoordinateData>(json);
+                if (loadedCoords == null || loadedCoords.cords.Count == 0)
+                {
+                    Debugger("[FIGHT] No waypoints loaded");
+                    return;
+                }
+            }
+            List<Coordinate> waypoints = loadedCoords.cords;
+            ReadMemoryValues();
+            currentCoordIndex = FindClosestWaypointIndex(waypoints);
+            while (true)
+            {
+                CheckForPause();
+                ReadMemoryValues();
+                DoHealthManaChecks();
+                if (curSoul >= 190)
+                {
+                    Debugger("[FIGHT] Soul limit reached, exiting fight");
+                    return;
+                }
+                if (targetId == 0)
+                {
+                    SendKeyPress(VK_F6);
+                    Thread.Sleep(150);
+                    ReadMemoryValues();
+                }
+                if (targetId != 0)
+                {
+                    while (targetId != 0)
+                    {
+                        CheckForPause();
+                        ReadMemoryValues();
+                        DoHealthManaChecks();
+                        Debugger($"[COMBAT] Fighting target {targetId}...");
+                        Thread.Sleep(1000);
+                        ReadMemoryValues();
+                    }
+                    Debugger("[COMBAT] Target killed!");
+                }
+                MoveToNextWaypoint(waypoints);
+                Thread.Sleep(100);
+            }
+        }
+
+        private void ReturnToFirstWaypoint()
+        {
+            if (loadedCoords == null || loadedCoords.cords.Count == 0)
+            {
+                Debugger("[RETURN] No waypoints loaded");
+                return;
+            }
+            List<Coordinate> waypoints = loadedCoords.cords;
+            Coordinate firstWaypoint = waypoints[0];
+            ReadMemoryValues();
+            currentCoordIndex = FindClosestWaypointIndex(waypoints);
+            if (IsAtPosition(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z))
+            {
+                Debugger("[RETURN] Already at first waypoint");
+                currentCoordIndex = 0;
+                return;
+            }
+            Debugger($"[RETURN] Starting from waypoint {currentCoordIndex}, returning to waypoint 0");
+            bool shouldGoBackward = DecideDirection(waypoints, currentCoordIndex);
+            if (shouldGoBackward)
+            {
+                Debugger("[RETURN] Taking backward path (higher indices -> 0)");
+                ReturnViaBackwardPath(waypoints);
+            }
+            else
+            {
+                Debugger("[RETURN] Taking forward path (current -> lower indices -> 0)");
+                ReturnViaForwardPath(waypoints);
+            }
+            Debugger("[RETURN] Reached first waypoint");
+            currentCoordIndex = 0;
+        }
+
+        private bool DecideDirection(List<Coordinate> waypoints, int fromIndex)
+        {
+            int forwardLength = fromIndex;
+            int backwardLength = (waypoints.Count - fromIndex);
+            bool useBackwardPath = backwardLength < forwardLength;
+            Debugger($"[RETURN] Path analysis from waypoint {fromIndex}:");
+            Debugger($"[RETURN] Forward path (direct): {forwardLength} steps ({fromIndex} -> 0)");
+            Debugger($"[RETURN] Backward path (circular): {backwardLength} steps ({fromIndex} -> end -> 0)");
+            Debugger($"[RETURN] Selected: {(useBackwardPath ? "BACKWARD (circular)" : "FORWARD (direct)")} path");
+            return useBackwardPath;
+        }
+
+        private void ReturnViaForwardPath(List<Coordinate> waypoints)
+        {
+            while (currentCoordIndex > 0)
+            {
+                CheckForPause();
+                ReadMemoryValues();
+                DoHealthManaChecks();
+                Coordinate targetWaypoint = null;
+                int targetIndex = currentCoordIndex - 1;
+                int maxJump = 0;
+                for (int steps = 1; steps <= Math.Min(15, currentCoordIndex); steps++)
+                {
+                    int candidateIndex = currentCoordIndex - steps;
+                    Coordinate candidate = waypoints[candidateIndex];
+                    int distanceX = Math.Abs(candidate.X - currentX);
+                    int distanceY = Math.Abs(candidate.Y - currentY);
+                    if (distanceX <= 5 && distanceY <= 5 && candidate.Z == currentZ)
+                    {
+                        targetWaypoint = candidate;
+                        targetIndex = candidateIndex;
+                        maxJump = steps;
+                    }
+                }
+                if (targetWaypoint == null)
+                {
+                    targetWaypoint = waypoints[currentCoordIndex - 1];
+                    targetIndex = currentCoordIndex - 1;
+                    maxJump = 1;
+                }
+
+                var moveAction = new MoveAction(targetWaypoint.X, targetWaypoint.Y, targetWaypoint.Z);
+                bool moveSuccessful = false;
+
+                for (int attempt = 1; attempt <= moveAction.MaxRetries; attempt++)
+                {
+                    if (moveAction.Execute() && moveAction.VerifySuccess())
+                    {
+                        currentCoordIndex = targetIndex;
+                        Debugger($"[RETURN] Forward jump: {maxJump} waypoints to waypoint {targetIndex}");
+                        moveSuccessful = true;
+                        break;
+                    }
+                    else
+                    {
+                        Debugger($"[RETURN] Attempt {attempt}: Failed to move to waypoint {targetIndex}");
+                    }
+
+                    if (attempt < moveAction.MaxRetries)
+                    {
+                        Thread.Sleep(500);
+                    }
+                }
+
+                if (!moveSuccessful)
+                {
+                    Debugger($"[RETURN] Failed to move to waypoint {targetIndex} after {moveAction.MaxRetries} attempts, retrying...");
+                    Thread.Sleep(300);
+                }
+            }
+        }
+
+        private void ReturnViaBackwardPath(List<Coordinate> waypoints)
+        {
+            while (currentCoordIndex < waypoints.Count - 1)
+            {
+                CheckForPause();
+                ReadMemoryValues();
+                DoHealthManaChecks();
+                Coordinate targetWaypoint = null;
+                int targetIndex = currentCoordIndex + 1;
+                int maxJump = 0;
+                int maxSteps = Math.Min(15, waypoints.Count - 1 - currentCoordIndex);
+                for (int steps = 1; steps <= maxSteps; steps++)
+                {
+                    int candidateIndex = currentCoordIndex + steps;
+                    Coordinate candidate = waypoints[candidateIndex];
+                    int distanceXx = Math.Abs(candidate.X - currentX);
+                    int distanceYy = Math.Abs(candidate.Y - currentY);
+                    if (distanceXx <= 5 && distanceYy <= 5 && candidate.Z == currentZ)
+                    {
+                        targetWaypoint = candidate;
+                        targetIndex = candidateIndex;
+                        maxJump = steps;
+                    }
+                }
+                if (targetWaypoint == null)
+                {
+                    targetWaypoint = waypoints[currentCoordIndex + 1];
+                    targetIndex = currentCoordIndex + 1;
+                    maxJump = 1;
+                }
+
+                var moveAction = new MoveAction(targetWaypoint.X, targetWaypoint.Y, targetWaypoint.Z);
+                bool moveSuccessful = false;
+
+                for (int attempt = 1; attempt <= moveAction.MaxRetries; attempt++)
+                {
+                    if (moveAction.Execute() && moveAction.VerifySuccess())
+                    {
+                        currentCoordIndex = targetIndex;
+                        Debugger($"[RETURN] Backward jump: {maxJump} waypoints to waypoint {targetIndex}");
+                        moveSuccessful = true;
+                        break;
+                    }
+                    else
+                    {
+                        Debugger($"[RETURN] Attempt {attempt}: Failed to move to waypoint {targetIndex}");
+                    }
+
+                    if (attempt < moveAction.MaxRetries)
+                    {
+                        Thread.Sleep(500);
+                    }
+                }
+
+                if (!moveSuccessful)
+                {
+                    Debugger($"[RETURN] Failed to move to waypoint {targetIndex} after {moveAction.MaxRetries} attempts, retrying...");
+                    Thread.Sleep(300);
+                }
+            }
+            CheckForPause();
+            ReadMemoryValues();
+            DoHealthManaChecks();
+            Coordinate firstWaypoint = waypoints[0];
+            int distanceX = Math.Abs(firstWaypoint.X - currentX);
+            int distanceY = Math.Abs(firstWaypoint.Y - currentY);
+            if (distanceX <= 5 && distanceY <= 5 && firstWaypoint.Z == currentZ)
+            {
+                var directMoveAction = new MoveAction(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z);
+                bool moveSuccessful = false;
+
+                for (int attempt = 1; attempt <= directMoveAction.MaxRetries; attempt++)
+                {
+                    if (directMoveAction.Execute() && directMoveAction.VerifySuccess())
+                    {
+                        currentCoordIndex = 0;
+                        Debugger("[RETURN] Direct jump from end to waypoint 0 (exact position)");
+                        moveSuccessful = true;
+                        break;
+                    }
+                    else
+                    {
+                        Debugger($"[RETURN] Attempt {attempt}: Failed direct jump to waypoint 0");
+                    }
+
+                    if (attempt < directMoveAction.MaxRetries)
+                    {
+                        Thread.Sleep(500);
+                    }
+                }
+
+                if (!moveSuccessful)
+                {
+                    Debugger("[RETURN] Failed direct jump to waypoint 0, using step-by-step approach");
+                    ReturnViaForwardPath(waypoints);
+                }
+            }
+            else
+            {
+                Debugger($"[RETURN] Waypoint 0 too far from end (X:{distanceX}, Y:{distanceY}), using step-by-step approach");
+                ReturnViaForwardPath(waypoints);
+            }
+        }
+
+        private void DoHealthManaChecks()
+        {
+            double hpPercent = (curHP / maxHP) * 100;
+            double mana = curMana;
+            if (hpPercent <= HP_THRESHOLD)
+            {
+                if ((DateTime.Now - lastHpAction).TotalMilliseconds >= 2000)
+                {
+                    SendKeyPress(VK_F1);
+                    lastHpAction = DateTime.Now;
+                    Debugger($"HP low ({hpPercent:F1}%) - pressed F1");
+                }
+            }
+            if (mana <= MANA_THRESHOLD)
+            {
+                if ((DateTime.Now - lastManaAction).TotalMilliseconds >= 2000)
+                {
+                    SendKeyPress(VK_F3);
+                    lastManaAction = DateTime.Now;
+                    Debugger($"Mana low ({mana:F1}) - pressed F3");
+                }
+            }
+        }
+
+        private void MoveToNextWaypoint(List<Coordinate> waypoints)
+        {
+            ReadMemoryValues();
+            int nextIndex = (currentCoordIndex + 1) % waypoints.Count;
+            Coordinate bestTarget = null;
+            int bestIndex = nextIndex;
+            int maxProgress = 0;
+            for (int i = 1; i <= 15; i++)
+            {
+                int checkIndex = (currentCoordIndex + i) % waypoints.Count;
+                Coordinate candidate = waypoints[checkIndex];
+                int distanceX = Math.Abs(candidate.X - currentX);
+                int distanceY = Math.Abs(candidate.Y - currentY);
+                if (distanceX <= 5 && distanceY <= 5 && candidate.Z == currentZ)
+                {
+                    if (i > maxProgress)
+                    {
+                        bestTarget = candidate;
+                        bestIndex = checkIndex;
+                        maxProgress = i;
+                        Debugger($"[MOVE] Found reachable waypoint {checkIndex} at {i} steps ahead");
+                    }
+                }
+            }
+            if (bestTarget == null)
+            {
+                Debugger("[MOVE] No reachable waypoint found ahead, trying backward direction");
+                for (int i = 1; i <= 15; i++)
+                {
+                    int checkIndex = (currentCoordIndex - i + waypoints.Count) % waypoints.Count;
+                    Coordinate candidate = waypoints[checkIndex];
+                    int distanceX = Math.Abs(candidate.X - currentX);
+                    int distanceY = Math.Abs(candidate.Y - currentY);
+                    if (distanceX <= 5 && distanceY <= 5 && candidate.Z == currentZ)
+                    {
+                        bestTarget = candidate;
+                        bestIndex = checkIndex;
+                        Debugger($"[MOVE] Found reachable waypoint behind: {checkIndex}");
+                        break;
+                    }
+                }
+            }
+            if (bestTarget == null)
+            {
+                Debugger("[MOVE] No reachable waypoint in either direction, finding closest");
+                currentCoordIndex = FindClosestWaypointIndex(waypoints);
+                nextIndex = (currentCoordIndex + 1) % waypoints.Count;
+                bestTarget = waypoints[nextIndex];
+                bestIndex = nextIndex;
+            }
+
+            var moveAction = new MoveAction(bestTarget.X, bestTarget.Y, bestTarget.Z);
+            bool moveSuccessful = false;
+
+            for (int attempt = 1; attempt <= moveAction.MaxRetries; attempt++)
+            {
+                if (moveAction.Execute() && moveAction.VerifySuccess())
+                {
+                    currentCoordIndex = bestIndex;
+                    Debugger($"[MOVE] Moved to waypoint {bestIndex} ({bestTarget.X}, {bestTarget.Y}, {bestTarget.Z}) - {maxProgress} steps ahead");
+                    moveSuccessful = true;
+                    break;
+                }
+                else
+                {
+                    Debugger($"[MOVE] Attempt {attempt}: Failed to move to waypoint {bestIndex}");
+                }
+
+                if (attempt < moveAction.MaxRetries)
+                {
+                    Thread.Sleep(500);
+                }
+            }
+
+            if (!moveSuccessful)
+            {
+                Debugger($"[MOVE] Failed to move to waypoint {bestIndex} after {moveAction.MaxRetries} attempts");
+                currentCoordIndex = FindClosestWaypointIndex(waypoints);
+            }
+        }
+
+        private int FindClosestWaypointIndex(List<Coordinate> waypoints)
+        {
+            ReadMemoryValues();
+            int closestIndex = 0;
+            int minDistance = int.MaxValue;
+            for (int i = 0; i < waypoints.Count; i++)
+            {
+                var waypoint = waypoints[i];
+                if (waypoint.Z != currentZ) continue;
+                int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
+                if (i >= currentCoordIndex && distance <= minDistance + 2)
+                {
+                    minDistance = distance;
+                    closestIndex = i;
+                }
+                else if (distance < minDistance)
+                {
+                    minDistance = distance;
+                    closestIndex = i;
+                }
+            }
+            return closestIndex;
+        }
+    }
+
+
 }
