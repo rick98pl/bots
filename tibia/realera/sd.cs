@@ -1952,6 +1952,8 @@ class Program
                 Debugger($"attempts: {attempts}");
                 Debugger($"==========");
 
+                Thread.Sleep(1000);
+
                 if (currentZ == 8)
                 {
                     tarantulaSeqeunce();
