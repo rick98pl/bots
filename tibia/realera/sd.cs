@@ -564,22 +564,32 @@ class Program
     {
         public int KeyCode { get; set; }
         public int DelayMs { get; set; }
-        public bool ExpectZChange { get; set; } = false; // New property for Z-level verification
+        public bool ExpectZChange { get; set; } = false; // For F12 Z-level verification
         public bool ExpectUpMovement { get; set; } = false; // Expect to go up (like stairs/ladders) = LOWER Z value
+        public bool ExpectXChange { get; set; } = false; // For F7/F8 X coordinate verification
+        public int MinXChange { get; set; } = 20; // Minimum X coordinate change expected
 
-        public HotkeyAction(int keyCode, int delayMs = 100, bool expectZChange = false, bool expectUpMovement = false)
+        public HotkeyAction(int keyCode, int delayMs = 100, bool expectZChange = false, bool expectUpMovement = false, bool expectXChange = false, int minXChange = 20)
         {
             KeyCode = keyCode;
             DelayMs = delayMs;
             ExpectZChange = expectZChange;
             ExpectUpMovement = expectUpMovement;
+            ExpectXChange = expectXChange;
+            MinXChange = minXChange;
 
-            // Automatically set Z-level verification for F12 key
+            // Automatically set validation for specific keys
             if (keyCode == VK_F12)
             {
                 ExpectZChange = true;
                 ExpectUpMovement = true; // F12 (exani tera) typically moves up
                 MaxRetries = 10; // Set higher retry count for Z-level changes
+            }
+            else if (keyCode == VK_F7 || keyCode == VK_F8)
+            {
+                ExpectXChange = true;
+                MinXChange = minXChange;
+                MaxRetries = 10; // Set higher retry count for teleportation spells
             }
         }
 
@@ -587,15 +597,33 @@ class Program
         {
             string keyName = GetKeyName(KeyCode);
 
-            if (!ExpectZChange || KeyCode != VK_F12)
+            // Check if this key needs special validation
+            bool needsValidation = (KeyCode == VK_F12 && ExpectZChange) ||
+                                  ((KeyCode == VK_F7 || KeyCode == VK_F8) && ExpectXChange);
+
+            if (!needsValidation)
             {
-                // Normal hotkey press without Z-level verification
+                // Normal hotkey press without validation
                 Debugger($"Pressing {keyName}");
                 SendKeyPress(KeyCode);
                 return true;
             }
 
-            // F12 with Z-level change verification logic
+            // Special validation logic for F7, F8 (X-change) and F12 (Z-change)
+            if (KeyCode == VK_F12)
+            {
+                return ExecuteF12WithZValidation(keyName);
+            }
+            else if (KeyCode == VK_F7 || KeyCode == VK_F8)
+            {
+                return ExecuteF7F8WithXValidation(keyName);
+            }
+
+            return false;
+        }
+
+        private bool ExecuteF12WithZValidation(string keyName)
+        {
             Debugger($"{keyName} (exani tera) with Z-level change verification");
 
             // Store original position
@@ -646,7 +674,6 @@ class Program
                 else if (zChanged && !correctDirection)
                 {
                     Debugger($"Z-level changed but in wrong direction. Expected {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")} but went {(currentZ < originalZ ? "UP (lower Z)" : "DOWN (higher Z)")}");
-                    // For exani tera, we usually don't need to return to original position
                 }
 
                 // Z didn't change or changed in wrong direction
@@ -668,9 +695,77 @@ class Program
             return false;
         }
 
+        private bool ExecuteF7F8WithXValidation(string keyName)
+        {
+            string spellName = KeyCode == VK_F7 ? "bring me to east" : "bring me to centre";
+            Debugger($"{keyName} ({spellName}) with X coordinate change verification (min {MinXChange} squares)");
+
+            // Store original position
+            ReadMemoryValues();
+            int originalX = currentX;
+            int originalY = currentY;
+            int originalZ = currentZ;
+            Debugger($"Original position: ({originalX}, {originalY}, {originalZ})");
+
+            int maxAttempts = MaxRetries;
+            int attempt = 1;
+
+            while (attempt <= maxAttempts)
+            {
+                Debugger($"Attempt {attempt}/{maxAttempts} - {keyName} with X coordinate change");
+
+                // Execute the key press
+                SendKeyPress(KeyCode);
+
+                // Wait for the teleportation to complete
+                Thread.Sleep(Math.Max(DelayMs, 1000)); // Minimum 1000ms for teleportation spells
+
+                // Check if position changed
+                ReadMemoryValues();
+                int xChange = Math.Abs(currentX - originalX);
+                int yChange = Math.Abs(currentY - originalY);
+                int zChange = Math.Abs(currentZ - originalZ);
+
+                Debugger($"After {keyName}: ({currentX}, {currentY}, {currentZ})");
+                Debugger($"Position changes: X={xChange}, Y={yChange}, Z={zChange}");
+
+                // Check if X coordinate changed by at least the minimum amount
+                if (xChange >= MinXChange)
+                {
+                    Debugger($"Success! X coordinate changed by {xChange} squares (minimum {MinXChange} required)");
+                    Debugger($"Teleported from ({originalX}, {originalY}, {originalZ}) to ({currentX}, {currentY}, {currentZ})");
+                    return true;
+                }
+
+                // Also check for significant Y or Z changes (alternative success condition)
+                bool significantMovement = yChange > 100 || zChange > 0;
+                if (significantMovement)
+                {
+                    Debugger($"Success! Significant movement detected (Y change: {yChange}, Z change: {zChange})");
+                    return true;
+                }
+
+                Debugger($"X coordinate only changed by {xChange} squares, but {MinXChange} was required");
+
+                attempt++;
+
+                // Wait before next attempt
+                if (attempt <= maxAttempts)
+                {
+                    Thread.Sleep(500);
+                }
+            }
+
+            Debugger($"Failed to achieve X coordinate change of at least {MinXChange} squares after {maxAttempts} attempts");
+            return false;
+        }
+
         public override bool VerifySuccess()
         {
-            if (!ExpectZChange || KeyCode != VK_F12)
+            bool needsValidation = (KeyCode == VK_F12 && ExpectZChange) ||
+                                  ((KeyCode == VK_F7 || KeyCode == VK_F8) && ExpectXChange);
+
+            if (!needsValidation)
             {
                 // For normal hotkey actions, just wait the delay
                 if (DelayMs > 0)
@@ -680,7 +775,7 @@ class Program
                 return true;
             }
 
-            // For Z-level changes, the verification is already done in Execute()
+            // For validated keys, the verification is already done in Execute()
             // so we just return true here
             return true;
         }
@@ -688,10 +783,17 @@ class Program
         public override string GetDescription()
         {
             string baseDescription = $"Press {GetKeyName(KeyCode)}";
+
             if (ExpectZChange && KeyCode == VK_F12)
             {
                 baseDescription += $" (with Z-level verification - expect {(ExpectUpMovement ? "UP (lower Z)" : "DOWN (higher Z)")})";
             }
+            else if (ExpectXChange && (KeyCode == VK_F7 || KeyCode == VK_F8))
+            {
+                string spellName = KeyCode == VK_F7 ? "bring me to east" : "bring me to centre";
+                baseDescription += $" ({spellName} with X coordinate verification - min {MinXChange} squares)";
+            }
+
             return baseDescription;
         }
 
@@ -878,40 +980,26 @@ class Program
 
         actionSequence.Add(new FightTarantulasAction());
 
-
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
 
-        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200)); //down the hole
-
-        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
-
-
-        actionSequence.Add(new MoveAction(32817, 32809, 7));
-
-        actionSequence.Add(new MoveAction(32814, 32809, 7));
-        actionSequence.Add(new MoveAction(32807, 32810, 7));
-        actionSequence.Add(new MoveAction(32801, 32811, 7));
-        actionSequence.Add(new MoveAction(32795, 32809, 7));
-        actionSequence.Add(new MoveAction(32789, 32807, 7));
-        actionSequence.Add(new MoveAction(32782, 32803, 7));
-        actionSequence.Add(new MoveAction(32776, 32803, 7));
-        actionSequence.Add(new MoveAction(32769, 32805, 7));
-        actionSequence.Add(new MoveAction(32762, 32807, 7));
-        actionSequence.Add(new MoveAction(32755, 32807, 7));
-        actionSequence.Add(new MoveAction(32748, 32811, 7));
-        actionSequence.Add(new MoveAction(32741, 32807, 7));
-        actionSequence.Add(new MoveAction(32735, 32803, 7));
-        actionSequence.Add(new MoveAction(32728, 32799, 7));
-        actionSequence.Add(new MoveAction(32723, 32794, 7));
-        actionSequence.Add(new MoveAction(32716, 32791, 7));
+        actionSequence.Add(new MoveAction(32758, 32793, 7));
+        actionSequence.Add(new MoveAction(32754, 32789, 7));
+        actionSequence.Add(new MoveAction(32753, 32793, 7));
+        actionSequence.Add(new MoveAction(32749, 32797, 7));
+        actionSequence.Add(new MoveAction(32745, 32794, 7));
+        actionSequence.Add(new MoveAction(32740, 32794, 7));
+        actionSequence.Add(new MoveAction(32735, 32794, 7));
+        actionSequence.Add(new MoveAction(32729, 32791, 7));
+        actionSequence.Add(new MoveAction(32723, 32792, 7));
+        actionSequence.Add(new MoveAction(32719, 32788, 7));
         actionSequence.Add(new MoveAction(32713, 32786, 7));
-        actionSequence.Add(new MoveAction(32710, 32788, 7));
-        actionSequence.Add(new MoveAction(32706, 32785, 7));
-        actionSequence.Add(new MoveAction(32699, 32784, 7));
-        actionSequence.Add(new MoveAction(32692, 32783, 7));
-        actionSequence.Add(new MoveAction(32685, 32781, 7));
-        actionSequence.Add(new MoveAction(32679, 32777, 7));
+        actionSequence.Add(new MoveAction(32708, 32784, 7));
+        actionSequence.Add(new MoveAction(32702, 32785, 7));
+        actionSequence.Add(new MoveAction(32699, 32781, 7));
+        actionSequence.Add(new MoveAction(32694, 32781, 7));
+        actionSequence.Add(new MoveAction(32689, 32781, 7));
+        actionSequence.Add(new MoveAction(32684, 32781, 7));
 
 
         actionSequence.Add(new HotkeyAction(VK_F8, 800)); //bring me to centre
@@ -1066,34 +1154,22 @@ class Program
 
 
 
-        actionSequence.Add(new MoveAction(32685, 32781, 7));
-
-        actionSequence.Add(new MoveAction(32692, 32783, 7));
-        actionSequence.Add(new MoveAction(32699, 32784, 7));
-
-        actionSequence.Add(new MoveAction(32706, 32785, 7));
-        actionSequence.Add(new MoveAction(32710, 32788, 7));
+        actionSequence.Add(new MoveAction(32684, 32781, 7));
+        actionSequence.Add(new MoveAction(32689, 32781, 7));
+        actionSequence.Add(new MoveAction(32694, 32781, 7));
+        actionSequence.Add(new MoveAction(32699, 32781, 7));
+        actionSequence.Add(new MoveAction(32702, 32785, 7));
+        actionSequence.Add(new MoveAction(32708, 32784, 7));
         actionSequence.Add(new MoveAction(32713, 32786, 7));
-        actionSequence.Add(new MoveAction(32716, 32791, 7));
-        actionSequence.Add(new MoveAction(32723, 32794, 7));
-        actionSequence.Add(new MoveAction(32728, 32799, 7));
-        actionSequence.Add(new MoveAction(32735, 32803, 7));
-        actionSequence.Add(new MoveAction(32741, 32807, 7));
-
-        actionSequence.Add(new MoveAction(32748, 32811, 7));
-        actionSequence.Add(new MoveAction(32755, 32807, 7));
-        actionSequence.Add(new MoveAction(32762, 32807, 7));
-        actionSequence.Add(new MoveAction(32769, 32805, 7));
-        actionSequence.Add(new MoveAction(32776, 32803, 7));
-        actionSequence.Add(new MoveAction(32782, 32803, 7));
-        actionSequence.Add(new MoveAction(32789, 32807, 7));
-        actionSequence.Add(new MoveAction(32795, 32809, 7));
-
-        actionSequence.Add(new MoveAction(32801, 32811, 7));
-        actionSequence.Add(new MoveAction(32807, 32810, 7));
-        actionSequence.Add(new MoveAction(32814, 32809, 7));
-        actionSequence.Add(new MoveAction(32817, 32809, 7));
-
+        actionSequence.Add(new MoveAction(32719, 32788, 7));
+        actionSequence.Add(new MoveAction(32723, 32792, 7));
+        actionSequence.Add(new MoveAction(32729, 32791, 7));
+        actionSequence.Add(new MoveAction(32735, 32794, 7));
+        actionSequence.Add(new MoveAction(32740, 32794, 7));
+        actionSequence.Add(new MoveAction(32745, 32794, 7));
+        actionSequence.Add(new MoveAction(32749, 32797, 7));
+        actionSequence.Add(new MoveAction(32753, 32793, 7));
+        actionSequence.Add(new MoveAction(32757, 32791, 7));
 
 
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Right, 200)); //down the hole
@@ -1106,39 +1182,23 @@ class Program
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
 
-        actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200)); //down the hole
-
-        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
-                                                       
-
-
-        actionSequence.Add(new MoveAction(32817, 32809, 7));
-
-
-
-        actionSequence.Add(new MoveAction(32814, 32809, 7));
-        actionSequence.Add(new MoveAction(32807, 32810, 7));
-        actionSequence.Add(new MoveAction(32801, 32811, 7));
-        actionSequence.Add(new MoveAction(32795, 32809, 7));
-        actionSequence.Add(new MoveAction(32789, 32807, 7));
-        actionSequence.Add(new MoveAction(32782, 32803, 7));
-        actionSequence.Add(new MoveAction(32776, 32803, 7));
-        actionSequence.Add(new MoveAction(32769, 32805, 7));
-        actionSequence.Add(new MoveAction(32762, 32807, 7));
-        actionSequence.Add(new MoveAction(32755, 32807, 7));
-        actionSequence.Add(new MoveAction(32748, 32811, 7));
-        actionSequence.Add(new MoveAction(32741, 32807, 7));
-        actionSequence.Add(new MoveAction(32735, 32803, 7));
-        actionSequence.Add(new MoveAction(32728, 32799, 7));
-        actionSequence.Add(new MoveAction(32723, 32794, 7));
-        actionSequence.Add(new MoveAction(32716, 32791, 7));
+        actionSequence.Add(new MoveAction(32758, 32793, 7));
+        actionSequence.Add(new MoveAction(32754, 32789, 7));
+        actionSequence.Add(new MoveAction(32753, 32793, 7));
+        actionSequence.Add(new MoveAction(32749, 32797, 7));
+        actionSequence.Add(new MoveAction(32745, 32794, 7));
+        actionSequence.Add(new MoveAction(32740, 32794, 7));
+        actionSequence.Add(new MoveAction(32735, 32794, 7));
+        actionSequence.Add(new MoveAction(32729, 32791, 7));
+        actionSequence.Add(new MoveAction(32723, 32792, 7));
+        actionSequence.Add(new MoveAction(32719, 32788, 7));
         actionSequence.Add(new MoveAction(32713, 32786, 7));
-        actionSequence.Add(new MoveAction(32710, 32788, 7));
-        actionSequence.Add(new MoveAction(32706, 32785, 7));
-        actionSequence.Add(new MoveAction(32699, 32784, 7));
-        actionSequence.Add(new MoveAction(32692, 32783, 7));
-        actionSequence.Add(new MoveAction(32685, 32781, 7));
-        actionSequence.Add(new MoveAction(32679, 32777, 7));
+        actionSequence.Add(new MoveAction(32708, 32784, 7));
+        actionSequence.Add(new MoveAction(32702, 32785, 7));
+        actionSequence.Add(new MoveAction(32699, 32781, 7));
+        actionSequence.Add(new MoveAction(32694, 32781, 7));
+        actionSequence.Add(new MoveAction(32689, 32781, 7));
+        actionSequence.Add(new MoveAction(32684, 32781, 7));
 
 
         actionSequence.Add(new HotkeyAction(VK_F8, 800)); //bring me to centre
