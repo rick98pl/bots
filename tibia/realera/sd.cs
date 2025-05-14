@@ -2603,7 +2603,7 @@ class Program
 
     static void SaveDebugScreenshot(Mat backpackArea, int scanLeft, int scanTop, int scanWidth, int scanHeight)
     {
-        return;
+        
         try
         {
             string debugDir = "debug_screenshots";
@@ -3157,6 +3157,12 @@ class Program
         private static int currentCoordIndex = 0;
         private static string cordsFilePath = "cords.json";
 
+        // Blocked waypoint tracking
+        private static Dictionary<int, int> waypointFailureCount = new Dictionary<int, int>();
+        private static HashSet<int> blockedWaypoints = new HashSet<int>();
+        private const int MAX_WAYPOINT_FAILURES = 5;
+        private const int BACKTRACK_ATTEMPTS = 3;
+
         public override string GetDescription()
         {
             return "Fight tarantulas";
@@ -3218,6 +3224,16 @@ class Program
                     }
                     Debugger("[COMBAT] Target killed!");
                 }
+
+                Thread.Sleep(200);
+                ReadMemoryValues();
+                if (targetId == 0)
+                {
+                    SendKeyPress(VK_F6);
+                    Thread.Sleep(150);
+                    ReadMemoryValues();
+                }
+
                 MoveToNextWaypoint(waypoints);
                 Thread.Sleep(100);
             }
@@ -3298,33 +3314,12 @@ class Program
                     maxJump = 1;
                 }
 
-                var moveAction = new MoveAction(targetWaypoint.X, targetWaypoint.Y, targetWaypoint.Z);
-                bool moveSuccessful = false;
+                bool moveSuccessful = AttemptMoveWithBlocking(targetWaypoint, targetIndex, waypoints);
 
-                for (int attempt = 1; attempt <= moveAction.MaxRetries; attempt++)
+                if (moveSuccessful)
                 {
-                    if (moveAction.Execute() && moveAction.VerifySuccess())
-                    {
-                        currentCoordIndex = targetIndex;
-                        Debugger($"[RETURN] Forward jump: {maxJump} waypoints to waypoint {targetIndex}");
-                        moveSuccessful = true;
-                        break;
-                    }
-                    else
-                    {
-                        Debugger($"[RETURN] Attempt {attempt}: Failed to move to waypoint {targetIndex}");
-                    }
-
-                    if (attempt < moveAction.MaxRetries)
-                    {
-                        Thread.Sleep(500);
-                    }
-                }
-
-                if (!moveSuccessful)
-                {
-                    Debugger($"[RETURN] Failed to move to waypoint {targetIndex} after {moveAction.MaxRetries} attempts, retrying...");
-                    Thread.Sleep(300);
+                    currentCoordIndex = targetIndex;
+                    Debugger($"[RETURN] Forward jump: {maxJump} waypoints to waypoint {targetIndex}");
                 }
             }
         }
@@ -3360,33 +3355,12 @@ class Program
                     maxJump = 1;
                 }
 
-                var moveAction = new MoveAction(targetWaypoint.X, targetWaypoint.Y, targetWaypoint.Z);
-                bool moveSuccessful = false;
+                bool moveSuccessful = AttemptMoveWithBlocking(targetWaypoint, targetIndex, waypoints);
 
-                for (int attempt = 1; attempt <= moveAction.MaxRetries; attempt++)
+                if (moveSuccessful)
                 {
-                    if (moveAction.Execute() && moveAction.VerifySuccess())
-                    {
-                        currentCoordIndex = targetIndex;
-                        Debugger($"[RETURN] Backward jump: {maxJump} waypoints to waypoint {targetIndex}");
-                        moveSuccessful = true;
-                        break;
-                    }
-                    else
-                    {
-                        Debugger($"[RETURN] Attempt {attempt}: Failed to move to waypoint {targetIndex}");
-                    }
-
-                    if (attempt < moveAction.MaxRetries)
-                    {
-                        Thread.Sleep(500);
-                    }
-                }
-
-                if (!moveSuccessful)
-                {
-                    Debugger($"[RETURN] Failed to move to waypoint {targetIndex} after {moveAction.MaxRetries} attempts, retrying...");
-                    Thread.Sleep(300);
+                    currentCoordIndex = targetIndex;
+                    Debugger($"[RETURN] Backward jump: {maxJump} waypoints to waypoint {targetIndex}");
                 }
             }
             CheckForPause();
@@ -3397,30 +3371,14 @@ class Program
             int distanceY = Math.Abs(firstWaypoint.Y - currentY);
             if (distanceX <= 5 && distanceY <= 5 && firstWaypoint.Z == currentZ)
             {
-                var directMoveAction = new MoveAction(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z);
-                bool moveSuccessful = false;
+                bool moveSuccessful = AttemptMoveWithBlocking(firstWaypoint, 0, waypoints);
 
-                for (int attempt = 1; attempt <= directMoveAction.MaxRetries; attempt++)
+                if (moveSuccessful)
                 {
-                    if (directMoveAction.Execute() && directMoveAction.VerifySuccess())
-                    {
-                        currentCoordIndex = 0;
-                        Debugger("[RETURN] Direct jump from end to waypoint 0 (exact position)");
-                        moveSuccessful = true;
-                        break;
-                    }
-                    else
-                    {
-                        Debugger($"[RETURN] Attempt {attempt}: Failed direct jump to waypoint 0");
-                    }
-
-                    if (attempt < directMoveAction.MaxRetries)
-                    {
-                        Thread.Sleep(500);
-                    }
+                    currentCoordIndex = 0;
+                    Debugger("[RETURN] Direct jump from end to waypoint 0 (exact position)");
                 }
-
-                if (!moveSuccessful)
+                else
                 {
                     Debugger("[RETURN] Failed direct jump to waypoint 0, using step-by-step approach");
                     ReturnViaForwardPath(waypoints);
@@ -3464,9 +3422,19 @@ class Program
             Coordinate bestTarget = null;
             int bestIndex = nextIndex;
             int maxProgress = 0;
+
+            // Skip blocked waypoints when looking for next waypoint
             for (int i = 1; i <= 15; i++)
             {
                 int checkIndex = (currentCoordIndex + i) % waypoints.Count;
+
+                // Skip if this waypoint is blocked
+                if (blockedWaypoints.Contains(checkIndex))
+                {
+                    Debugger($"[MOVE] Skipping blocked waypoint {checkIndex}");
+                    continue;
+                }
+
                 Coordinate candidate = waypoints[checkIndex];
                 int distanceX = Math.Abs(candidate.X - currentX);
                 int distanceY = Math.Abs(candidate.Y - currentY);
@@ -3481,12 +3449,21 @@ class Program
                     }
                 }
             }
+
             if (bestTarget == null)
             {
                 Debugger("[MOVE] No reachable waypoint found ahead, trying backward direction");
                 for (int i = 1; i <= 15; i++)
                 {
                     int checkIndex = (currentCoordIndex - i + waypoints.Count) % waypoints.Count;
+
+                    // Skip if this waypoint is blocked
+                    if (blockedWaypoints.Contains(checkIndex))
+                    {
+                        Debugger($"[MOVE] Skipping blocked waypoint {checkIndex} (backward)");
+                        continue;
+                    }
+
                     Coordinate candidate = waypoints[checkIndex];
                     int distanceX = Math.Abs(candidate.X - currentX);
                     int distanceY = Math.Abs(candidate.Y - currentY);
@@ -3499,6 +3476,7 @@ class Program
                     }
                 }
             }
+
             if (bestTarget == null)
             {
                 Debugger("[MOVE] No reachable waypoint in either direction, finding closest");
@@ -3508,34 +3486,176 @@ class Program
                 bestIndex = nextIndex;
             }
 
-            var moveAction = new MoveAction(bestTarget.X, bestTarget.Y, bestTarget.Z);
+            bool moveSuccessful = AttemptMoveWithBlocking(bestTarget, bestIndex, waypoints);
+
+            if (moveSuccessful)
+            {
+                currentCoordIndex = bestIndex;
+                Debugger($"[MOVE] Moved to waypoint {bestIndex} ({bestTarget.X}, {bestTarget.Y}, {bestTarget.Z}) - {maxProgress} steps ahead");
+            }
+            else
+            {
+                Debugger($"[MOVE] Failed to move to waypoint {bestIndex} after all attempts");
+                currentCoordIndex = FindClosestWaypointIndex(waypoints);
+            }
+        }
+
+        private bool AttemptMoveWithBlocking(Coordinate targetWaypoint, int targetIndex, List<Coordinate> waypoints)
+        {
+            // Check if waypoint is already marked as blocked
+            if (blockedWaypoints.Contains(targetIndex))
+            {
+                Debugger($"[BLOCKING] Waypoint {targetIndex} is marked as blocked, skipping");
+                return false;
+            }
+
+            var moveAction = new MoveAction(targetWaypoint.X, targetWaypoint.Y, targetWaypoint.Z);
             bool moveSuccessful = false;
 
             for (int attempt = 1; attempt <= moveAction.MaxRetries; attempt++)
             {
                 if (moveAction.Execute() && moveAction.VerifySuccess())
                 {
-                    currentCoordIndex = bestIndex;
-                    Debugger($"[MOVE] Moved to waypoint {bestIndex} ({bestTarget.X}, {bestTarget.Y}, {bestTarget.Z}) - {maxProgress} steps ahead");
+                    // Reset failure count on success
+                    if (waypointFailureCount.ContainsKey(targetIndex))
+                    {
+                        waypointFailureCount[targetIndex] = 0;
+                    }
                     moveSuccessful = true;
                     break;
                 }
                 else
                 {
-                    Debugger($"[MOVE] Attempt {attempt}: Failed to move to waypoint {bestIndex}");
+                    Debugger($"[MOVE] Attempt {attempt}: Failed to move to waypoint {targetIndex}");
                 }
 
                 if (attempt < moveAction.MaxRetries)
                 {
                     Thread.Sleep(500);
                 }
+
+                // Check for combat interruption
+                if (targetId == 0)
+                {
+                    SendKeyPress(VK_F6);
+                    Thread.Sleep(150);
+                    ReadMemoryValues();
+                }
+                if (targetId != 0)
+                {
+                    return false; // Combat started, exit movement attempt
+                }
             }
 
+            // Handle failure tracking
             if (!moveSuccessful)
             {
-                Debugger($"[MOVE] Failed to move to waypoint {bestIndex} after {moveAction.MaxRetries} attempts");
-                currentCoordIndex = FindClosestWaypointIndex(waypoints);
+                // Increment failure count for this waypoint
+                if (!waypointFailureCount.ContainsKey(targetIndex))
+                {
+                    waypointFailureCount[targetIndex] = 0;
+                }
+                waypointFailureCount[targetIndex]++;
+
+                Debugger($"[BLOCKING] Waypoint {targetIndex} failed {waypointFailureCount[targetIndex]} times");
+
+                // Check if waypoint should be marked as blocked
+                if (waypointFailureCount[targetIndex] >= MAX_WAYPOINT_FAILURES)
+                {
+                    blockedWaypoints.Add(targetIndex);
+                    Debugger($"[BLOCKING] Waypoint {targetIndex} marked as BLOCKED after {MAX_WAYPOINT_FAILURES} failures");
+
+                    // Attempt to backtrack and retry
+                    if (HandleBlockedWaypoint(waypoints, targetIndex))
+                    {
+                        return true; // Successfully handled the blocking
+                    }
+                }
+
+                Thread.Sleep(300);
             }
+
+            return moveSuccessful;
+        }
+
+        private bool HandleBlockedWaypoint(List<Coordinate> waypoints, int blockedIndex)
+        {
+            Debugger($"[BLOCKING] Handling blocked waypoint {blockedIndex}, attempting backtrack");
+
+            // Find previous non-blocked waypoint
+            int backtrackIndex = currentCoordIndex;
+            for (int i = 1; i <= BACKTRACK_ATTEMPTS; i++)
+            {
+                backtrackIndex = (currentCoordIndex - i + waypoints.Count) % waypoints.Count;
+
+                if (!blockedWaypoints.Contains(backtrackIndex))
+                {
+                    Debugger($"[BLOCKING] Backtracking to waypoint {backtrackIndex}");
+
+                    // Move to previous waypoint
+                    Coordinate backtrackTarget = waypoints[backtrackIndex];
+                    var backtrackMove = new MoveAction(backtrackTarget.X, backtrackTarget.Y, backtrackTarget.Z);
+
+                    for (int attempt = 1; attempt <= backtrackMove.MaxRetries; attempt++)
+                    {
+                        if (backtrackMove.Execute() && backtrackMove.VerifySuccess())
+                        {
+                            currentCoordIndex = backtrackIndex;
+                            Debugger($"[BLOCKING] Successfully backtracked to waypoint {backtrackIndex}");
+
+                            // Wait a moment then try to find alternative route
+                            Thread.Sleep(1000);
+
+                            // Try to find an alternative route around the blocked waypoint
+                            return TryAlternativeRoute(waypoints, blockedIndex);
+                        }
+
+                        if (attempt < backtrackMove.MaxRetries)
+                        {
+                            Thread.Sleep(500);
+                        }
+                    }
+                }
+            }
+
+            Debugger("[BLOCKING] Failed to backtrack, continuing with closest waypoint");
+            currentCoordIndex = FindClosestWaypointIndex(waypoints);
+            return false;
+        }
+
+        private bool TryAlternativeRoute(List<Coordinate> waypoints, int blockedIndex)
+        {
+            Debugger($"[BLOCKING] Attempting alternative route around blocked waypoint {blockedIndex}");
+
+            // Try to jump to a waypoint past the blocked one
+            for (int skip = 2; skip <= 5; skip++)
+            {
+                int alternativeIndex = (blockedIndex + skip) % waypoints.Count;
+
+                if (!blockedWaypoints.Contains(alternativeIndex))
+                {
+                    Coordinate alternativeTarget = waypoints[alternativeIndex];
+                    int distanceX = Math.Abs(alternativeTarget.X - currentX);
+                    int distanceY = Math.Abs(alternativeTarget.Y - currentY);
+
+                    // Check if alternative waypoint is reachable
+                    if (distanceX <= 10 && distanceY <= 10 && alternativeTarget.Z == currentZ)
+                    {
+                        Debugger($"[BLOCKING] Trying alternative waypoint {alternativeIndex}");
+
+                        var altMove = new MoveAction(alternativeTarget.X, alternativeTarget.Y, alternativeTarget.Z);
+                        if (altMove.Execute() && altMove.VerifySuccess())
+                        {
+                            currentCoordIndex = alternativeIndex;
+                            Debugger($"[BLOCKING] Successfully used alternative route to waypoint {alternativeIndex}");
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            Debugger("[BLOCKING] No alternative route found");
+            return false;
         }
 
         private int FindClosestWaypointIndex(List<Coordinate> waypoints)
@@ -3545,6 +3665,12 @@ class Program
             int minDistance = int.MaxValue;
             for (int i = 0; i < waypoints.Count; i++)
             {
+                // Skip blocked waypoints when finding closest
+                if (blockedWaypoints.Contains(i))
+                {
+                    continue;
+                }
+
                 var waypoint = waypoints[i];
                 if (waypoint.Z != currentZ) continue;
                 int distance = Math.Abs(waypoint.X - currentX) + Math.Abs(waypoint.Y - currentY);
@@ -3560,6 +3686,24 @@ class Program
                 }
             }
             return closestIndex;
+        }
+
+        // Optional: Method to reset blocked waypoints (useful for debugging or manual resets)
+        public static void ResetBlockedWaypoints()
+        {
+            blockedWaypoints.Clear();
+            waypointFailureCount.Clear();
+            Debugger("[BLOCKING] Reset all blocked waypoints");
+        }
+
+        // Optional: Method to manually unblock a specific waypoint
+        public static void UnblockWaypoint(int index)
+        {
+            if (blockedWaypoints.Remove(index))
+            {
+                waypointFailureCount.Remove(index);
+                Debugger($"[BLOCKING] Manually unblocked waypoint {index}");
+            }
         }
     }
 
