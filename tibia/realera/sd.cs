@@ -3234,8 +3234,14 @@ class Program
                     ReadMemoryValues();
                 }
 
-                MoveToNextWaypoint(waypoints);
-                Thread.Sleep(100);
+                Thread.Sleep(800);
+                ReadMemoryValues();
+
+                if (targetId == 0)
+                {
+                    MoveToNextWaypoint(waypoints);
+                    Thread.Sleep(100);
+                }
             }
         }
 
@@ -3541,6 +3547,8 @@ class Program
                     Thread.Sleep(150);
                     ReadMemoryValues();
                 }
+                ReadMemoryValues();
+                Thread.Sleep(800);
                 if (targetId != 0)
                 {
                     return false; // Combat started, exit movement attempt
