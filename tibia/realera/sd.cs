@@ -2603,7 +2603,7 @@ class Program
 
     static void SaveDebugScreenshot(Mat backpackArea, int scanLeft, int scanTop, int scanWidth, int scanHeight)
     {
-        
+        return;
         try
         {
             string debugDir = "debug_screenshots";
@@ -3516,11 +3516,9 @@ class Program
             {
                 if (moveAction.Execute() && moveAction.VerifySuccess())
                 {
-                    // Reset failure count on success
-                    if (waypointFailureCount.ContainsKey(targetIndex))
-                    {
-                        waypointFailureCount[targetIndex] = 0;
-                    }
+                    // Clear all blocked waypoints on successful move - character position changed
+                    ResetBlockedWaypoints();
+                    Debugger($"[BLOCKING] Successful move - cleared all blocked waypoints");
                     moveSuccessful = true;
                     break;
                 }
@@ -3603,11 +3601,13 @@ class Program
                             currentCoordIndex = backtrackIndex;
                             Debugger($"[BLOCKING] Successfully backtracked to waypoint {backtrackIndex}");
 
-                            // Wait a moment then try to find alternative route
-                            Thread.Sleep(1000);
+                            // Clear all blocked waypoints since character moved
+                            ResetBlockedWaypoints();
+                            Debugger("[BLOCKING] Cleared all blocked waypoints after backtrack");
 
-                            // Try to find an alternative route around the blocked waypoint
-                            return TryAlternativeRoute(waypoints, blockedIndex);
+                            // Wait a moment then continue
+                            Thread.Sleep(1000);
+                            return true;
                         }
 
                         if (attempt < backtrackMove.MaxRetries)
@@ -3620,41 +3620,6 @@ class Program
 
             Debugger("[BLOCKING] Failed to backtrack, continuing with closest waypoint");
             currentCoordIndex = FindClosestWaypointIndex(waypoints);
-            return false;
-        }
-
-        private bool TryAlternativeRoute(List<Coordinate> waypoints, int blockedIndex)
-        {
-            Debugger($"[BLOCKING] Attempting alternative route around blocked waypoint {blockedIndex}");
-
-            // Try to jump to a waypoint past the blocked one
-            for (int skip = 2; skip <= 5; skip++)
-            {
-                int alternativeIndex = (blockedIndex + skip) % waypoints.Count;
-
-                if (!blockedWaypoints.Contains(alternativeIndex))
-                {
-                    Coordinate alternativeTarget = waypoints[alternativeIndex];
-                    int distanceX = Math.Abs(alternativeTarget.X - currentX);
-                    int distanceY = Math.Abs(alternativeTarget.Y - currentY);
-
-                    // Check if alternative waypoint is reachable
-                    if (distanceX <= 10 && distanceY <= 10 && alternativeTarget.Z == currentZ)
-                    {
-                        Debugger($"[BLOCKING] Trying alternative waypoint {alternativeIndex}");
-
-                        var altMove = new MoveAction(alternativeTarget.X, alternativeTarget.Y, alternativeTarget.Z);
-                        if (altMove.Execute() && altMove.VerifySuccess())
-                        {
-                            currentCoordIndex = alternativeIndex;
-                            Debugger($"[BLOCKING] Successfully used alternative route to waypoint {alternativeIndex}");
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            Debugger("[BLOCKING] No alternative route found");
             return false;
         }
 
