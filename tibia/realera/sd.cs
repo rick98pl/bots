@@ -982,24 +982,25 @@ class Program
 
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
-
         actionSequence.Add(new MoveAction(32758, 32793, 7));
-        actionSequence.Add(new MoveAction(32754, 32789, 7));
-        actionSequence.Add(new MoveAction(32753, 32793, 7));
-        actionSequence.Add(new MoveAction(32749, 32797, 7));
-        actionSequence.Add(new MoveAction(32745, 32794, 7));
-        actionSequence.Add(new MoveAction(32740, 32794, 7));
-        actionSequence.Add(new MoveAction(32735, 32794, 7));
-        actionSequence.Add(new MoveAction(32729, 32791, 7));
-        actionSequence.Add(new MoveAction(32723, 32792, 7));
-        actionSequence.Add(new MoveAction(32719, 32788, 7));
-        actionSequence.Add(new MoveAction(32713, 32786, 7));
-        actionSequence.Add(new MoveAction(32708, 32784, 7));
-        actionSequence.Add(new MoveAction(32702, 32785, 7));
-        actionSequence.Add(new MoveAction(32699, 32781, 7));
-        actionSequence.Add(new MoveAction(32694, 32781, 7));
-        actionSequence.Add(new MoveAction(32689, 32781, 7));
-        actionSequence.Add(new MoveAction(32684, 32781, 7));
+        actionSequence.Add(new MoveAction(32754, 32790, 7));
+
+        actionSequence.Add(new MoveAction(32757, 32788, 7));
+        actionSequence.Add(new MoveAction(32757, 32784, 7));
+        actionSequence.Add(new MoveAction(32755, 32780, 7));
+        actionSequence.Add(new MoveAction(32751, 32777, 7));
+        actionSequence.Add(new MoveAction(32746, 32774, 7));
+        actionSequence.Add(new MoveAction(32741, 32771, 7));
+        actionSequence.Add(new MoveAction(32735, 32770, 7));
+        actionSequence.Add(new MoveAction(32730, 32773, 7));
+        actionSequence.Add(new MoveAction(32725, 32775, 7));
+        actionSequence.Add(new MoveAction(32721, 32775, 7));
+        actionSequence.Add(new MoveAction(32716, 32775, 7));
+        actionSequence.Add(new MoveAction(32710, 32775, 7));
+        actionSequence.Add(new MoveAction(32703, 32776, 7));
+        actionSequence.Add(new MoveAction(32697, 32777, 7));
+        actionSequence.Add(new MoveAction(32691, 32777, 7));
+        actionSequence.Add(new MoveAction(32685, 32775, 7));
 
 
         actionSequence.Add(new HotkeyAction(VK_F8, 800)); //bring me to centre
@@ -1154,21 +1155,24 @@ class Program
 
 
 
-        actionSequence.Add(new MoveAction(32684, 32781, 7));
-        actionSequence.Add(new MoveAction(32689, 32781, 7));
-        actionSequence.Add(new MoveAction(32694, 32781, 7));
-        actionSequence.Add(new MoveAction(32699, 32781, 7));
-        actionSequence.Add(new MoveAction(32702, 32785, 7));
-        actionSequence.Add(new MoveAction(32708, 32784, 7));
-        actionSequence.Add(new MoveAction(32713, 32786, 7));
-        actionSequence.Add(new MoveAction(32719, 32788, 7));
-        actionSequence.Add(new MoveAction(32723, 32792, 7));
-        actionSequence.Add(new MoveAction(32729, 32791, 7));
-        actionSequence.Add(new MoveAction(32735, 32794, 7));
-        actionSequence.Add(new MoveAction(32740, 32794, 7));
-        actionSequence.Add(new MoveAction(32745, 32794, 7));
-        actionSequence.Add(new MoveAction(32749, 32797, 7));
-        actionSequence.Add(new MoveAction(32753, 32793, 7));
+        actionSequence.Add(new MoveAction(32685, 32775, 7));
+        actionSequence.Add(new MoveAction(32691, 32777, 7));
+        actionSequence.Add(new MoveAction(32697, 32777, 7));
+        actionSequence.Add(new MoveAction(32703, 32776, 7));
+        actionSequence.Add(new MoveAction(32710, 32775, 7));
+        actionSequence.Add(new MoveAction(32716, 32775, 7));
+        actionSequence.Add(new MoveAction(32721, 32775, 7));
+        actionSequence.Add(new MoveAction(32725, 32775, 7));
+        actionSequence.Add(new MoveAction(32730, 32773, 7));
+        actionSequence.Add(new MoveAction(32735, 32770, 7));
+        actionSequence.Add(new MoveAction(32741, 32771, 7));
+        actionSequence.Add(new MoveAction(32746, 32774, 7));
+        actionSequence.Add(new MoveAction(32751, 32777, 7));
+        actionSequence.Add(new MoveAction(32755, 32780, 7));
+        actionSequence.Add(new MoveAction(32757, 32784, 7));
+        actionSequence.Add(new MoveAction(32757, 32788, 7));
+
+        actionSequence.Add(new MoveAction(32756, 32791, 7));
         actionSequence.Add(new MoveAction(32757, 32791, 7));
 
 
@@ -1183,22 +1187,26 @@ class Program
 
 
         actionSequence.Add(new MoveAction(32758, 32793, 7));
-        actionSequence.Add(new MoveAction(32754, 32789, 7));
-        actionSequence.Add(new MoveAction(32753, 32793, 7));
-        actionSequence.Add(new MoveAction(32749, 32797, 7));
-        actionSequence.Add(new MoveAction(32745, 32794, 7));
-        actionSequence.Add(new MoveAction(32740, 32794, 7));
-        actionSequence.Add(new MoveAction(32735, 32794, 7));
-        actionSequence.Add(new MoveAction(32729, 32791, 7));
-        actionSequence.Add(new MoveAction(32723, 32792, 7));
-        actionSequence.Add(new MoveAction(32719, 32788, 7));
-        actionSequence.Add(new MoveAction(32713, 32786, 7));
-        actionSequence.Add(new MoveAction(32708, 32784, 7));
-        actionSequence.Add(new MoveAction(32702, 32785, 7));
-        actionSequence.Add(new MoveAction(32699, 32781, 7));
-        actionSequence.Add(new MoveAction(32694, 32781, 7));
-        actionSequence.Add(new MoveAction(32689, 32781, 7));
-        actionSequence.Add(new MoveAction(32684, 32781, 7));
+        actionSequence.Add(new MoveAction(32754, 32790, 7));
+
+        actionSequence.Add(new MoveAction(32757, 32788, 7));
+        actionSequence.Add(new MoveAction(32757, 32784, 7));
+        actionSequence.Add(new MoveAction(32755, 32780, 7));
+        actionSequence.Add(new MoveAction(32751, 32777, 7));
+        actionSequence.Add(new MoveAction(32746, 32774, 7));
+        actionSequence.Add(new MoveAction(32741, 32771, 7));
+        actionSequence.Add(new MoveAction(32735, 32770, 7));
+        actionSequence.Add(new MoveAction(32730, 32773, 7));
+        actionSequence.Add(new MoveAction(32725, 32775, 7));
+        actionSequence.Add(new MoveAction(32721, 32775, 7));
+        actionSequence.Add(new MoveAction(32716, 32775, 7));
+        actionSequence.Add(new MoveAction(32710, 32775, 7));
+        actionSequence.Add(new MoveAction(32703, 32776, 7));
+        actionSequence.Add(new MoveAction(32697, 32777, 7));
+        actionSequence.Add(new MoveAction(32691, 32777, 7));
+        actionSequence.Add(new MoveAction(32685, 32775, 7));
+
+
 
 
         actionSequence.Add(new HotkeyAction(VK_F8, 800)); //bring me to centre
@@ -3236,7 +3244,7 @@ class Program
                     }
                 }
 
-                if (curSoul >= 200)
+                if (curSoul >= 190)
                 {
                     return;
                 }
