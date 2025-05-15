@@ -1756,10 +1756,7 @@ class Program
                         if ( (currentZ != 8 ||  utaniGranHurException) && shouldCastUtaniGranHur && curMana > 100)
                         {
                             lastUtaniGranHurAttemptTime = now;
-                            if (utaniGranHurException)
-                            {
-                                utaniGranHurException = false;
-                            }
+
 
                             if (TryCastSpell(BACKSLASH, "utani gran hur", ref lastUtaniGranHurTime, 0))
                             {
@@ -1768,6 +1765,11 @@ class Program
                                 if (CheckUtaniGranHurSuccess())
                                 {
                                     Debugger("[MOTION] Utani gran hur successful - speed increased");
+
+                                    if (utaniGranHurException)
+                                    {
+                                        utaniGranHurException = false;
+                                    }
                                 }
                                 else
                                 {
