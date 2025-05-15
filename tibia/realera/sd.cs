@@ -634,7 +634,15 @@ class Program
         public bool ExpectXChange { get; set; } = false; // For F7/F8 X coordinate verification
         public int MinXChange { get; set; } = 20; // Minimum X coordinate change expected
 
-        public HotkeyAction(int keyCode, int delayMs = 100, bool expectZChange = false, bool expectUpMovement = false, bool expectXChange = false, int minXChange = 20)
+        public int? RequiredX { get; set; }
+        public int? RequiredY { get; set; }
+        public int? RequiredZ { get; set; }
+        public bool ForcePositionBeforeEachAttempt { get; set; } = false;
+
+        // Modify constructor to accept position requirements
+        public HotkeyAction(int keyCode, int delayMs = 100, bool expectZChange = false,
+                           bool expectUpMovement = false, bool expectXChange = false,
+                           int minXChange = 20, int? requiredX = null, int? requiredY = null, int? requiredZ = null)
         {
             KeyCode = keyCode;
             DelayMs = delayMs;
@@ -642,6 +650,9 @@ class Program
             ExpectUpMovement = expectUpMovement;
             ExpectXChange = expectXChange;
             MinXChange = minXChange;
+            RequiredX = requiredX;
+            RequiredY = requiredY;
+            RequiredZ = requiredZ;
 
             // Automatically set validation for specific keys
             if (keyCode == VK_F12)
@@ -649,6 +660,7 @@ class Program
                 ExpectZChange = true;
                 ExpectUpMovement = true; // F12 (exani tera) typically moves up
                 MaxRetries = 10; // Set higher retry count for Z-level changes
+                ForcePositionBeforeEachAttempt = true; // ✅ Always force position for F12
             }
             else if (keyCode == VK_F7 || keyCode == VK_F8)
             {
@@ -703,6 +715,72 @@ class Program
 
             while (attempt <= maxAttempts)
             {
+                // ✅ POSITION CHECK AND FIX BEFORE EACH ATTEMPT
+                if (RequiredX.HasValue || RequiredY.HasValue || RequiredZ.HasValue)
+                {
+                    ReadMemoryValues();
+                    bool positionValid = true;
+                    string positionError = "";
+
+                    if (RequiredX.HasValue && currentX != RequiredX.Value)
+                    {
+                        positionValid = false;
+                        positionError += $"X:{currentX}≠{RequiredX.Value} ";
+                    }
+                    if (RequiredY.HasValue && currentY != RequiredY.Value)
+                    {
+                        positionValid = false;
+                        positionError += $"Y:{currentY}≠{RequiredY.Value} ";
+                    }
+                    if (RequiredZ.HasValue && currentZ != RequiredZ.Value)
+                    {
+                        positionValid = false;
+                        positionError += $"Z:{currentZ}≠{RequiredZ.Value} ";
+                    }
+
+                    if (!positionValid)
+                    {
+                        Debugger($"[F12] Attempt {attempt}/{maxAttempts} - Position invalid: {positionError}");
+                        Debugger($"[F12] Current: ({currentX}, {currentY}, {currentZ}), Required: ({RequiredX}, {RequiredY}, {RequiredZ})");
+
+                        if (ForcePositionBeforeEachAttempt)
+                        {
+                            // ✅ FIX POSITION BEFORE ATTEMPTING F12
+                            Debugger($"[F12] Fixing position before attempt {attempt}");
+                            var positionFix = new MoveAction(RequiredX.Value, RequiredY.Value, RequiredZ.Value, 3000);
+
+                            if (positionFix.Execute() && positionFix.VerifySuccess())
+                            {
+                                ReadMemoryValues();
+                                Debugger($"[F12] Position fixed: ({currentX}, {currentY}, {currentZ})");
+
+                                // Double-check position after fix
+                                if (currentX != RequiredX.Value || currentY != RequiredY.Value || currentZ != RequiredZ.Value)
+                                {
+                                    Debugger($"[F12] Position fix failed on attempt {attempt}");
+                                    attempt++;
+                                    continue;
+                                }
+                            }
+                            else
+                            {
+                                Debugger($"[F12] Position fix failed on attempt {attempt}");
+                                attempt++;
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            Debugger($"[F12] Position invalid and fix disabled - skipping attempt {attempt}");
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        Debugger($"[F12] Attempt {attempt}/{maxAttempts} - Position valid: ({currentX}, {currentY}, {currentZ})");
+                    }
+                }
+
                 Debugger($"Attempt {attempt}/{maxAttempts} - F12 with Z-level change");
 
                 // Execute the F12 key press
@@ -1044,10 +1122,7 @@ class Program
 
 
         actionSequence.Add(new FightTarantulasAction());
-        actionSequence.Add(new MoveAction(32758, 32791, 8));
-        actionSequence.Add(new MoveAction(32758, 32791, 8));
-        actionSequence.Add(new MoveAction(32758, 32791, 8));
-        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
+        actionSequence.Add(new HotkeyAction(VK_F12, 800, true, true, false, 20, 32758, 32791, 8)); //exani tera with position validation
 
         actionSequence.Add(new MoveAction(32758, 32793, 7));
         actionSequence.Add(new MoveAction(32754, 32790, 7));
@@ -1253,13 +1328,7 @@ class Program
 
         ////HERE SHOULD FIGHT TARANTULAS UNTIL 200 SOUL
         actionSequence.Add(new FightTarantulasAction());
-
-
-        actionSequence.Add(new MoveAction(32758, 32791, 8));
-        actionSequence.Add(new MoveAction(32758, 32791, 8));
-        actionSequence.Add(new MoveAction(32758, 32791, 8));
-
-        actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
+        actionSequence.Add(new HotkeyAction(VK_F12, 800, true, true, false, 20, 32758, 32791, 8)); //exani tera with position validation
 
 
         actionSequence.Add(new MoveAction(32758, 32793, 7));
@@ -1479,7 +1548,7 @@ class Program
                 while (!success && retryCount < action.MaxRetries)
                 {
                     // Check for pause during retry loops
-                    CheckForPause();
+                    CheckForPause(); 
 
                     if (retryCount > 0)
                     {
@@ -3286,7 +3355,7 @@ class Program
                 CheckForPause();
                 ReadMemoryValues();
                 DoHealthManaChecks();
-                if (curSoul >= 190)
+                if (curSoul >= 1)
                 {
                     Debugger("[FIGHT] Soul limit reached, exiting fight");
                     SendKeyPress(VK_ESCAPE);
@@ -3376,6 +3445,47 @@ class Program
             }
             Debugger("[RETURN] Reached first waypoint");
             currentCoordIndex = 0;
+
+
+            ReadMemoryValues();
+            if (!IsAtPosition(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z))
+            {
+                Debugger($"[RETURN] Final verification failed! Current: ({currentX}, {currentY}, {currentZ}), Expected: ({firstWaypoint.X}, {firstWaypoint.Y}, {firstWaypoint.Z})");
+
+                // Force move to waypoint [0]
+                var finalMove = new MoveAction(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z, 5000);
+
+                for (int attempt = 1; attempt <= 3; attempt++)
+                {
+                    Debugger($"[RETURN] Final move attempt {attempt}/3 to waypoint [0]");
+
+                    if (finalMove.Execute() && finalMove.VerifySuccess())
+                    {
+                        Debugger("[RETURN] Final move to waypoint [0] successful");
+                        break;
+                    }
+
+                    if (attempt < 3)
+                    {
+                        Thread.Sleep(1000);
+                    }
+                }
+            }
+
+            // Final position verification
+            ReadMemoryValues();
+            if (IsAtPosition(firstWaypoint.X, firstWaypoint.Y, firstWaypoint.Z))
+            {
+                Debugger($"[RETURN] ✅ CONFIRMED at waypoint [0]: ({currentX}, {currentY}, {currentZ})");
+                currentCoordIndex = 0;
+            }
+            else
+            {
+                Debugger($"[RETURN] ❌ FAILED to reach waypoint [0]! Current: ({currentX}, {currentY}, {currentZ})");
+                // Don't set currentCoordIndex = 0 if we're not actually there
+                currentCoordIndex = FindClosestWaypointIndex(waypoints);
+                Debugger($"[RETURN] Set currentCoordIndex to closest waypoint: {currentCoordIndex}");
+            }
         }
 
         private bool DecideDirection(List<Coordinate> waypoints, int fromIndex)
