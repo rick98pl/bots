@@ -16,6 +16,7 @@ using System.IO;
 using Emgu.CV.Reg;
 using System.Text.Json;
 using Emgu.CV.Dnn;
+using static Program.DragAction;
 
 class Program
 {
@@ -450,7 +451,71 @@ class Program
         }
     }
 
-    // [Keep other action classes unchanged - DragAction, HotkeyAction, ArrowAction]
+    public class FluidDragAction : Action
+    {
+        public int ItemCount { get; set; }
+        public int DelayBetweenDrags { get; set; }
+
+        public FluidDragAction(int itemCount = 1, int delayBetweenDrags = 100)
+        {
+            ItemCount = itemCount;
+            DelayBetweenDrags = delayBetweenDrags;
+        }
+
+        public override bool Execute()
+        {
+            try
+            {
+                int localX = 800;
+                int localY = 245;
+                int destX = backpackX;
+                int destY = backpackY;
+                
+                destX += 115;
+                destY += 135;
+                
+                RECT clientRect;
+                GetClientRect(targetWindow, out clientRect);
+
+
+                POINT destinationPoint = new POINT { X = destX, Y = destY };
+                POINT sourcePoint = new POINT { X = localX, Y = localY };
+
+                ClientToScreen(targetWindow, ref destinationPoint);
+                ClientToScreen(targetWindow, ref sourcePoint);
+
+                //SetCursorPos(destinationPoint.X, destinationPoint.Y);
+                //Thread.Sleep(4000);
+
+
+                for (int i = 1; i <= ItemCount; i++)
+                {
+                    DragItem(sourcePoint.X, sourcePoint.Y, destinationPoint.X, destinationPoint.Y);
+                    Debugger($"Drag #{i} completed... ({i}/{ItemCount})");
+
+                    if (DelayBetweenDrags > 0 && i < ItemCount)
+                    {
+                        Thread.Sleep(DelayBetweenDrags);
+                    }
+                }
+
+              
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debugger($"Error during drag action: {ex.Message}");
+                return false;
+            }
+        }
+
+        public override string GetDescription()
+        {
+            string directionName = "LEFTBP";
+            return $"Drag {ItemCount} items from {directionName}";
+        }
+    }
+
     public class DragAction : Action
     {
         public enum DragDirection
@@ -1009,8 +1074,15 @@ class Program
 
         actionSequence.Add(new HotkeyAction(VK_F8, 800)); //bring me to centre
 
+
+        for (int i = 0; i < 4; i++)
+        {
+            actionSequence.Add(new FluidDragAction(1));
+        }
+
+
         actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
-      DragAction.DragBackpack.MANAS, 8, 100)); //water
+      DragAction.DragBackpack.MANAS, 20, 100)); //water
 
         actionSequence.Add(new MoveAction(32622, 32769, 7));
 
@@ -1030,14 +1102,17 @@ class Program
         actionSequence.Add(new RightClickAction(200));
         actionSequence.Add(new MoveAction(baseX + 24, baseY - 6, baseZ - 2));
 
-        actionSequence.Add(new HotkeyAction(VK_F5, 800)); //blanks
+      
 
         actionSequence.Add(new HotkeyAction(VK_F9, 800)); //fluids
 
-        for (int i = 0; i < 20; i++)
+        for (int i = 0; i < 15; i++)
         {
-            actionSequence.Add(new ScanBackpackAction());
+            actionSequence.Add(new FluidDragAction(1));
         }
+
+        actionSequence.Add(new HotkeyAction(VK_F5, 800)); //blanks
+
 
         actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
@@ -1067,10 +1142,10 @@ class Program
 
         int baseX = 32597, baseY = 32747, baseZ = 7;
 
-        for (int i = 0; i < 20; i++)
-        {
-            actionSequence.Add(new ScanBackpackAction());
-        }
+        //for (int i = 0; i < 20; i++)
+        //{
+        //    actionSequence.Add(new ScanBackpackAction());
+        //}
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
 
 
@@ -1094,14 +1169,8 @@ class Program
         actionSequence.Add(new MoveAction(32627, 32772, 6));
 
 
-
-        for (int i = 0; i < 20; i++)
-        {
-            actionSequence.Add(new ScanBackpackAction());
-        }
-
         actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
-            DragAction.DragBackpack.MANAS, 8, 100)); //water
+            DragAction.DragBackpack.MANAS, 20, 100)); //water
 
         actionSequence.Add(new MoveAction(32625, 32769, 6));
         actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
@@ -1136,9 +1205,9 @@ class Program
 
         actionSequence.Add(new HotkeyAction(RIGHT_BRACKET, 800)); //fluids
 
-        for (int i = 0; i < 20; i++)
+        for (int i = 0; i < 4; i++)
         {
-            actionSequence.Add(new ScanBackpackAction());
+            actionSequence.Add(new FluidDragAction(1));
         }
 
         actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
@@ -1219,8 +1288,13 @@ class Program
 
         actionSequence.Add(new HotkeyAction(VK_F8, 800)); //bring me to centre
 
+        for (int i = 0; i < 4; i++)
+        {
+            actionSequence.Add(new FluidDragAction(1));
+        }
+
         actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
-      DragAction.DragBackpack.MANAS, 8, 100)); //water
+      DragAction.DragBackpack.MANAS, 20, 100)); //water
 
         actionSequence.Add(new MoveAction(32622, 32769, 7));
 
@@ -1240,14 +1314,15 @@ class Program
         actionSequence.Add(new RightClickAction(200));
         actionSequence.Add(new MoveAction(baseX + 24, baseY - 6, baseZ - 2));
 
-        actionSequence.Add(new HotkeyAction(VK_F5, 800)); //blanks
-
         actionSequence.Add(new HotkeyAction(VK_F9, 800)); //fluids
 
-        for (int i = 0; i < 20; i++)
+        for (int i = 0; i < 15; i++)
         {
-            actionSequence.Add(new ScanBackpackAction());
+            actionSequence.Add(new FluidDragAction(1));
         }
+
+        actionSequence.Add(new HotkeyAction(VK_F5, 800)); //blanks
+
 
         actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
@@ -1279,11 +1354,7 @@ class Program
         ////// Base coordinates
         int baseX = 32597, baseY = 32747, baseZ = 7;
 
-        // Inside InitializeActionSequence()
-        for (int i = 0; i < 20; i++)
-        {
-            actionSequence.Add(new ScanBackpackAction());
-        }
+
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
 
         actionSequence.Add(new MoveAction(baseX + 0, baseY + 0, baseZ + 0));
@@ -1307,13 +1378,8 @@ class Program
 
 
 
-        for (int i = 0; i < 20; i++)
-        {
-            actionSequence.Add(new ScanBackpackAction());
-        }
-
         actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
-            DragAction.DragBackpack.MANAS, 8, 100)); //water
+            DragAction.DragBackpack.MANAS, 20, 100)); //water
 
         actionSequence.Add(new MoveAction(32625, 32769, 6));
         actionSequence.Add(new DragAction(DragAction.DragDirection.BackpackToGround,
@@ -1346,14 +1412,17 @@ class Program
         actionSequence.Add(new RightClickAction(200));
         actionSequence.Add(new MoveAction(baseX + 24, baseY - 6, baseZ - 2));
 
-        actionSequence.Add(new HotkeyAction(VK_F5, 800)); //blanks
+       
 
         actionSequence.Add(new HotkeyAction(VK_F9, 800)); //fluids
 
-        for (int i = 0; i < 20; i++)
+
+        for (int i = 0; i < 15; i++)
         {
-            actionSequence.Add(new ScanBackpackAction());
+            actionSequence.Add(new FluidDragAction(1));
         }
+
+        actionSequence.Add(new HotkeyAction(VK_F5, 800)); //blanks
 
         actionSequence.Add(new MoveAction(baseX + 29, baseY - 6, baseZ - 2));
         actionSequence.Add(new ArrowAction(ArrowAction.ArrowDirection.Down, 200));
@@ -2064,6 +2133,7 @@ class Program
         StartMotionDetectionThread();
         StartSoulPositionMonitorThread();
 
+
         while (programRunning)
         {
 
@@ -2615,7 +2685,7 @@ class Program
 
     static void SaveDebugScreenshot(Mat backpackArea, int scanLeft, int scanTop, int scanWidth, int scanHeight)
     {
-        return;
+       
         try
         {
             string debugDir = "debug_screenshots";
@@ -3224,7 +3294,7 @@ class Program
                 }
                 if (targetId == 0)
                 {
-                    SendKeyPress(VK_F6);
+                    SendKeyPress(VK_F10);
                     Thread.Sleep(150);
                     ReadMemoryValues();
                 }
@@ -3252,7 +3322,7 @@ class Program
                 ReadMemoryValues();
                 if (targetId == 0)
                 {
-                    SendKeyPress(VK_F6);
+                    SendKeyPress(VK_F10);
                     Thread.Sleep(150);
                     ReadMemoryValues();
                 }
