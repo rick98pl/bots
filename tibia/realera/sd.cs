@@ -980,6 +980,8 @@ class Program
 
         actionSequence.Add(new FightTarantulasAction());
         actionSequence.Add(new MoveAction(32758, 32791, 8));
+        actionSequence.Add(new MoveAction(32758, 32791, 8));
+        actionSequence.Add(new MoveAction(32758, 32791, 8));
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
         actionSequence.Add(new MoveAction(32758, 32793, 7));
@@ -1185,6 +1187,9 @@ class Program
 
 
         actionSequence.Add(new MoveAction(32758, 32791, 8));
+        actionSequence.Add(new MoveAction(32758, 32791, 8));
+        actionSequence.Add(new MoveAction(32758, 32791, 8));
+
         actionSequence.Add(new HotkeyAction(VK_F12, 800)); //exani tera
 
 
@@ -3214,6 +3219,7 @@ class Program
                 if (curSoul >= 190)
                 {
                     Debugger("[FIGHT] Soul limit reached, exiting fight");
+                    SendKeyPress(VK_ESCAPE);
                     return;
                 }
                 if (targetId == 0)
@@ -3226,6 +3232,12 @@ class Program
                 {
                     while (targetId != 0)
                     {
+                        if (curSoul >= 190)
+                        {
+                            Debugger("[FIGHT] Soul limit reached, exiting fight");
+                            SendKeyPress(VK_ESCAPE);
+                            return;
+                        }
                         CheckForPause();
                         ReadMemoryValues();
                         DoHealthManaChecks();
