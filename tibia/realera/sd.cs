@@ -3355,7 +3355,7 @@ class Program
                 CheckForPause();
                 ReadMemoryValues();
                 DoHealthManaChecks();
-                if (curSoul >= 1)
+                if (curSoul >= 190)
                 {
                     Debugger("[FIGHT] Soul limit reached, exiting fight");
                     SendKeyPress(VK_ESCAPE);
