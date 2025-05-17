@@ -2522,13 +2522,13 @@ class Program
     static Process FindRealeraProcess()
     {
         var processes = Process
-            .GetProcesses()
-            .Where(p => p.ProcessName == processName)
-            .ToArray();
+        .GetProcesses()
+        .Where(p => p.ProcessName.Contains("RealeraDX", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
 
         if (processes.Length == 0)
         {
-            Debugger($"Process '{processName}' not found.");
+            Debugger($"No processes containing 'RealeraDX' found.");
             return null;
         }
 
@@ -2677,7 +2677,7 @@ class Program
     {
         Debugger("\n=== REALERA PROCESSES WITH WINDOWS ===");
         var processes = Process.GetProcesses()
-            .Where(p => p.ProcessName.Contains("Realera", StringComparison.OrdinalIgnoreCase))
+            .Where(p => p.ProcessName.Contains("RealeraDX", StringComparison.OrdinalIgnoreCase))
             .Where(p => !string.IsNullOrEmpty(p.MainWindowTitle))
             .OrderBy(p => p.ProcessName);
 
